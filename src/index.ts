@@ -2,13 +2,15 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { stdin as input, stdout as output } from "node:process";
+import { argv, stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import {
+  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  ModelRegistry,
   type PackageSource,
   SessionManager,
   SettingsManager,
@@ -17,6 +19,24 @@ import {
 const cwd = process.cwd();
 const agentDir = getAgentDir();
 const requireFromHere = createRequire(import.meta.url);
+
+const validThinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+type ThinkingLevel = (typeof validThinkingLevels)[number];
+type PiModel = ReturnType<ModelRegistry["getAll"]>[number];
+
+type CliOptions = {
+  provider?: string;
+  model?: string;
+  thinking?: ThinkingLevel;
+  listModels?: string | true;
+};
+
+type ModelResolution = {
+  model?: PiModel;
+  thinking?: ThinkingLevel;
+  error?: string;
+  matches?: PiModel[];
+};
 
 type MemchatPackageJson = {
   memchat?: {
@@ -77,25 +97,165 @@ function getLocalPiPackageSources(): PackageSource[] {
   return readLocalPiPackageSpecs().map(resolveLocalPiPackage);
 }
 
-function printBanner(packageSources: PackageSource[]) {
+function loadLocalEnv() {
+  const envPath = resolve(cwd, ".env");
+  if (!existsSync(envPath)) return;
+
+  for (const rawLine of readFileSync(envPath, "utf-8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const equalsIndex = line.indexOf("=");
+    if (equalsIndex === -1) continue;
+
+    const key = line.slice(0, equalsIndex).trim();
+    let value = line.slice(equalsIndex + 1).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+function isThinkingLevel(value: string): value is ThinkingLevel {
+  return validThinkingLevels.includes(value as ThinkingLevel);
+}
+
+function parseCliOptions(args: string[]): CliOptions {
+  const options: CliOptions = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--provider" && args[i + 1]) {
+      options.provider = args[++i];
+    } else if (arg === "--model" && args[i + 1]) {
+      options.model = args[++i];
+    } else if (arg === "--thinking" && args[i + 1]) {
+      const thinking = args[++i];
+      if (!isThinkingLevel(thinking)) throw new Error(`Invalid --thinking value "${thinking}". Use: ${validThinkingLevels.join(", ")}`);
+      options.thinking = thinking;
+    } else if (arg === "--list-models") {
+      const next = args[i + 1];
+      options.listModels = next && !next.startsWith("-") ? args[++i] : true;
+    }
+  }
+
+  options.provider ??= process.env.MEMCHAT_PROVIDER;
+  options.model ??= process.env.MEMCHAT_MODEL;
+  const envThinking = process.env.MEMCHAT_THINKING;
+  if (!options.thinking && envThinking) {
+    if (!isThinkingLevel(envThinking)) throw new Error(`Invalid MEMCHAT_THINKING value "${envThinking}". Use: ${validThinkingLevels.join(", ")}`);
+    options.thinking = envThinking;
+  }
+  return options;
+}
+
+function modelLabel(model: PiModel): string {
+  return `${model.provider}/${model.id}`;
+}
+
+function isUsableModel(model: PiModel | undefined): model is PiModel {
+  return Boolean(model && model.provider !== "unknown" && model.id !== "unknown");
+}
+
+function splitThinkingSuffix(specifier: string): { pattern: string; thinking?: ThinkingLevel } {
+  const colonIndex = specifier.lastIndexOf(":");
+  if (colonIndex === -1) return { pattern: specifier };
+
+  const suffix = specifier.slice(colonIndex + 1);
+  if (!isThinkingLevel(suffix)) return { pattern: specifier };
+  return { pattern: specifier.slice(0, colonIndex), thinking: suffix };
+}
+
+function resolveModel(specifier: string, modelRegistry: ModelRegistry, provider?: string): ModelResolution {
+  const { pattern, thinking } = splitThinkingSuffix(specifier.trim());
+  const providerSeparator = pattern.indexOf("/");
+  const explicitProvider = providerSeparator === -1 ? provider : pattern.slice(0, providerSeparator);
+  const modelPattern = providerSeparator === -1 ? pattern : pattern.slice(providerSeparator + 1);
+  const normalizedPattern = modelPattern.toLowerCase();
+
+  const allModels = modelRegistry.getAll();
+  const providerCandidates = explicitProvider ? allModels.filter((model) => model.provider === explicitProvider) : allModels;
+  if (providerCandidates.length === 0) {
+    return { error: explicitProvider ? `No configured models for provider "${explicitProvider}".` : "No configured models found." };
+  }
+
+  const exactMatches = providerCandidates.filter(
+    (model) => model.id.toLowerCase() === normalizedPattern || modelLabel(model).toLowerCase() === pattern.toLowerCase(),
+  );
+  const partialMatches = exactMatches.length > 0 ? exactMatches : providerCandidates.filter((model) => {
+    const name = typeof model.name === "string" ? model.name.toLowerCase() : "";
+    return model.id.toLowerCase().includes(normalizedPattern) || modelLabel(model).toLowerCase().includes(pattern.toLowerCase()) || name.includes(normalizedPattern);
+  });
+
+  if (partialMatches.length === 0) return { error: `No model matched "${specifier}".` };
+
+  const available = modelRegistry.getAvailable();
+  const availableKeys = new Set(available.map(modelLabel));
+  const sorted = [...partialMatches].sort((a, b) => Number(availableKeys.has(modelLabel(b))) - Number(availableKeys.has(modelLabel(a))));
+  if (sorted.length > 1 && !explicitProvider && exactMatches.length > 1) {
+    return { error: `Ambiguous model "${specifier}". Use provider/model.`, matches: sorted };
+  }
+  return { model: sorted[0], thinking, matches: sorted };
+}
+
+function printModelList(modelRegistry: ModelRegistry, search?: string) {
+  const query = search?.toLowerCase();
+  const availableKeys = new Set(modelRegistry.getAvailable().map(modelLabel));
+  const models = modelRegistry
+    .getAll()
+    .filter((model) => !query || modelLabel(model).toLowerCase().includes(query) || model.id.toLowerCase().includes(query))
+    .sort((a, b) => modelLabel(a).localeCompare(modelLabel(b)));
+
+  if (models.length === 0) {
+    output.write(search ? `No models matching "${search}".\n` : "No configured models found.\n");
+    return;
+  }
+
+  output.write("\nModels:\n");
+  for (const model of models) {
+    output.write(`  ${availableKeys.has(modelLabel(model)) ? "*" : " "} ${modelLabel(model)}${model.reasoning ? "  thinking" : ""}\n`);
+  }
+  output.write("\n* = auth configured/available\n");
+}
+
+function printCurrentModel(model: PiModel | undefined, thinking: string) {
+  output.write(`Current model: ${isUsableModel(model) ? modelLabel(model) : "none selected"}\n`);
+  output.write(`Thinking: ${thinking}\n`);
+}
+
+function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string) {
   output.write("\nmemchat hello-world\n");
-  output.write("Type a message and press Enter. Commands: /help, /plugins, /exit\n");
+  output.write("Type a message and press Enter. Commands: /help, /model, /plugins, /exit\n");
   output.write("Memory: in-session only unless a loaded local pi package adds it.\n");
+  output.write(`Model: ${isUsableModel(model) ? modelLabel(model) : "none selected"} (thinking: ${thinking})\n`);
   output.write(`Local pi packages: ${packageSources.length === 0 ? "none" : packageSources.join(", ")}\n\n`);
 }
 
 function printHelp() {
   output.write(
     `\nCommands:\n` +
-      `  /help      Show this help\n` +
-      `  /plugins   Show npm-managed local pi packages configured for this run\n` +
-      `  /exit      End the chat\n\n` +
+      `  /help                Show this help\n` +
+      `  /model               Show the active model\n` +
+      `  /model list [text]   List configured models (* means auth is available)\n` +
+      `  /model <model>       Switch model, e.g. /model openai/gpt-4o or /model sonnet:high\n` +
+      `  /model next|prev     Cycle models\n` +
+      `  /plugins             Show npm-managed local pi packages configured for this run\n` +
+      `  /exit                End the chat\n\n` +
+      `Startup options/env: --model, --provider, --thinking, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING.\n` +
       `Configure local pi packages with package.json memchat.piPackages or MEMCHAT_PI_PACKAGES.\n\n`,
   );
 }
 
 async function main() {
+  loadLocalEnv();
+  const cliOptions = parseCliOptions(argv.slice(2));
   const packageSources = getLocalPiPackageSources();
+  const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
+  const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
+
+  const initialThinking = cliOptions.thinking ?? "off";
+
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
     packages: packageSources,
@@ -105,6 +265,8 @@ async function main() {
     cwd,
     agentDir,
     settingsManager,
+    additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
+    noExtensions: true,
     noContextFiles: true,
     systemPrompt: chatSystemPrompt,
   });
@@ -118,12 +280,37 @@ async function main() {
   const { session } = await createAgentSession({
     cwd,
     agentDir,
+    authStorage,
+    modelRegistry,
     resourceLoader,
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
     noTools: "builtin",
-    thinkingLevel: "off",
+    thinkingLevel: initialThinking,
   });
+
+  if (cliOptions.model) {
+    const resolved = resolveModel(cliOptions.model, session.modelRegistry, cliOptions.provider);
+    if (resolved.error) {
+      output.write(`[model warning] ${resolved.error}\n`);
+      if (resolved.matches && resolved.matches.length > 0) {
+        output.write(resolved.matches.slice(0, 10).map((model) => `  ${modelLabel(model)}\n`).join(""));
+      }
+    } else if (resolved.model) {
+      try {
+        await session.setModel(resolved.model);
+        if (resolved.thinking) session.setThinkingLevel(resolved.thinking);
+      } catch (error) {
+        output.write(`[model warning] Could not select ${modelLabel(resolved.model)}: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+  }
+
+  if (cliOptions.listModels) {
+    printModelList(session.modelRegistry, cliOptions.listModels === true ? undefined : cliOptions.listModels);
+    session.dispose();
+    return;
+  }
 
   const rl = readline.createInterface({ input, output });
 
@@ -133,7 +320,7 @@ async function main() {
     }
   });
 
-  printBanner(packageSources);
+  printBanner(packageSources, session.model, session.thinkingLevel);
 
   async function handleInput(line: string): Promise<boolean> {
     const text = line.trim();
@@ -144,6 +331,41 @@ async function main() {
       printHelp();
       return true;
     }
+    if (text === "/model") {
+      printCurrentModel(session.model, session.thinkingLevel);
+      return true;
+    }
+    if (text.startsWith("/model ")) {
+      const args = text.slice("/model ".length).trim();
+      if (args === "list" || args.startsWith("list ")) {
+        printModelList(session.modelRegistry, args === "list" ? undefined : args.slice("list ".length).trim());
+        return true;
+      }
+      if (args === "next" || args === "prev" || args === "previous") {
+        const result = await session.cycleModel(args === "next" ? "forward" : "backward");
+        if (!result) output.write("No alternate model available.\n");
+        else output.write(`Switched to ${modelLabel(result.model)} (thinking: ${result.thinkingLevel})\n`);
+        return true;
+      }
+
+      const resolved = resolveModel(args.startsWith("set ") ? args.slice("set ".length).trim() : args, session.modelRegistry);
+      if (resolved.error || !resolved.model) {
+        output.write(`${resolved.error ?? "Model not found."}\n`);
+        if (resolved.matches && resolved.matches.length > 0) {
+          output.write(resolved.matches.slice(0, 10).map((model) => `  ${modelLabel(model)}\n`).join(""));
+        }
+        return true;
+      }
+
+      try {
+        await session.setModel(resolved.model);
+        if (resolved.thinking) session.setThinkingLevel(resolved.thinking);
+        output.write(`Switched to ${modelLabel(resolved.model)} (thinking: ${session.thinkingLevel})\n`);
+      } catch (error) {
+        output.write(`Could not switch model: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+      return true;
+    }
     if (text === "/plugins") {
       output.write(
         `\nLocal pi packages:\n${packageSources.length === 0 ? "  none\n" : packageSources.map((source) => `  ${source}`).join("\n") + "\n"}\n`,
@@ -152,7 +374,12 @@ async function main() {
     }
 
     output.write("memchat> ");
-    await session.prompt(text);
+    try {
+      await session.prompt(text);
+    } catch (error) {
+      output.write(`\n[error] ${error instanceof Error ? error.message : String(error)}\n`);
+      if (!isUsableModel(session.model)) output.write("Use /model list to inspect configured models, then /model <provider/model> to select one.\n");
+    }
     output.write("\n\n");
     return true;
   }

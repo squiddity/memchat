@@ -69,7 +69,44 @@ Run the current minimal chat loop with:
 npm run dev
 ```
 
-It uses `@earendil-works/pi-coding-agent`'s SDK with a `DefaultResourceLoader`, disables built-in coding tools, and leaves extension/custom tools available.
+It uses `@earendil-works/pi-coding-agent`'s SDK with a `DefaultResourceLoader`, disables built-in coding tools, and loads memchat's vendored extensions.
+
+### Model selection
+
+Select a startup model with CLI flags or environment variables:
+
+```bash
+npm run dev -- --model anthropic/claude-sonnet-4-5 --thinking off
+MEMCHAT_MODEL=openai/gpt-4o npm run dev
+```
+
+Useful commands inside the CLI:
+
+- `/model` shows the active model.
+- `/model list [text]` lists configured models; `*` means pi auth is available.
+- `/model <provider/model>` switches models.
+- `/model <model>:<thinking>` switches model and thinking level.
+- `/model next` and `/model prev` cycle available models.
+
+`--list-models [text]` prints configured models and exits.
+
+### Local Lemonade models
+
+Memchat vendors `extensions/lemonade-provider.ts` and loads it at startup so local Lemonade models appear under the `lemonade/` provider:
+
+```bash
+npm run dev -- --list-models lemonade
+npm run dev -- --model lemonade/Qwen3-0.6B-GGUF
+```
+
+Configure Lemonade in a local `.env` file (ignored by git) or exported environment variables:
+
+```bash
+MEMCHAT_LEMONADE_BASE_URL=...
+MEMCHAT_LEMONADE_API_KEY=...
+```
+
+If either value is missing, the vendored Lemonade provider is skipped.
 
 ### npm-managed local pi packages
 
@@ -87,7 +124,7 @@ npm install pi-agent-memory
 }
 ```
 
-At startup, memchat resolves those names from local `node_modules` and passes their package roots to pi as local package sources. You can also test without editing `package.json`:
+At startup, memchat resolves those names from local `node_modules` and passes their package roots to pi as local package sources. Global pi extension discovery is disabled to keep memchat startup deterministic; memchat explicitly loads its vendored extensions. You can also test without editing `package.json`:
 
 ```bash
 MEMCHAT_PI_PACKAGES=pi-agent-memory npm run dev
@@ -102,7 +139,9 @@ Implemented:
 1. TypeScript project scaffold.
 2. `@earendil-works/pi-coding-agent` dependency.
 3. Minimal streaming chat CLI.
-4. npm-managed local pi package discovery for plugins/extensions.
+4. npm-managed local pi package discovery.
+5. CLI/env startup model selection and interactive `/model` management.
+6. Vendored Lemonade provider extension for local `lemonade/` model discovery.
 
 Next expected steps:
 
