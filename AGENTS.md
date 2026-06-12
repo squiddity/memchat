@@ -26,6 +26,7 @@ This repository is for building `memchat`: a TypeScript chat agent on top of `@e
 - Add tests or eval fixtures for new memory behavior when feasible.
 - Keep README.md updated as architecture decisions become real.
 - After changes, run the relevant smoke tests in `docs/smoke-tests.md`.
+- For memory backend planning and implementation order, consult `docs/memory-backends.md`.
 
 ## Pi references
 
