@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.npm-cache/
+
+# Build output
+dist/
+
+# Local environment and secrets
+.env
+.env.*
+
+# Agent/tool local state
+.pi/
+.claude/
+.mcp.json
+
+# Editor/OS/local shell files
+.idea
+.idea/
+.vscode
+.vscode/
+*.swp
+.DS_Store
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.profile
+.ripgreprc
+.zprofile
+.zshrc
