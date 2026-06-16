@@ -13,7 +13,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.1"
+    "@earendil-works/pi-coding-agent": "^0.79.1",
+    "@tobilu/qmd": "2.5.3"
   },
   "memchat": {
     "piPackages": []

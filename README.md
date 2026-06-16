@@ -108,6 +108,35 @@ MEMCHAT_LEMONADE_API_KEY=...
 
 If either value is missing, the vendored Lemonade provider is skipped.
 
+### Memory backends
+
+Select a memory backend with `--memory` or `MEMCHAT_MEMORY`:
+
+```bash
+npm run dev -- --memory none
+npm run dev -- --memory transcript
+MEMCHAT_MEMORY=qmd npm run dev
+```
+
+Implemented memory modes:
+
+- `none`: no durable memory; active pi session context only.
+- `transcript` / `transcript-hardwired`: hardwired JSONL transcript persistence and hardwired lexical retrieval.
+- `qmd` / `qmd-hardwired`: hardwired JSONL transcript plus markdown notes under `.memchat/memory/`, with hardwired lexical retrieval.
+- `qmd-skill-retrieval`: hardwired JSONL/markdown persistence, but retrieval is model-centric via the project-local `qmd` skill.
+- `qmd-hybrid`: hardwired JSONL/markdown persistence and hardwired lexical recall, plus optional model-centric retrieval via the `qmd` skill.
+
+`qmd-skill-retrieval` and `qmd-hybrid` require the local npm dependency `@tobilu/qmd`. Memchat loads the package-provided `node_modules/@tobilu/qmd/skills/qmd/SKILL.md` without copying or overriding it, and verifies that the local `qmd` executable is present. That skill declares `allowed-tools: Bash(qmd:*)`, and memchat currently enables pi's built-in tools for those modes so the skill can call the `qmd` CLI directly. A future hardening pass should restrict Bash to qmd-only execution rather than enabling the full built-in tool set.
+
+Interactive memory commands:
+
+- `/memory` or `/memory status` shows backend status.
+- `/memory backends` lists available memory modes.
+- `/memory recall <query>` searches the selected backend.
+- `/memory index` initializes or refreshes backend-local indexes/files.
+
+The initial hardwired `qmd` modes intentionally keep markdown and JSONL as authoritative storage and use a TypeScript lexical search fallback. Skill-based modes evaluate model-centric retrieval using the exact qmd skill shipped by `@tobilu/qmd`. A later change can add a hardwired `@tobilu/qmd` index/search backend without changing the storage layout.
+
 ### npm-managed local pi packages
 
 For Option B-style plugin loading, install a pi package with npm and list it in `package.json`:
@@ -142,12 +171,15 @@ Implemented:
 4. npm-managed local pi package discovery.
 5. CLI/env startup model selection and interactive `/model` management.
 6. Vendored Lemonade provider extension for local `lemonade/` model discovery.
+7. Pluggable `none`, `transcript`, and `qmd` memory backends with hardwired and qmd skill retrieval modes.
 
 Next expected steps:
 
-1. Define the first memory adapter interface.
-2. Add transcript/fact persistence.
-3. Add basic consistency eval fixtures.
+1. Add model-assisted fact extraction into `.memchat/memory/facts.md`.
+2. Add basic consistency eval fixtures.
+3. Add eval fixtures comparing hardwired, skill-based, and hybrid retrieval.
+4. Integrate the real qmd package/indexer for richer hardwired markdown retrieval.
+5. Harden skill tool access so qmd skills can use qmd without enabling general Bash/tools.
 
 ## Project conventions
 

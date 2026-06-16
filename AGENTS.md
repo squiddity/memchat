@@ -30,12 +30,15 @@ This repository is for building `memchat`: a TypeScript chat agent on top of `@e
 
 ## Pi references
 
-Pi context files are loaded from `AGENTS.md`. For SDK and extension details, consult the installed pi docs before implementing:
+All file reads should stay inside this project folder. For npm packages, consult only packages installed under this repository's `./node_modules` and declared in `package.json`.
 
-- Main docs: `/home/alan/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/README.md`
-- SDK docs: `/home/alan/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/docs/sdk.md`
-- Extensions docs: `/home/alan/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
-- Package docs: `/home/alan/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/docs/packages.md`
+For SDK and extension details, consult the local pi docs before implementing:
+
+- Main docs/index: `./node_modules/@earendil-works/pi-coding-agent/docs/index.md`
+- SDK docs: `./node_modules/@earendil-works/pi-coding-agent/docs/sdk.md`
+- Extensions docs: `./node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+- Skills docs: `./node_modules/@earendil-works/pi-coding-agent/docs/skills.md`
+- Package docs: `./node_modules/@earendil-works/pi-coding-agent/docs/packages.md`
 
 ## Memory evaluation mindset
 

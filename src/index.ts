@@ -4,17 +4,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { argv, stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  loadSkillsFromDir,
   ModelRegistry,
   type PackageSource,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, type MemoryBackend, type MemoryMode, type MemoryModeId } from "./memory.js";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 
 const cwd = process.cwd();
 const agentDir = getAgentDir();
@@ -29,6 +32,7 @@ type CliOptions = {
   model?: string;
   thinking?: ThinkingLevel;
   listModels?: string | true;
+  memory: MemoryModeId;
 };
 
 type ModelResolution = {
@@ -47,14 +51,14 @@ type MemchatPackageJson = {
 
 const chatSystemPrompt = `You are Memchat, a warm, internally consistent chat and fiction partner.
 
-This is the first hello-world build of memchat. There is no long-term memory persistence yet.
-During this process, only use the active session context. If asked about prior sessions, explain that persistence is not implemented yet.
+Memchat may provide a "Relevant remembered context" block before a user message. Treat that block as retrieved memory, prefer it over invention, and use its citations when helpful.
+If no memory context is provided, only rely on the active session context.
 
 Conversation priorities:
 - Be conversational and concise by default.
 - For fiction, invention is allowed, but maintain consistency with details already established in this session.
 - If the user asks for something that depends on missing memory, ask or state uncertainty instead of fabricating continuity.
-- Do not claim to have stored durable memories yet.`;
+- Do not overstate memory confidence; distinguish retrieved context from guesses.`;
 
 function readLocalPiPackageSpecs(): string[] {
   const packageJsonPath = resolve(cwd, "package.json");
@@ -123,7 +127,7 @@ function isThinkingLevel(value: string): value is ThinkingLevel {
 }
 
 function parseCliOptions(args: string[]): CliOptions {
-  const options: CliOptions = {};
+  const options: Partial<CliOptions> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--provider" && args[i + 1]) {
@@ -137,6 +141,10 @@ function parseCliOptions(args: string[]): CliOptions {
     } else if (arg === "--list-models") {
       const next = args[i + 1];
       options.listModels = next && !next.startsWith("-") ? args[++i] : true;
+    } else if (arg === "--memory" && args[i + 1]) {
+      const memory = args[++i];
+      if (!isMemoryModeId(memory)) throw new Error(`Invalid --memory value "${memory}". Use: ${memoryModeIds.join(", ")}`);
+      options.memory = memory;
     }
   }
 
@@ -147,7 +155,13 @@ function parseCliOptions(args: string[]): CliOptions {
     if (!isThinkingLevel(envThinking)) throw new Error(`Invalid MEMCHAT_THINKING value "${envThinking}". Use: ${validThinkingLevels.join(", ")}`);
     options.thinking = envThinking;
   }
-  return options;
+  const envMemory = process.env.MEMCHAT_MEMORY;
+  if (!options.memory && envMemory) {
+    if (!isMemoryModeId(envMemory)) throw new Error(`Invalid MEMCHAT_MEMORY value "${envMemory}". Use: ${memoryModeIds.join(", ")}`);
+    options.memory = envMemory;
+  }
+  options.memory ??= "none";
+  return options as CliOptions;
 }
 
 function modelLabel(model: PiModel): string {
@@ -224,12 +238,63 @@ function printCurrentModel(model: PiModel | undefined, thinking: string) {
   output.write(`Thinking: ${thinking}\n`);
 }
 
-function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string) {
+function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string, memory: MemoryBackend, memoryMode: MemoryMode) {
   output.write("\nmemchat hello-world\n");
-  output.write("Type a message and press Enter. Commands: /help, /model, /plugins, /exit\n");
-  output.write("Memory: in-session only unless a loaded local pi package adds it.\n");
+  output.write("Type a message and press Enter. Commands: /help, /model, /memory, /plugins, /exit\n");
+  output.write(`Memory: ${memoryMode.id} (backend: ${memory.id}, persistence: ${memoryMode.persistence}, retrieval: ${memoryMode.retrieval})\n`);
+  if (memoryMode.allowSkillTools) output.write("Tools: built-in pi tools enabled so memory skills can invoke declared tools such as Bash(qmd:*).\n");
   output.write(`Model: ${isUsableModel(model) ? modelLabel(model) : "none selected"} (thinking: ${thinking})\n`);
   output.write(`Local pi packages: ${packageSources.length === 0 ? "none" : packageSources.join(", ")}\n\n`);
+}
+
+async function printMemoryStatus(memory: MemoryBackend, memoryMode: MemoryMode) {
+  const status = await memory.status();
+  output.write(`Memory mode: ${memoryMode.id}\n`);
+  output.write(`Backend: ${status.id}\n`);
+  output.write(`Persistence: ${memoryMode.persistence}\n`);
+  output.write(`Retrieval: ${memoryMode.retrieval}\n`);
+  output.write(`Skills: ${memoryMode.skills.length === 0 ? "none" : memoryMode.skills.join(", ")}\n`);
+  output.write(`Enabled: ${status.enabled ? "yes" : "no"}\n`);
+  output.write(`${status.description}\n`);
+  if (status.root) output.write(`Root: ${status.root}\n`);
+  if (status.sessionId) output.write(`Session: ${status.sessionId}\n`);
+  for (const note of status.notes ?? []) output.write(`- ${note}\n`);
+}
+
+function printMemoryBackends() {
+  output.write(`Memory modes: ${memoryModeIds.join(", ")}\n`);
+}
+
+function resolvePackageRoot(packageName: string): string {
+  const packageRoot = resolve(cwd, "node_modules", ...packageName.split("/"));
+  if (!existsSync(resolve(packageRoot, "package.json"))) {
+    throw new Error(`Memory mode requires local package ${packageName}. Run npm install so ${packageName}'s CLI and skills are available.`);
+  }
+  return packageRoot;
+}
+
+function getMemorySkills(memoryMode: MemoryMode): Skill[] {
+  if (!memoryMode.skills.includes("qmd")) return [];
+  const qmdRoot = resolvePackageRoot("@tobilu/qmd");
+  const localQmdBin = resolve(cwd, "node_modules", ".bin", process.platform === "win32" ? "qmd.cmd" : "qmd");
+  const packageQmdBin = join(qmdRoot, "bin", "qmd");
+  if (!existsSync(localQmdBin) && !existsSync(packageQmdBin)) {
+    throw new Error(`Memory mode requires the local qmd executable from @tobilu/qmd. Run npm install and verify ${localQmdBin} exists.`);
+  }
+  const skillDir = join(qmdRoot, "skills", "qmd");
+  const result = loadSkillsFromDir({ dir: skillDir, source: "@tobilu/qmd" });
+  if (result.diagnostics.length > 0) {
+    const detail = result.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("; ");
+    throw new Error(`Failed to load @tobilu/qmd skill: ${detail}`);
+  }
+  const qmdSkill = result.skills.find((skill) => skill.name === "qmd");
+  if (!qmdSkill) throw new Error(`Package @tobilu/qmd did not provide skills/qmd/SKILL.md. Reinstall or pin a compatible @tobilu/qmd version.`);
+  return [qmdSkill];
+}
+
+function formatPromptWithMemory(userText: string, memoryContext: string): string {
+  if (!memoryContext) return userText;
+  return `${memoryContext}\n\nCurrent user message:\n${userText}`;
 }
 
 function printHelp() {
@@ -240,9 +305,14 @@ function printHelp() {
       `  /model list [text]   List configured models (* means auth is available)\n` +
       `  /model <model>       Switch model, e.g. /model openai/gpt-4o or /model sonnet:high\n` +
       `  /model next|prev     Cycle models\n` +
+      `  /memory              Show selected memory backend\n` +
+      `  /memory status       Show memory backend status\n` +
+      `  /memory backends     List available memory backends\n` +
+      `  /memory recall <q>   Search memory\n` +
+      `  /memory index        Initialize/reindex memory files\n` +
       `  /plugins             Show npm-managed local pi packages configured for this run\n` +
       `  /exit                End the chat\n\n` +
-      `Startup options/env: --model, --provider, --thinking, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING.\n` +
+      `Startup options/env: --model, --provider, --thinking, --memory, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY.\n` +
       `Configure local pi packages with package.json memchat.piPackages or MEMCHAT_PI_PACKAGES.\n\n`,
   );
 }
@@ -251,6 +321,9 @@ async function main() {
   loadLocalEnv();
   const cliOptions = parseCliOptions(argv.slice(2));
   const packageSources = getLocalPiPackageSources();
+  const memoryMode = resolveMemoryMode(cliOptions.memory);
+  const memory = createMemoryBackend({ id: memoryMode.backend, cwd });
+  const memorySkills = getMemorySkills(memoryMode);
   const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
 
@@ -269,6 +342,10 @@ async function main() {
     noExtensions: true,
     noContextFiles: true,
     systemPrompt: chatSystemPrompt,
+    skillsOverride: (current) => ({
+      skills: [...current.skills, ...memorySkills],
+      diagnostics: current.diagnostics,
+    }),
   });
   await resourceLoader.reload();
 
@@ -285,7 +362,7 @@ async function main() {
     resourceLoader,
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
-    noTools: "builtin",
+    ...(memoryMode.allowSkillTools ? {} : { noTools: "builtin" as const }),
     thinkingLevel: initialThinking,
   });
 
@@ -308,19 +385,22 @@ async function main() {
 
   if (cliOptions.listModels) {
     printModelList(session.modelRegistry, cliOptions.listModels === true ? undefined : cliOptions.listModels);
+    await memory.dispose?.();
     session.dispose();
     return;
   }
 
   const rl = readline.createInterface({ input, output });
+  let activeAssistantText = "";
 
   session.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      activeAssistantText += event.assistantMessageEvent.delta;
       output.write(event.assistantMessageEvent.delta);
     }
   });
 
-  printBanner(packageSources, session.model, session.thinkingLevel);
+  printBanner(packageSources, session.model, session.thinkingLevel, memory, memoryMode);
 
   async function handleInput(line: string): Promise<boolean> {
     const text = line.trim();
@@ -333,6 +413,29 @@ async function main() {
     }
     if (text === "/model") {
       printCurrentModel(session.model, session.thinkingLevel);
+      return true;
+    }
+    if (text === "/memory" || text === "/memory status") {
+      await printMemoryStatus(memory, memoryMode);
+      return true;
+    }
+    if (text === "/memory backends") {
+      printMemoryBackends();
+      return true;
+    }
+    if (text.startsWith("/memory recall ")) {
+      const query = text.slice("/memory recall ".length).trim();
+      const hits = await memory.recall(query);
+      if (hits.length === 0) output.write("No memory hits.\n");
+      else {
+        for (const [index, hit] of hits.entries()) {
+          output.write(`${index + 1}. [${hit.kind}:${hit.source}${hit.timestamp ? ` @ ${hit.timestamp}` : ""}${hit.score !== undefined ? ` score=${hit.score}` : ""}] ${hit.text}\n`);
+        }
+      }
+      return true;
+    }
+    if (text === "/memory index") {
+      output.write(`${memory.index ? await memory.index() : "This backend does not support indexing."}\n`);
       return true;
     }
     if (text.startsWith("/model ")) {
@@ -374,8 +477,18 @@ async function main() {
     }
 
     output.write("memchat> ");
+    activeAssistantText = "";
     try {
-      await session.prompt(text);
+      const memoryContext = memoryMode.retrieval === "hardwired" || memoryMode.retrieval === "hybrid" ? await memory.beforePrompt({ userText: text }) : { text: "", hits: [] };
+      await session.prompt(formatPromptWithMemory(text, memoryContext.text));
+      if (memoryMode.persistence === "hardwired" || memoryMode.persistence === "hybrid") {
+        await memory.afterTurn({
+          userText: text,
+          assistantText: activeAssistantText.trim(),
+          model: isUsableModel(session.model) ? modelLabel(session.model) : undefined,
+          timestamp: new Date().toISOString(),
+        });
+      }
     } catch (error) {
       output.write(`\n[error] ${error instanceof Error ? error.message : String(error)}\n`);
       if (!isUsableModel(session.model)) output.write("Use /model list to inspect configured models, then /model <provider/model> to select one.\n");
@@ -397,6 +510,7 @@ async function main() {
     }
   } finally {
     rl.close();
+    await memory.dispose?.();
     session.dispose();
   }
 

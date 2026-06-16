@@ -10,7 +10,9 @@ Memchat should support selectable memory backends for both interactive CLI use a
 4. `pi-mem` — pi-native extension backed by the `claude-mem` worker.
 5. `memsearch` — markdown-first semantic memory backed by Python/Milvus tooling.
 
-The next unit of work should implement selectable `none`, `transcript`, and `qmd` modes.
+Selectable `none`, `transcript`, and `qmd` backends are now implemented in `src/memory.ts` and wired into the CLI. Memory selection is moving from simple backend names toward policy modes that separate storage backend, persistence policy, retrieval policy, and skill exposure. Current modes include `none`, `transcript`/`transcript-hardwired`, `qmd`/`qmd-hardwired`, `qmd-skill-retrieval`, and `qmd-hybrid`.
+
+The current hardwired `qmd` path uses the planned markdown source-of-truth layout plus a TypeScript lexical search fallback. Skill-based qmd modes require the local npm package `@tobilu/qmd`, load its package-provided `skills/qmd/SKILL.md` without copying or overriding it, and let the model decide when to use the qmd CLI for retrieval. Replacing the hardwired fallback with the `@tobilu/qmd` SDK/CLI is a future enhancement.
 
 ## Selection interface
 
@@ -18,11 +20,15 @@ Use the same selector in CLI, env, and tests/evals:
 
 ```bash
 npm run dev -- --memory none
-npm run dev -- --memory transcript
-npm run dev -- --memory qmd
+npm run dev -- --memory transcript-hardwired
+npm run dev -- --memory qmd-hardwired
+npm run dev -- --memory qmd-skill-retrieval
+npm run dev -- --memory qmd-hybrid
 
-MEMCHAT_MEMORY=qmd npm run dev
+MEMCHAT_MEMORY=qmd-hybrid npm run dev
 ```
+
+Short aliases `transcript` and `qmd` remain supported for the hardwired modes.
 
 Interactive commands should start small:
 
@@ -91,6 +97,9 @@ Do not treat generated indexes as authoritative. Markdown and JSONL are the dura
 Keep the interface small and event-oriented:
 
 ```ts
+type MemoryPersistencePolicy = "none" | "hardwired" | "skill" | "hybrid";
+type MemoryRetrievalPolicy = "none" | "hardwired" | "skill" | "hybrid";
+
 interface MemoryBackend {
   id: string;
   status(): Promise<MemoryStatus>;
@@ -138,13 +147,17 @@ type MemoryHit = {
 - `/memory recall <query>` searches qmd and returns cited snippets.
 - `beforePrompt` retrieves top relevant snippets and injects them into context.
 
-Potential first implementation:
+Current first implementation:
 
-1. After each assistant turn, append a simple markdown note to `summaries/YYYY-MM-DD.md`.
-2. Run or schedule qmd index/update.
-3. Before each prompt, search qmd using the user input.
-4. Inject top hits as “Relevant remembered context”.
-5. Log query/hits for eval traceability.
+1. After each assistant turn, append a simple markdown note to `summaries/YYYY-MM-DD.md` when persistence policy is `hardwired` or `hybrid`.
+2. `/memory index` initializes markdown files and reports indexed file count.
+3. In hardwired retrieval modes, before each prompt search markdown using lexical matching over the user input.
+4. Inject top hits as “Relevant remembered context” in hardwired/hybrid retrieval modes.
+5. Persist raw turns to JSONL for transcript traceability.
+6. In `qmd-skill-retrieval`, skip automatic context injection and rely on the loaded qmd skill for model-centric retrieval.
+7. In `qmd-hybrid`, combine automatic lexical recall with optional qmd skill retrieval.
+
+Current safety note: qmd skill modes intentionally enable pi built-in tools so the unmodified package qmd skill declaring `allowed-tools: Bash(qmd:*)` can call `qmd` directly. A future hardening task should restrict actual Bash execution to qmd-only commands while preserving compatibility with unmodified qmd-style skills.
 
 ### `pi-mem`
 

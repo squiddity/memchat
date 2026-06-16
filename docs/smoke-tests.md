@@ -21,11 +21,38 @@ printf '/help\n/model\n/exit\n' | npm run dev
 Expected:
 
 - Banner prints.
-- `/help` lists commands.
+- `/help` lists commands, including `/memory`.
 - `/model` prints either `none selected` or the selected/default model.
 - Process exits with `bye`.
 
-## 3. Model listing / selection smoke test
+## 3. Memory backend command smoke test
+
+```bash
+printf '/memory\n/memory backends\n/memory index\n/exit\n' | npm run dev -- --memory qmd-hardwired
+```
+
+Expected:
+
+- Banner shows `Memory: qmd-hardwired`.
+- `/memory` reports qmd status and `.memchat` paths.
+- `/memory backends` lists hardwired and skill memory modes.
+- `/memory index` completes without an external server.
+
+## 4. QMD skill retrieval mode smoke test
+
+```bash
+printf '/memory\n/exit\n' | npm run dev -- --memory qmd-skill-retrieval
+```
+
+Expected:
+
+- Banner shows `Memory: qmd-skill-retrieval`.
+- Banner notes that built-in pi tools are enabled so declared qmd skill Bash usage can run.
+- `/memory` reports qmd status and `.memchat` paths.
+
+Note: this smoke test requires `npm install` to have completed successfully so local `@tobilu/qmd`, its package-provided skill, and the local `qmd` executable are present. End-to-end qmd skill evaluation additionally requires using a configured model.
+
+## 5. Model listing / selection smoke test
 
 If local Lemonade env is configured in `.env`, verify provider discovery:
 
@@ -53,7 +80,7 @@ If Lemonade is unavailable, use another configured provider/model from:
 npm run dev -- --list-models
 ```
 
-## 4. Actual model interaction
+## 6. Actual model interaction
 
 Use a configured chat-capable model and send a trivial prompt:
 
