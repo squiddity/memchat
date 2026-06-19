@@ -43,6 +43,38 @@ type ModelResolution = {
   matches?: PiModel[];
 };
 
+class InlineSpinner {
+  private readonly frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  private timer: NodeJS.Timeout | undefined;
+  private frameIndex = 0;
+  private active = false;
+
+  constructor(private readonly stream: NodeJS.WriteStream) {}
+
+  start(text = "working...") {
+    if (!this.stream.isTTY || this.active) return;
+    this.active = true;
+    this.frameIndex = 0;
+
+    const render = () => {
+      const frame = this.frames[this.frameIndex % this.frames.length];
+      this.frameIndex += 1;
+      this.stream.write(`\r\x1b[2K${frame} ${text}`);
+    };
+
+    render();
+    this.timer = setInterval(render, 100);
+  }
+
+  stop() {
+    if (!this.active) return;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    this.active = false;
+    this.stream.write("\r\x1b[2K");
+  }
+}
+
 type MemchatPackageJson = {
   memchat?: {
     /** npm package names or local paths containing pi package resources. */
@@ -395,12 +427,20 @@ async function main() {
   }
 
   const rl = readline.createInterface({ input, output });
+  const spinner = new InlineSpinner(output);
   let activeAssistantText = "";
+  let activeAssistantStarted = false;
 
   session.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      activeAssistantText += event.assistantMessageEvent.delta;
-      output.write(event.assistantMessageEvent.delta);
+      const delta = event.assistantMessageEvent.delta;
+      if (!activeAssistantStarted) {
+        activeAssistantStarted = true;
+        spinner.stop();
+        output.write("memchat> ");
+      }
+      activeAssistantText += delta;
+      output.write(delta);
     }
   });
 
@@ -480,11 +520,13 @@ async function main() {
       return true;
     }
 
-    output.write("memchat> ");
     activeAssistantText = "";
+    activeAssistantStarted = false;
+    spinner.start("working...");
     try {
       const memoryContext = memoryMode.retrieval === "hardwired" || memoryMode.retrieval === "hybrid" ? await memory.beforePrompt({ userText: text }) : { text: "", hits: [] };
       await session.prompt(formatPromptWithMemory(text, memoryContext.text));
+      spinner.stop();
       if (memoryMode.persistence === "hardwired" || memoryMode.persistence === "hybrid") {
         await memory.afterTurn({
           userText: text,
@@ -494,6 +536,7 @@ async function main() {
         });
       }
     } catch (error) {
+      spinner.stop();
       output.write(`\n[error] ${error instanceof Error ? error.message : String(error)}\n`);
       if (!isUsableModel(session.model)) output.write("Use /model list to inspect configured models, then /model <provider/model> to select one.\n");
     }
@@ -513,6 +556,7 @@ async function main() {
       }
     }
   } finally {
+    spinner.stop();
     rl.close();
     await memory.dispose?.();
     session.dispose();
