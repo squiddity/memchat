@@ -165,6 +165,51 @@ MEMCHAT_PI_PACKAGES=pi-agent-memory npm run dev
 
 Inside the CLI, use `/plugins` to show the resolved local package paths.
 
+## Running memchat inside a pi interactive shell
+
+For manual TUI experiments, use the pi package [`pi-interactive-shell`](https://github.com/nicobailon/pi-interactive-shell). Install it into the **pi agent environment**, not this `memchat` package:
+
+```bash
+pi install npm:pi-interactive-shell
+```
+
+After installation, pi coding agents get an `interactive_shell` tool. This lets an agent start `memchat` in an observable terminal overlay so the human user can drive the chat while the agent watches I/O, or the agent can drive the CLI and periodically inspect behavior.
+
+Recommended agent-side tool calls from this repository root:
+
+```typescript
+// Human-driven manual test: opens an overlay and blocks the agent until closed.
+interactive_shell({
+  command: "npm run dev -- --memory qmd-hybrid",
+  mode: "interactive",
+  reason: "Manual memchat memory test"
+})
+
+// Shared supervision: user can type in the overlay; agent can poll output later.
+interactive_shell({
+  command: "npm run dev -- --memory qmd-hybrid",
+  mode: "hands-free",
+  reason: "Observe memchat TUI memory behavior",
+  handsFree: { autoExitOnQuiet: false }
+})
+
+// Later, using the returned sessionId:
+interactive_shell({ sessionId: "<session-id>", outputLines: 80 })
+interactive_shell({ sessionId: "<session-id>", input: "/memory status", submit: true })
+interactive_shell({ sessionId: "<session-id>", input: "/memory recall brass telescope", submit: true })
+interactive_shell({ sessionId: "<session-id>", kill: true })
+```
+
+Use `interactive` when the user wants full manual control and the agent should wait. Use `hands-free` when the agent should keep working, check output occasionally, or send slash commands/test prompts into the running memchat session. Avoid `dispatch` for long manual chats unless you explicitly want fire-and-forget behavior.
+
+Useful manual test pattern:
+
+1. Start with a clean or named memory directory, for example `npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/closet-test`.
+2. Establish several fictional facts in the TUI.
+3. Ask about them after intervening turns.
+4. Restart memchat against the same memory directory inside another `interactive_shell` session.
+5. Use `/memory status`, `/memory recall <query>`, and direct questions to check whether memory survived and stayed consistent.
+
 ## Development status
 
 Implemented:
