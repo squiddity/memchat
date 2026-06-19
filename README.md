@@ -110,12 +110,14 @@ If either value is missing, the vendored Lemonade provider is skipped.
 
 ### Memory backends
 
-Select a memory backend with `--memory` or `MEMCHAT_MEMORY`:
+Select a memory backend with `--memory` or `MEMCHAT_MEMORY`. Select a storage root with `--memory-dir` or `MEMCHAT_MEMORY_DIR`:
 
 ```bash
 npm run dev -- --memory none
 npm run dev -- --memory transcript
 MEMCHAT_MEMORY=qmd npm run dev
+npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/run-001
+MEMCHAT_MEMORY_DIR=.memchat-clean npm run dev -- --memory qmd-hardwired
 ```
 
 Implemented memory modes:
@@ -134,6 +136,8 @@ Interactive memory commands:
 - `/memory backends` lists available memory modes.
 - `/memory recall <query>` searches the selected backend.
 - `/memory index` initializes or refreshes backend-local indexes/files.
+
+By default, memory lives under `.memchat/`. Use separate memory directories to preserve long-running progress, start clean experiments, or compare backends against different corpora.
 
 The initial hardwired `qmd` modes intentionally keep markdown and JSONL as authoritative storage and use a TypeScript lexical search fallback. Skill-based modes evaluate model-centric retrieval using the exact qmd skill shipped by `@tobilu/qmd`. A later change can add a hardwired `@tobilu/qmd` index/search backend without changing the storage layout.
 

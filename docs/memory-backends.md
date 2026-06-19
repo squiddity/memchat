@@ -24,11 +24,13 @@ npm run dev -- --memory transcript-hardwired
 npm run dev -- --memory qmd-hardwired
 npm run dev -- --memory qmd-skill-retrieval
 npm run dev -- --memory qmd-hybrid
+npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/run-001
 
 MEMCHAT_MEMORY=qmd-hybrid npm run dev
+MEMCHAT_MEMORY_DIR=.memchat-clean npm run dev -- --memory qmd-hardwired
 ```
 
-Short aliases `transcript` and `qmd` remain supported for the hardwired modes.
+Short aliases `transcript` and `qmd` remain supported for the hardwired modes. By default, the memory root is `.memchat/`; use `--memory-dir` or `MEMCHAT_MEMORY_DIR` to preserve progress in one directory and start clean experiments in another.
 
 Interactive commands should start small:
 

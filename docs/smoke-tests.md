@@ -28,13 +28,14 @@ Expected:
 ## 3. Memory backend command smoke test
 
 ```bash
-printf '/memory\n/memory backends\n/memory index\n/exit\n' | npm run dev -- --memory qmd-hardwired
+rm -rf /tmp/memchat-smoke-memory
+printf '/memory\n/memory backends\n/memory index\n/exit\n' | npm run dev -- --memory qmd-hardwired --memory-dir /tmp/memchat-smoke-memory
 ```
 
 Expected:
 
 - Banner shows `Memory: qmd-hardwired`.
-- `/memory` reports qmd status and `.memchat` paths.
+- `/memory` reports qmd status and `/tmp/memchat-smoke-memory` paths.
 - `/memory backends` lists hardwired and skill memory modes.
 - `/memory index` completes without an external server.
 

@@ -12,7 +12,7 @@ dist/
 # Agent/tool local state
 .pi/
 .claude/
-.memchat/
+.memchat*/
 .mcp.json
 
 # Editor/OS/local shell files

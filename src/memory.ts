@@ -69,6 +69,7 @@ export interface MemoryBackend {
 type MemoryOptions = {
   id: MemoryBackendId;
   cwd: string;
+  root?: string;
   sessionId?: string;
   maxPromptHits?: number;
 };
@@ -170,7 +171,7 @@ class TranscriptMemoryBackend implements MemoryBackend {
   protected readonly maxPromptHits: number;
 
   constructor(options: MemoryOptions) {
-    this.root = resolve(options.cwd, ".memchat");
+    this.root = options.root ? resolve(options.cwd, options.root) : resolve(options.cwd, ".memchat");
     this.sessionId = options.sessionId ?? sessionId();
     this.maxPromptHits = options.maxPromptHits ?? 4;
   }

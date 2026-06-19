@@ -33,6 +33,7 @@ type CliOptions = {
   thinking?: ThinkingLevel;
   listModels?: string | true;
   memory: MemoryModeId;
+  memoryDir?: string;
 };
 
 type ModelResolution = {
@@ -145,6 +146,8 @@ function parseCliOptions(args: string[]): CliOptions {
       const memory = args[++i];
       if (!isMemoryModeId(memory)) throw new Error(`Invalid --memory value "${memory}". Use: ${memoryModeIds.join(", ")}`);
       options.memory = memory;
+    } else if (arg === "--memory-dir" && args[i + 1]) {
+      options.memoryDir = args[++i];
     }
   }
 
@@ -161,6 +164,7 @@ function parseCliOptions(args: string[]): CliOptions {
     options.memory = envMemory;
   }
   options.memory ??= "none";
+  options.memoryDir ??= process.env.MEMCHAT_MEMORY_DIR;
   return options as CliOptions;
 }
 
@@ -312,7 +316,7 @@ function printHelp() {
       `  /memory index        Initialize/reindex memory files\n` +
       `  /plugins             Show npm-managed local pi packages configured for this run\n` +
       `  /exit                End the chat\n\n` +
-      `Startup options/env: --model, --provider, --thinking, --memory, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY.\n` +
+      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR.\n` +
       `Configure local pi packages with package.json memchat.piPackages or MEMCHAT_PI_PACKAGES.\n\n`,
   );
 }
@@ -322,7 +326,7 @@ async function main() {
   const cliOptions = parseCliOptions(argv.slice(2));
   const packageSources = getLocalPiPackageSources();
   const memoryMode = resolveMemoryMode(cliOptions.memory);
-  const memory = createMemoryBackend({ id: memoryMode.backend, cwd });
+  const memory = createMemoryBackend({ id: memoryMode.backend, cwd, root: cliOptions.memoryDir });
   const memorySkills = getMemorySkills(memoryMode);
   const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
