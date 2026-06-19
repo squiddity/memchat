@@ -191,3 +191,13 @@ Next expected steps:
 - Keep memory APIs small and model-agnostic.
 - Add tests/evals alongside new memory behavior.
 - Document assumptions about narrative state and contradiction handling.
+
+## Maintainer notes
+
+If `git push` over HTTPS fails in an agent shell with `could not read Username`, use the GitHub CLI credentials already configured for the environment:
+
+```bash
+gh auth status
+gh auth setup-git
+git push origin main
+```
