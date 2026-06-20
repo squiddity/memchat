@@ -50,7 +50,7 @@ export type MemoryContext = {
 };
 
 export type MemoryDebugEvent = {
-  operation: "recall" | "before-prompt" | "write" | "index";
+  operation: "recall" | "before-prompt" | "write" | "index" | "synthesize" | "compact";
   backend: MemoryBackendId;
   detail: string;
   query?: string;
@@ -63,6 +63,43 @@ export type ConversationTurn = {
   assistantText: string;
   model?: string;
   timestamp: string;
+};
+
+export type MemoryFileSnapshot = {
+  facts: string;
+  state: string;
+  conflicts: string;
+  recentSummary: string;
+};
+
+export type MemorySynthesis = {
+  summaryBullets: string[];
+  facts: string[];
+  state: string[];
+  conflicts: string[];
+};
+
+export type MemoryCompaction = {
+  summaryMarkdown: string;
+  factsMarkdown?: string;
+  stateMarkdown?: string;
+  conflictsMarkdown?: string;
+};
+
+export type MemorySynthesisProvider = {
+  label: string;
+  synthesizeTurn(input: {
+    turn: ConversationTurn;
+    sessionId: string;
+    transcriptSource: string;
+    memory: MemoryFileSnapshot;
+  }): Promise<MemorySynthesis | undefined>;
+  compactSession?(input: {
+    sessionId: string;
+    transcriptSource: string;
+    memory: MemoryFileSnapshot;
+    sessionSummary: string;
+  }): Promise<MemoryCompaction | undefined>;
 };
 
 export interface MemoryBackend {
@@ -81,6 +118,7 @@ type MemoryOptions = {
   root?: string;
   sessionId?: string;
   maxPromptHits?: number;
+  synthesisProvider?: MemorySynthesisProvider;
   onDebug?: (event: MemoryDebugEvent) => void;
 };
 
@@ -145,6 +183,14 @@ function excerpt(text: string, queryTokens: string[], maxLength = 600): string {
   return `${start > 0 ? "…" : ""}${compact.slice(start, end)}${end < compact.length ? "…" : ""}`;
 }
 
+function normalizeMarkdown(markdown: string): string {
+  return `${markdown.trim()}\n`;
+}
+
+function asBullets(items: string[]): string {
+  return items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n");
+}
+
 class NoneMemoryBackend implements MemoryBackend {
   id = "none" as const;
 
@@ -179,12 +225,14 @@ class TranscriptMemoryBackend implements MemoryBackend {
   protected readonly root: string;
   protected readonly sessionId: string;
   protected readonly maxPromptHits: number;
+  protected readonly synthesisProvider: MemorySynthesisProvider | undefined;
   protected readonly onDebug: ((event: MemoryDebugEvent) => void) | undefined;
 
   constructor(options: MemoryOptions) {
     this.root = options.root ? resolve(options.cwd, options.root) : resolve(options.cwd, ".memchat");
     this.sessionId = options.sessionId ?? sessionId();
     this.maxPromptHits = options.maxPromptHits ?? 4;
+    this.synthesisProvider = options.synthesisProvider;
     this.onDebug = options.onDebug;
   }
 
@@ -281,6 +329,7 @@ class TranscriptMemoryBackend implements MemoryBackend {
 
 class QmdMemoryBackend extends TranscriptMemoryBackend {
   id = "qmd" as const;
+  private readonly touchedSummaryPaths = new Set<string>();
 
   private get memoryDir(): string {
     return join(this.root, "memory");
@@ -288,6 +337,18 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
 
   private get summariesDir(): string {
     return join(this.memoryDir, "summaries");
+  }
+
+  private get factsPath(): string {
+    return join(this.memoryDir, "facts.md");
+  }
+
+  private get statePath(): string {
+    return join(this.memoryDir, "state.md");
+  }
+
+  private get conflictsPath(): string {
+    return join(this.memoryDir, "conflicts.md");
   }
 
   async status(): Promise<MemoryStatus> {
@@ -301,7 +362,10 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
       notes: [
         `Transcript: ${this.transcriptPath}`,
         `Markdown source: ${this.memoryDir}`,
-        "Hardwired qmd recall currently uses lexical search over markdown; qmd skill modes can use the @tobilu/qmd CLI for model-centric retrieval.",
+        this.synthesisProvider
+          ? `Markdown synthesis: model-based via ${this.synthesisProvider.label}`
+          : "Markdown synthesis: unavailable; falling back to minimal unsynthesized bullets.",
+        "Hardwired qmd recall currently uses lexical search over markdown plus transcript; qmd skill modes can use the @tobilu/qmd CLI for model-centric retrieval.",
       ],
     };
   }
@@ -317,32 +381,45 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     await super.afterTurn(turn);
     await ensureDir(this.summariesDir);
     await this.ensureSeedFiles();
-    const day = turn.timestamp.slice(0, 10);
-    const summaryPath = join(this.summariesDir, `${day}.md`);
-    const entry = [
-      `\n## ${turn.timestamp}`,
-      "",
-      `- User: ${turn.userText.replace(/\n/g, " ")}`,
-      `- Assistant: ${turn.assistantText.replace(/\n/g, " ")}`,
-    ].join("\n");
-    await appendFile(summaryPath, `${entry}\n`, "utf-8");
-    this.debug({ operation: "write", detail: "appended turn to markdown summary memory", source: summaryPath });
+    const summaryPath = this.summaryPathForTimestamp(turn.timestamp);
+    this.touchedSummaryPaths.add(summaryPath);
+    const transcriptSource = join(".memchat", "sessions", `${this.sessionId}.jsonl`);
+    const memory = await this.snapshotMemory(summaryPath);
+    let synthesis: MemorySynthesis | undefined;
+
+    if (this.synthesisProvider) {
+      this.debug({ operation: "synthesize", detail: `synthesizing markdown memory with ${this.synthesisProvider.label}`, source: summaryPath });
+      try {
+        synthesis = await this.synthesisProvider.synthesizeTurn({ turn, sessionId: this.sessionId, transcriptSource, memory });
+      } catch (error) {
+        this.debug({ operation: "synthesize", detail: `synthesis failed; falling back to minimal bullet: ${error instanceof Error ? error.message : String(error)}`, source: summaryPath });
+      }
+    }
+
+    synthesis ??= this.fallbackSynthesis(turn);
+    await this.writeSynthesis(turn, synthesis, transcriptSource, summaryPath);
   }
 
   override async recall(query: string): Promise<MemoryHit[]> {
     const tokens = tokenize(query);
-    this.debug({ operation: "recall", detail: `running qmd-shaped lexical recall over markdown plus transcript with ${tokens.length} token(s)`, query });
+    this.debug({ operation: "recall", detail: `running two-stage qmd lexical recall with ${tokens.length} token(s)`, query });
     if (tokens.length === 0) {
-      this.debug({ operation: "recall", detail: "qmd-shaped lexical recall skipped; no query tokens", query, hits: 0 });
+      this.debug({ operation: "recall", detail: "two-stage qmd lexical recall skipped; no query tokens", query, hits: 0 });
       return [];
     }
     await this.ensureSeedFiles();
     const markdownHits = await this.searchMarkdown(tokens, query);
+    if (!this.shouldFallbackToTranscript(markdownHits, tokens)) {
+      const results = markdownHits.slice(0, 10);
+      this.debug({ operation: "recall", detail: `stage 1 synthesized markdown memory was sufficient; skipped transcript fallback`, query, hits: results.length });
+      return results;
+    }
+
     const transcriptHits = await super.recall(query);
     const results = [...markdownHits, ...transcriptHits]
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)))
+      .sort((a, b) => this.stageRank(a) - this.stageRank(b) || (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)))
       .slice(0, 10);
-    this.debug({ operation: "recall", detail: `qmd-shaped lexical recall returned ${results.length} total hit(s)`, query, hits: results.length });
+    this.debug({ operation: "recall", detail: `stage 2 transcript fallback returned ${transcriptHits.length} transcript hit(s); ${results.length} total hit(s)`, query, hits: results.length });
     return results;
   }
 
@@ -353,17 +430,100 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     return `indexed ${files.length} markdown memory file(s) for lexical qmd-compatible recall.`;
   }
 
+  async dispose(): Promise<void> {
+    if (!this.synthesisProvider?.compactSession) return;
+    await this.ensureSeedFiles();
+    const summaryPaths = this.touchedSummaryPaths.size > 0 ? [...this.touchedSummaryPaths] : [this.summaryPathForTimestamp(new Date().toISOString())];
+    const sessionSummary = (await Promise.all(summaryPaths.map(async (path) => existsSync(path) ? await readFile(path, "utf-8") : ""))).join("\n\n");
+    if (!sessionSummary.trim()) return;
+    const sessionSummaryPath = summaryPaths[summaryPaths.length - 1];
+    const transcriptSource = join(".memchat", "sessions", `${this.sessionId}.jsonl`);
+    this.debug({ operation: "compact", detail: `compacting session markdown memory with ${this.synthesisProvider.label}`, source: sessionSummaryPath });
+    try {
+      const compaction = await this.synthesisProvider.compactSession({
+        sessionId: this.sessionId,
+        transcriptSource,
+        memory: await this.snapshotMemory(sessionSummaryPath),
+        sessionSummary,
+      });
+      if (!compaction) return;
+      if (compaction.summaryMarkdown?.trim()) await writeFile(sessionSummaryPath, normalizeMarkdown(compaction.summaryMarkdown), "utf-8");
+      if (compaction.factsMarkdown?.trim()) await writeFile(this.factsPath, normalizeMarkdown(compaction.factsMarkdown), "utf-8");
+      if (compaction.stateMarkdown?.trim()) await writeFile(this.statePath, normalizeMarkdown(compaction.stateMarkdown), "utf-8");
+      if (compaction.conflictsMarkdown?.trim()) await writeFile(this.conflictsPath, normalizeMarkdown(compaction.conflictsMarkdown), "utf-8");
+      this.debug({ operation: "compact", detail: "wrote compacted/restated markdown memory", source: this.memoryDir });
+    } catch (error) {
+      this.debug({ operation: "compact", detail: `compaction failed: ${error instanceof Error ? error.message : String(error)}`, source: this.memoryDir });
+    }
+  }
+
   private async ensureSeedFiles(): Promise<void> {
     await ensureDir(this.summariesDir);
     const seedFiles: Array<[string, string]> = [
-      ["facts.md", "# Facts\n\nStable extracted facts can be added here.\n"],
-      ["state.md", "# Current State\n\nCurrent world/chat state snapshot can be added here.\n"],
-      ["conflicts.md", "# Conflicts and Retcons\n\nConflicting claims and intentional retcons can be tracked here.\n"],
+      ["facts.md", "# Facts\n\nStable extracted facts with source citations are added here.\n"],
+      ["state.md", "# Current State\n\nCurrent world/chat state snapshot is restated here.\n"],
+      ["conflicts.md", "# Conflicts and Retcons\n\nConflicting claims and intentional retcons are tracked here.\n"],
     ];
     for (const [name, content] of seedFiles) {
       const path = join(this.memoryDir, name);
       if (!existsSync(path)) await writeFile(path, content, "utf-8");
     }
+  }
+
+  private summaryPathForTimestamp(timestamp: string): string {
+    return join(this.summariesDir, `${timestamp.slice(0, 10)}.md`);
+  }
+
+  private async snapshotMemory(summaryPath: string): Promise<MemoryFileSnapshot> {
+    const readExisting = async (path: string): Promise<string> => existsSync(path) ? await readFile(path, "utf-8") : "";
+    return {
+      facts: await readExisting(this.factsPath),
+      state: await readExisting(this.statePath),
+      conflicts: await readExisting(this.conflictsPath),
+      recentSummary: await readExisting(summaryPath),
+    };
+  }
+
+  private fallbackSynthesis(turn: ConversationTurn): MemorySynthesis {
+    return {
+      summaryBullets: [`Unsynthesized turn: user said "${turn.userText.replace(/\s+/g, " ").slice(0, 180)}"; assistant replied with ${turn.assistantText.length} character(s).`],
+      facts: [],
+      state: [],
+      conflicts: [],
+    };
+  }
+
+  private async writeSynthesis(turn: ConversationTurn, synthesis: MemorySynthesis, transcriptSource: string, summaryPath: string): Promise<void> {
+    const source = `${transcriptSource} @ ${turn.timestamp}`;
+    if (synthesis.summaryBullets.length > 0) {
+      const entry = [`\n## ${turn.timestamp}`, "", asBullets(synthesis.summaryBullets), "", `Source: ${source}`].join("\n");
+      await appendFile(summaryPath, `${entry}\n`, "utf-8");
+      this.debug({ operation: "write", detail: `appended ${synthesis.summaryBullets.length} synthesized summary bullet(s)`, source: summaryPath });
+    }
+    if (synthesis.facts.length > 0) {
+      await appendFile(this.factsPath, `\n## ${turn.timestamp}\n\n${asBullets(synthesis.facts.map((fact) => `${fact} Source: ${source}`))}\n`, "utf-8");
+      this.debug({ operation: "write", detail: `appended ${synthesis.facts.length} fact(s)`, source: this.factsPath });
+    }
+    if (synthesis.state.length > 0) {
+      await appendFile(this.statePath, `\n## Update ${turn.timestamp}\n\n${asBullets(synthesis.state.map((item) => `${item} Source: ${source}`))}\n`, "utf-8");
+      this.debug({ operation: "write", detail: `appended ${synthesis.state.length} state update(s)`, source: this.statePath });
+    }
+    if (synthesis.conflicts.length > 0) {
+      await appendFile(this.conflictsPath, `\n## ${turn.timestamp}\n\n${asBullets(synthesis.conflicts.map((conflict) => `${conflict} Source: ${source}`))}\n`, "utf-8");
+      this.debug({ operation: "write", detail: `appended ${synthesis.conflicts.length} conflict/retcon note(s)`, source: this.conflictsPath });
+    }
+  }
+
+  private shouldFallbackToTranscript(markdownHits: MemoryHit[], queryTokens: string[]): boolean {
+    if (markdownHits.length === 0) return true;
+    const topScore = markdownHits[0]?.score ?? 0;
+    const sufficientScore = Math.min(2, Math.max(1, queryTokens.length));
+    if (topScore < sufficientScore) return true;
+    return markdownHits.some((hit) => hit.kind === "conflict" || /\b(conflict|retcon|contradict|uncertain|unknown|ambiguous|verify|source)\b/i.test(hit.text));
+  }
+
+  private stageRank(hit: MemoryHit): number {
+    return hit.kind === "transcript" ? 1 : 0;
   }
 
   private async searchMarkdown(tokens: string[], query: string): Promise<MemoryHit[]> {
@@ -385,8 +545,9 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
         timestamp: stats.mtime.toISOString(),
       });
     }
-    this.debug({ operation: "recall", detail: `markdown lexical search returned ${hits.length} hit(s)`, query, hits: hits.length, source: this.memoryDir });
-    return hits;
+    const results = hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 10);
+    this.debug({ operation: "recall", detail: `stage 1 markdown lexical search returned ${results.length} synthesized memory hit(s)`, query, hits: results.length, source: this.memoryDir });
+    return results;
   }
 
   private kindForMarkdown(path: string): MemoryKind {

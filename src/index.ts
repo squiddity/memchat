@@ -16,7 +16,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, type MemoryBackend, type MemoryDebugEvent, type MemoryMode, type MemoryModeId } from "./memory.js";
+import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, type ConversationTurn, type MemoryBackend, type MemoryCompaction, type MemoryDebugEvent, type MemoryFileSnapshot, type MemoryMode, type MemoryModeId, type MemorySynthesis, type MemorySynthesisProvider } from "./memory.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 
@@ -36,6 +36,7 @@ type CliOptions = {
   memory: MemoryModeId;
   memoryDir?: string;
   memoryDebug: boolean;
+  summarizerModel?: string;
 };
 
 type ModelResolution = {
@@ -95,10 +96,43 @@ Conversation priorities:
 - If the user asks for something that depends on missing memory, ask or state uncertainty instead of fabricating continuity.
 - Do not overstate memory confidence; distinguish retrieved context from guesses.`;
 
-const memoryDebugSystemPrompt = `Memory debug mode is enabled. When you choose to use memory-centric skills or tools such as qmd/Bash(qmd:*), make that behavior observable without revealing private chain-of-thought: emit a brief italicized memory note before the tool call stating the intended memory operation, and another brief italicized memory note after the tool result summarizing what was found or changed. Keep these notes concise and factual, for example: _Memory retrieval: searching qmd notes for apple color._`;
+const memoryDebugSystemPrompt = `Memory debug mode is enabled. Memchat prints memory instrumentation automatically, including hardwired recall, injected context, and qmd/Bash(qmd:*) tool start/end events. Do not emit extra freeform "Memory retrieval" notes unless the user explicitly asks for them; keep normal answers separate from debug instrumentation.`;
 
-function chatSystemPrompt(memoryDebug: boolean): string {
-  return memoryDebug ? `${baseChatSystemPrompt}\n\n${memoryDebugSystemPrompt}` : baseChatSystemPrompt;
+const qmdSkillRetrievalStrategyPrompt = `Qmd memory retrieval strategy:
+- Treat .memchat/memory markdown as the synthesized memory layer and .memchat/sessions JSONL as the raw transcript/audit layer.
+- When using qmd or Bash(qmd:*) for memory retrieval, search synthesized memory first: .memchat/memory/facts.md, .memchat/memory/state.md, .memchat/memory/conflicts.md, and .memchat/memory/summaries/*.md.
+- Only do an additional transcript/session search when synthesized memory has no relevant hits, hits are weak or ambiguous, a conflict/retcon needs source verification, the user asks for exact wording/provenance, or answering safely requires inspecting the raw turn.
+- Prefer concise answers grounded in synthesized memory; cite transcript only when you actually consulted it or need audit-level evidence.`;
+
+const memorySynthesisSystemPrompt = `You are Memchat's background memory synthesizer. Convert chat turns into durable, concise memory notes for future retrieval.
+
+Rules:
+- Do not copy the transcript. Synthesize only reusable continuity.
+- Prefer concrete facts, state changes, unresolved hooks, user preferences, entity attributes, locations, relationships, inventory, and explicit retcons.
+- Distinguish stable facts from current state. Facts should remain true until retconned. State can change over time.
+- Record contradictions, uncertainty, or intentional retcons as conflicts.
+- Omit routine banter and low-value details.
+- Preserve names and invented details exactly.
+- Return only strict JSON with this shape:
+{"summaryBullets":["..."],"facts":["..."],"state":["..."],"conflicts":["..."]}`;
+
+const memoryCompactionSystemPrompt = `You are Memchat's end-of-session memory compactor. Restate markdown memory so it is concise, searchable, and useful for future two-stage retrieval.
+
+Rules:
+- Keep source citations already present when possible.
+- Deduplicate repeated facts and state updates.
+- In state.md, restate the current state, not the full change log.
+- In summaries, keep a compact chronological session arc and important changes.
+- Keep conflicts/retcons explicit.
+- Do not invent details not supported by supplied memory.
+- Return only strict JSON with this shape:
+{"summaryMarkdown":"# Summary YYYY-MM-DD\\n...","factsMarkdown":"# Facts\\n...","stateMarkdown":"# Current State\\n...","conflictsMarkdown":"# Conflicts and Retcons\\n..."}`;
+
+function chatSystemPrompt(memoryDebug: boolean, includeQmdSkillStrategy: boolean): string {
+  const parts = [baseChatSystemPrompt];
+  if (includeQmdSkillStrategy) parts.push(qmdSkillRetrievalStrategyPrompt);
+  if (memoryDebug) parts.push(memoryDebugSystemPrompt);
+  return parts.join("\n\n");
 }
 
 function readLocalPiPackageSpecs(): string[] {
@@ -192,6 +226,8 @@ function parseCliOptions(args: string[]): CliOptions {
       options.memory = memory;
     } else if (arg === "--memory-dir" && args[i + 1]) {
       options.memoryDir = args[++i];
+    } else if (arg === "--summarizer-model" && args[i + 1]) {
+      options.summarizerModel = args[++i];
     } else if (arg === "--memory-debug") {
       options.memoryDebug = true;
     } else if (arg === "--no-memory-debug") {
@@ -213,6 +249,7 @@ function parseCliOptions(args: string[]): CliOptions {
   }
   options.memory ??= "none";
   options.memoryDir ??= process.env.MEMCHAT_MEMORY_DIR;
+  options.summarizerModel ??= process.env.MEMCHAT_SUMMARIZER_MODEL;
   options.memoryDebug ??= truthyEnv(process.env.MEMCHAT_MEMORY_DEBUG);
   return options as CliOptions;
 }
@@ -291,13 +328,14 @@ function printCurrentModel(model: PiModel | undefined, thinking: string) {
   output.write(`Thinking: ${thinking}\n`);
 }
 
-function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string, memory: MemoryBackend, memoryMode: MemoryMode, memoryDebug: boolean) {
+function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string, memory: MemoryBackend, memoryMode: MemoryMode, memoryDebug: boolean, summarizerLabel?: string) {
   output.write("\nmemchat hello-world\n");
   output.write("Type a message and press Enter. Commands: /help, /model, /memory, /plugins, /exit\n");
   output.write(`Memory: ${memoryMode.id} (backend: ${memory.id}, persistence: ${memoryMode.persistence}, retrieval: ${memoryMode.retrieval})\n`);
   output.write(`Memory debug: ${memoryDebug ? "on" : "off"}\n`);
   if (memoryMode.allowSkillTools) output.write("Tools: built-in pi tools enabled so memory skills can invoke declared tools such as Bash(qmd:*).\n");
   output.write(`Model: ${isUsableModel(model) ? modelLabel(model) : "none selected"} (thinking: ${thinking})\n`);
+  if (summarizerLabel) output.write(`Summarizer model: ${summarizerLabel}\n`);
   output.write(`Local pi packages: ${packageSources.length === 0 ? "none" : packageSources.join(", ")}\n\n`);
 }
 
@@ -323,13 +361,21 @@ function italic(text: string): string {
   return output.isTTY ? `\x1b[3m${text}\x1b[23m` : `_${text}_`;
 }
 
+function memoryDebugStyle(text: string): string {
+  return output.isTTY ? `\x1b[3m\x1b[36m${text}\x1b[39m\x1b[23m` : `_${text}_`;
+}
+
+function printMemoryDebugLine(text: string): void {
+  output.write(`${memoryDebugStyle(text)}\n`);
+}
+
 function printMemoryDebugEvent(event: MemoryDebugEvent): void {
-  output.write(`${italic(`[memory ${event.backend}/${event.operation}] ${event.detail}`)}\n`);
+  printMemoryDebugLine(`[memory ${event.backend}/${event.operation}] ${event.detail}`);
 }
 
 function printInjectedMemoryContext(context: string): void {
   if (!context.trim()) return;
-  output.write(`${italic(`[memory injected-context]\n${context}`)}\n`);
+  printMemoryDebugLine(`[memory injected-context]\n${context}`);
 }
 
 function isQmdToolCall(toolName: string, args: unknown): boolean {
@@ -344,6 +390,10 @@ function summarizeToolArgs(args: unknown): string {
   if (!args || typeof args !== "object") return "";
   if ("command" in args) return String((args as { command?: unknown }).command ?? "");
   return JSON.stringify(args);
+}
+
+function looksLikeMemoryNoteStart(text: string): boolean {
+  return /^\s*_?Memory (retrieval|write|update):/i.test(text);
 }
 
 function resolvePackageRoot(packageName: string): string {
@@ -378,6 +428,62 @@ function formatPromptWithMemory(userText: string, memoryContext: string): string
   return `${memoryContext}\n\nCurrent user message:\n${userText}`;
 }
 
+function extractJsonObject(text: string): unknown {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) throw new Error("model did not return JSON");
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()) : [];
+}
+
+function parseMemorySynthesis(text: string): MemorySynthesis {
+  const parsed = extractJsonObject(text) as Partial<Record<keyof MemorySynthesis, unknown>>;
+  return {
+    summaryBullets: stringArray(parsed.summaryBullets),
+    facts: stringArray(parsed.facts),
+    state: stringArray(parsed.state),
+    conflicts: stringArray(parsed.conflicts),
+  };
+}
+
+function parseMemoryCompaction(text: string): MemoryCompaction {
+  const parsed = extractJsonObject(text) as Partial<Record<keyof MemoryCompaction, unknown>>;
+  return {
+    summaryMarkdown: typeof parsed.summaryMarkdown === "string" ? parsed.summaryMarkdown : "",
+    factsMarkdown: typeof parsed.factsMarkdown === "string" ? parsed.factsMarkdown : undefined,
+    stateMarkdown: typeof parsed.stateMarkdown === "string" ? parsed.stateMarkdown : undefined,
+    conflictsMarkdown: typeof parsed.conflictsMarkdown === "string" ? parsed.conflictsMarkdown : undefined,
+  };
+}
+
+function renderSynthesisPrompt(turn: ConversationTurn, memory: MemoryFileSnapshot, sessionId: string, transcriptSource: string): string {
+  return JSON.stringify({
+    task: "synthesize latest turn into memory artifacts",
+    sessionId,
+    transcriptSource,
+    currentMemory: memory,
+    latestTurn: turn,
+  });
+}
+
+function renderCompactionPrompt(sessionId: string, transcriptSource: string, memory: MemoryFileSnapshot, sessionSummary: string): string {
+  return JSON.stringify({
+    task: "compact and restate end-of-session memory markdown",
+    sessionId,
+    transcriptSource,
+    currentMemory: memory,
+    sessionSummary,
+  });
+}
+
 function printHelp() {
   output.write(
     `\nCommands:\n` +
@@ -394,7 +500,7 @@ function printHelp() {
       `  /memory index        Initialize/reindex memory files\n` +
       `  /plugins             Show npm-managed local pi packages configured for this run\n` +
       `  /exit                End the chat\n\n` +
-      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --memory-debug, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR, MEMCHAT_MEMORY_DEBUG.\n` +
+      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --summarizer-model, --memory-debug, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR, MEMCHAT_SUMMARIZER_MODEL, MEMCHAT_MEMORY_DEBUG.\n` +
       `Configure local pi packages with package.json memchat.piPackages or MEMCHAT_PI_PACKAGES.\n\n`,
   );
 }
@@ -405,18 +511,8 @@ async function main() {
   const packageSources = getLocalPiPackageSources();
   const memoryMode = resolveMemoryMode(cliOptions.memory);
   let spinner: InlineSpinner | undefined;
-  function createConfiguredMemory(): MemoryBackend {
-    return createMemoryBackend({
-      id: memoryMode.backend,
-      cwd,
-      root: cliOptions.memoryDir,
-      onDebug: cliOptions.memoryDebug ? (event) => {
-        spinner?.stop();
-        printMemoryDebugEvent(event);
-      } : undefined,
-    });
-  }
-  let memory = createConfiguredMemory();
+  let memory: MemoryBackend;
+  let synthesisProvider: MemorySynthesisProvider | undefined;
   const memorySkills = getMemorySkills(memoryMode);
   const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
@@ -435,7 +531,7 @@ async function main() {
     additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
     noExtensions: true,
     noContextFiles: true,
-    systemPrompt: chatSystemPrompt(cliOptions.memoryDebug),
+    systemPrompt: chatSystemPrompt(cliOptions.memoryDebug, memoryMode.skills.includes("qmd")),
     skillsOverride: (current) => ({
       skills: [...current.skills, ...memorySkills],
       diagnostics: current.diagnostics,
@@ -479,15 +575,116 @@ async function main() {
 
   if (cliOptions.listModels) {
     printModelList(session.modelRegistry, cliOptions.listModels === true ? undefined : cliOptions.listModels);
-    await memory.dispose?.();
     session.dispose();
     return;
   }
+
+  let summarizerSession: AgentSession | undefined;
+  const summarizerLabel = cliOptions.summarizerModel ?? "active session model";
+
+  if (memoryMode.backend === "qmd") {
+    const summarizerResourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
+      noExtensions: true,
+      noContextFiles: true,
+      systemPrompt: memorySynthesisSystemPrompt,
+    });
+    await summarizerResourceLoader.reload();
+    ({ session: summarizerSession } = await createAgentSession({
+      cwd,
+      agentDir,
+      authStorage,
+      modelRegistry,
+      resourceLoader: summarizerResourceLoader,
+      settingsManager,
+      sessionManager: SessionManager.inMemory(cwd),
+      noTools: "builtin" as const,
+      thinkingLevel: "off",
+    }));
+
+    if (cliOptions.summarizerModel) {
+      const resolved = resolveModel(cliOptions.summarizerModel, summarizerSession.modelRegistry, cliOptions.provider);
+      if (resolved.error || !resolved.model) output.write(`[summarizer warning] ${resolved.error ?? "Model not found."}\n`);
+      else {
+        try {
+          await summarizerSession.setModel(resolved.model);
+        } catch (error) {
+          output.write(`[summarizer warning] Could not select ${modelLabel(resolved.model)}: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+      }
+    }
+
+    let summarizerSystemPrompt = memorySynthesisSystemPrompt;
+    const promptSummarizer = async (prompt: string, systemPrompt = memorySynthesisSystemPrompt): Promise<string> => {
+      if (!summarizerSession) throw new Error("summarizer session is not available");
+      if (systemPrompt !== summarizerSystemPrompt) {
+        summarizerSession.dispose();
+        const loader = new DefaultResourceLoader({
+          cwd,
+          agentDir,
+          settingsManager,
+          additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
+          noExtensions: true,
+          noContextFiles: true,
+          systemPrompt,
+        });
+        await loader.reload();
+        ({ session: summarizerSession } = await createAgentSession({ cwd, agentDir, authStorage, modelRegistry, resourceLoader: loader, settingsManager, sessionManager: SessionManager.inMemory(cwd), noTools: "builtin" as const, thinkingLevel: "off" }));
+        summarizerSystemPrompt = systemPrompt;
+        if (cliOptions.summarizerModel) {
+          const resolved = resolveModel(cliOptions.summarizerModel, summarizerSession.modelRegistry, cliOptions.provider);
+          if (resolved.model) await summarizerSession.setModel(resolved.model);
+        }
+      }
+      if (!cliOptions.summarizerModel && isUsableModel(session.model)) await summarizerSession.setModel(session.model);
+      if (!isUsableModel(summarizerSession.model)) throw new Error("no summarizer model selected");
+      let text = "";
+      const unsubscribe = summarizerSession.subscribe((event) => {
+        if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") text += event.assistantMessageEvent.delta;
+      });
+      try {
+        await summarizerSession.prompt(prompt);
+        return text;
+      } finally {
+        unsubscribe();
+      }
+    };
+
+    synthesisProvider = {
+      label: cliOptions.summarizerModel ?? "active session model",
+      async synthesizeTurn({ turn, sessionId, transcriptSource, memory }) {
+        const response = await promptSummarizer(renderSynthesisPrompt(turn, memory, sessionId, transcriptSource));
+        return parseMemorySynthesis(response);
+      },
+      async compactSession({ sessionId, transcriptSource, memory, sessionSummary }) {
+        const response = await promptSummarizer(renderCompactionPrompt(sessionId, transcriptSource, memory, sessionSummary), memoryCompactionSystemPrompt);
+        return parseMemoryCompaction(response);
+      },
+    };
+  }
+
+  function createConfiguredMemory(): MemoryBackend {
+    return createMemoryBackend({
+      id: memoryMode.backend,
+      cwd,
+      root: cliOptions.memoryDir,
+      synthesisProvider,
+      onDebug: cliOptions.memoryDebug ? (event) => {
+        spinner?.stop();
+        printMemoryDebugEvent(event);
+      } : undefined,
+    });
+  }
+  memory = createConfiguredMemory();
 
   const rl = readline.createInterface({ input, output });
   spinner = new InlineSpinner(output);
   let activeAssistantText = "";
   let activeAssistantStarted = false;
+  let activeAssistantPrefixPrinted = false;
   const memoryToolCallIds = new Set<string>();
 
   let unsubscribeSession: (() => void) | undefined;
@@ -500,6 +697,9 @@ async function main() {
         if (!activeAssistantStarted) {
           activeAssistantStarted = true;
           spinner?.stop();
+        }
+        if (!activeAssistantPrefixPrinted && !looksLikeMemoryNoteStart(delta)) {
+          activeAssistantPrefixPrinted = true;
           output.write("memchat> ");
         }
         activeAssistantText += delta;
@@ -508,12 +708,12 @@ async function main() {
       if (cliOptions.memoryDebug && event.type === "tool_execution_start" && isQmdToolCall(event.toolName, event.args)) {
         memoryToolCallIds.add(event.toolCallId);
         spinner?.stop();
-        output.write(`${italic(`[memory tool/start] ${event.toolName}: ${summarizeToolArgs(event.args)}`)}\n`);
+        printMemoryDebugLine(`[memory tool/start] ${event.toolName}: ${summarizeToolArgs(event.args)}`);
       }
       if (cliOptions.memoryDebug && event.type === "tool_execution_end" && memoryToolCallIds.has(event.toolCallId)) {
         memoryToolCallIds.delete(event.toolCallId);
         spinner?.stop();
-        output.write(`${italic(`[memory tool/end] ${event.toolName}: ${event.isError ? "error" : "ok"}`)}\n`);
+        printMemoryDebugLine(`[memory tool/end] ${event.toolName}: ${event.isError ? "error" : "ok"}`);
       }
     });
   }
@@ -547,6 +747,7 @@ async function main() {
     session.setThinkingLevel(previousThinking);
     activeAssistantText = "";
     activeAssistantStarted = false;
+    activeAssistantPrefixPrinted = false;
     memoryToolCallIds.clear();
     attachSessionEvents(session);
     const status = await memory.status();
@@ -554,7 +755,7 @@ async function main() {
   }
 
   attachSessionEvents(session);
-  printBanner(packageSources, session.model, session.thinkingLevel, memory, memoryMode, cliOptions.memoryDebug);
+  printBanner(packageSources, session.model, session.thinkingLevel, memory, memoryMode, cliOptions.memoryDebug, memoryMode.backend === "qmd" ? summarizerLabel : undefined);
 
   async function handleInput(line: string): Promise<boolean> {
     const text = line.trim();
@@ -636,11 +837,12 @@ async function main() {
 
     activeAssistantText = "";
     activeAssistantStarted = false;
+    activeAssistantPrefixPrinted = false;
     spinner?.start("working...");
     try {
       const memoryContext = memoryMode.retrieval === "hardwired" || memoryMode.retrieval === "hybrid" ? await memory.beforePrompt({ userText: text }) : { text: "", hits: [] };
       if (cliOptions.memoryDebug) printInjectedMemoryContext(memoryContext.text);
-      if (cliOptions.memoryDebug) output.write(`${italic("[model] working...")}\n`);
+      if (cliOptions.memoryDebug) printMemoryDebugLine("[model] working...");
       if (!activeAssistantStarted) spinner?.start("working...");
       await session.prompt(formatPromptWithMemory(text, memoryContext.text));
       spinner?.stop();
@@ -678,6 +880,7 @@ async function main() {
     rl.close();
     unsubscribeSession?.();
     await memory.dispose?.();
+    summarizerSession?.dispose();
     session.dispose();
   }
 

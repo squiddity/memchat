@@ -111,13 +111,14 @@ If either value is missing, the vendored Lemonade provider is skipped.
 
 ### Memory backends
 
-Select a memory backend with `--memory` or `MEMCHAT_MEMORY`. Select a storage root with `--memory-dir` or `MEMCHAT_MEMORY_DIR`:
+Select a memory backend with `--memory` or `MEMCHAT_MEMORY`. Select a storage root with `--memory-dir` or `MEMCHAT_MEMORY_DIR`. For qmd modes, markdown memory is synthesized by a background summarizer model; by default it mirrors the active session model, or set a cheaper/different model with `--summarizer-model` / `MEMCHAT_SUMMARIZER_MODEL`:
 
 ```bash
 npm run dev -- --memory none
 npm run dev -- --memory transcript
 MEMCHAT_MEMORY=qmd npm run dev
 npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/run-001
+npm run dev -- --memory qmd-hybrid --summarizer-model openai/gpt-4o-mini
 MEMCHAT_MEMORY_DIR=.memchat-clean npm run dev -- --memory qmd-hardwired
 ```
 
@@ -125,9 +126,9 @@ Implemented memory modes:
 
 - `none`: no durable memory; active pi session context only.
 - `transcript` / `transcript-hardwired`: hardwired JSONL transcript persistence and hardwired lexical retrieval.
-- `qmd` / `qmd-hardwired`: hardwired JSONL transcript plus markdown notes under `.memchat/memory/`, with hardwired lexical retrieval.
-- `qmd-skill-retrieval`: hardwired JSONL/markdown persistence, but retrieval is model-centric via the project-local `qmd` skill.
-- `qmd-hybrid`: hardwired JSONL/markdown persistence and hardwired lexical recall, plus optional model-centric retrieval via the `qmd` skill.
+- `qmd` / `qmd-hardwired`: hardwired JSONL transcript plus synthesized markdown notes under `.memchat/memory/`, with hardwired lexical retrieval.
+- `qmd-skill-retrieval`: hardwired JSONL/synthesized markdown persistence, but retrieval is model-centric via the project-local `qmd` skill.
+- `qmd-hybrid`: hardwired JSONL/synthesized markdown persistence and hardwired lexical recall, plus optional model-centric retrieval via the `qmd` skill.
 
 `qmd-skill-retrieval` and `qmd-hybrid` require the local npm dependency `@tobilu/qmd`. Memchat loads the package-provided `node_modules/@tobilu/qmd/skills/qmd/SKILL.md` without copying or overriding it, and verifies that the local `qmd` executable is present. That skill declares `allowed-tools: Bash(qmd:*)`, and memchat currently enables pi's built-in tools for those modes so the skill can call the `qmd` CLI directly. A future hardening pass should restrict Bash to qmd-only execution rather than enabling the full built-in tool set.
 
@@ -149,7 +150,9 @@ This prints italicized memory notes for hardwired memory operations such as befo
 
 By default, memory lives under `.memchat/`. Use separate memory directories to preserve long-running progress, start clean experiments, or compare backends against different corpora.
 
-The initial hardwired `qmd` modes intentionally keep markdown and JSONL as authoritative storage and use a TypeScript lexical search fallback. Skill-based modes evaluate model-centric retrieval using the exact qmd skill shipped by `@tobilu/qmd`. A later change can add a hardwired `@tobilu/qmd` index/search backend without changing the storage layout.
+For qmd modes, JSONL transcripts remain append-only source/audit logs. Markdown memory is the synthesized retrieval layer: per-turn model synthesis appends compact summary bullets, facts, state updates, and conflict/retcon notes, and the end-of-session hook compacts/restates the current markdown memory. If no summarizer model is available, memchat falls back to a minimal unsynthesized summary bullet rather than blocking transcript persistence.
+
+The initial hardwired `qmd` modes intentionally keep markdown and JSONL as authoritative storage and use a TypeScript lexical search fallback. Hardwired retrieval is now two-stage: search synthesized markdown memory first, then search JSONL transcript only when markdown hits are absent, weak, conflict/uncertainty-related, or need source verification. Skill-based modes evaluate model-centric retrieval using the exact qmd skill shipped by `@tobilu/qmd`; memchat adds wrapper system guidance telling the model to use the same synthesized-first, transcript-as-audit strategy without modifying the third-party skill. A later change can add a hardwired `@tobilu/qmd` index/search backend without changing the storage layout.
 
 ### npm-managed local pi packages
 

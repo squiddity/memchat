@@ -62,8 +62,17 @@ printf '/memory index\n/memory recall apple\n/exit\n' | npm run dev -- --memory 
 Expected:
 
 - Banner shows `Memory debug: on`.
-- Italic/underscore memory debug lines print for qmd-shaped indexing and lexical recall.
+- Italic/underscore memory debug lines print for qmd-shaped indexing and two-stage lexical recall. With no relevant markdown hits, debug output may show transcript fallback.
 - Process exits with `bye`.
+
+For qmd persistence synthesis, use a configured model and optionally a cheaper summarizer model:
+
+```bash
+rm -rf /tmp/memchat-synthesis-smoke
+printf 'Remember: the closet contains a brass telescope, old coats, and a locked cedar box.\n/exit\n' | npm run dev -- --memory qmd-hardwired --memory-dir /tmp/memchat-synthesis-smoke --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --summarizer-model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --memory-debug
+```
+
+Expected: JSONL transcript is written, markdown files under `/tmp/memchat-synthesis-smoke/memory/` contain synthesized bullets/facts/state rather than raw user/assistant transcript copies, and exit triggers a compaction debug line when synthesis succeeded.
 
 ## 6. QMD skill retrieval mode smoke test
 

@@ -12,7 +12,7 @@ Memchat should support selectable memory backends for both interactive CLI use a
 
 Selectable `none`, `transcript`, and `qmd` backends are now implemented in `src/memory.ts` and wired into the CLI. Memory selection is moving from simple backend names toward policy modes that separate storage backend, persistence policy, retrieval policy, and skill exposure. Current modes include `none`, `transcript`/`transcript-hardwired`, `qmd`/`qmd-hardwired`, `qmd-skill-retrieval`, and `qmd-hybrid`.
 
-The current hardwired `qmd` path uses the planned markdown source-of-truth layout plus a TypeScript lexical search fallback. Skill-based qmd modes require the local npm package `@tobilu/qmd`, load its package-provided `skills/qmd/SKILL.md` without copying or overriding it, and let the model decide when to use the qmd CLI for retrieval. Replacing the hardwired fallback with the `@tobilu/qmd` SDK/CLI is a future enhancement.
+The current hardwired `qmd` path uses the planned markdown source-of-truth layout plus model-based synthesis and a TypeScript lexical search fallback. Skill-based qmd modes require the local npm package `@tobilu/qmd`, load its package-provided `skills/qmd/SKILL.md` without copying or overriding it, and let the model decide when to use the qmd CLI for retrieval. Replacing the hardwired fallback with the `@tobilu/qmd` SDK/CLI is a future enhancement.
 
 ## Selection interface
 
@@ -25,6 +25,7 @@ npm run dev -- --memory qmd-hardwired
 npm run dev -- --memory qmd-skill-retrieval
 npm run dev -- --memory qmd-hybrid
 npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/run-001
+npm run dev -- --memory qmd-hybrid --summarizer-model openai/gpt-4o-mini
 
 MEMCHAT_MEMORY=qmd-hybrid npm run dev
 MEMCHAT_MEMORY_DIR=.memchat-clean npm run dev -- --memory qmd-hardwired
@@ -151,13 +152,15 @@ type MemoryHit = {
 
 Current first implementation:
 
-1. After each assistant turn, append a simple markdown note to `summaries/YYYY-MM-DD.md` when persistence policy is `hardwired` or `hybrid`.
-2. `/memory index` initializes markdown files and reports indexed file count.
-3. In hardwired retrieval modes, before each prompt search markdown using lexical matching over the user input.
-4. Inject top hits as “Relevant remembered context” in hardwired/hybrid retrieval modes.
-5. Persist raw turns to JSONL for transcript traceability.
-6. In `qmd-skill-retrieval`, skip automatic context injection and rely on the loaded qmd skill for model-centric retrieval.
-7. In `qmd-hybrid`, combine automatic lexical recall with optional qmd skill retrieval.
+1. Persist raw turns to JSONL for transcript traceability.
+2. After each assistant turn, call a background summarizer model to synthesize reusable memory into `summaries/YYYY-MM-DD.md`, `facts.md`, `state.md`, and `conflicts.md` when persistence policy is `hardwired` or `hybrid`.
+3. Default the summarizer model to the active session model; allow `--summarizer-model` / `MEMCHAT_SUMMARIZER_MODEL` to choose a cheaper or specialized background model.
+4. On session disposal (`/new` or `/exit`), compact/restates markdown memory so summaries are concise, facts are deduplicated, current state is current, and conflicts remain explicit.
+5. `/memory index` initializes markdown files and reports indexed file count.
+6. In hardwired retrieval modes, before each prompt run two-stage lexical recall: search synthesized markdown first, and only fall back to JSONL transcript when markdown has no hits, weak hits, or conflict/uncertainty/source-verification cues.
+7. Inject top hits as “Relevant remembered context” in hardwired/hybrid retrieval modes, preferring synthesized markdown hits over transcript hits.
+8. In `qmd-skill-retrieval`, skip automatic context injection and rely on the loaded qmd skill for model-centric retrieval. Memchat adds wrapper system guidance, without modifying the third-party skill, telling the model to search `.memchat/memory` first and consult `.memchat/sessions` only for missing, weak, conflicting, or provenance-sensitive answers.
+9. In `qmd-hybrid`, combine automatic two-stage lexical recall with optional model-centric qmd skill retrieval using the same synthesized-first strategy.
 
 Current safety note: qmd skill modes intentionally enable pi built-in tools so the unmodified package qmd skill declaring `allowed-tools: Bash(qmd:*)` can call `qmd` directly. A future hardening task should restrict actual Bash execution to qmd-only commands while preserving compatibility with unmodified qmd-style skills.
 

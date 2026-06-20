@@ -27,6 +27,7 @@ This repository is for building `memchat`: a TypeScript chat agent on top of `@e
 - Keep README.md updated as architecture decisions become real.
 - After changes, run the relevant smoke tests in `docs/smoke-tests.md`.
 - For memory backend planning and implementation order, consult `docs/memory-backends.md`.
+- When asked to push, use the GitHub CLI authentication already configured for this repository (`gh auth status` / `gh auth setup-git`) instead of unauthenticated HTTPS prompts.
 
 ## Pi references
 
