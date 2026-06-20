@@ -82,6 +82,7 @@ MEMCHAT_MODEL=openai/gpt-4o npm run dev
 
 Useful commands inside the CLI:
 
+- `/new` starts a fresh chat/memory session without restarting the process.
 - `/model` shows the active model.
 - `/model list [text]` lists configured models; `*` means pi auth is available.
 - `/model <provider/model>` switches models.
@@ -132,10 +133,19 @@ Implemented memory modes:
 
 Interactive memory commands:
 
+- `/new` closes the current in-process chat/memory session and starts a fresh one using the same startup configuration.
 - `/memory` or `/memory status` shows backend status.
 - `/memory backends` lists available memory modes.
 - `/memory recall <query>` searches the selected backend.
 - `/memory index` initializes or refreshes backend-local indexes/files.
+
+For observable memory debugging, start with `--memory-debug` or `MEMCHAT_MEMORY_DEBUG=1`:
+
+```bash
+npm run dev -- --memory qmd-hybrid --memory-debug
+```
+
+This prints italicized memory notes for hardwired memory operations such as before-prompt recall, lexical search, injected remembered context, indexing, and transcript/markdown writes. In qmd skill modes, memchat also adds setup guidance asking the model to pair model-centric qmd tool use with concise italicized memory notes, without modifying the third-party qmd skill itself.
 
 By default, memory lives under `.memchat/`. Use separate memory directories to preserve long-running progress, start clean experiments, or compare backends against different corpora.
 

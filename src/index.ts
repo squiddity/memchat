@@ -16,7 +16,8 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, type MemoryBackend, type MemoryMode, type MemoryModeId } from "./memory.js";
+import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, type MemoryBackend, type MemoryDebugEvent, type MemoryMode, type MemoryModeId } from "./memory.js";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 
 const cwd = process.cwd();
@@ -34,6 +35,7 @@ type CliOptions = {
   listModels?: string | true;
   memory: MemoryModeId;
   memoryDir?: string;
+  memoryDebug: boolean;
 };
 
 type ModelResolution = {
@@ -82,7 +84,7 @@ type MemchatPackageJson = {
   };
 };
 
-const chatSystemPrompt = `You are Memchat, a warm, internally consistent chat and fiction partner.
+const baseChatSystemPrompt = `You are Memchat, a warm, internally consistent chat and fiction partner.
 
 Memchat may provide a "Relevant remembered context" block before a user message. Treat that block as retrieved memory, prefer it over invention, and use its citations when helpful.
 If no memory context is provided, only rely on the active session context.
@@ -92,6 +94,12 @@ Conversation priorities:
 - For fiction, invention is allowed, but maintain consistency with details already established in this session.
 - If the user asks for something that depends on missing memory, ask or state uncertainty instead of fabricating continuity.
 - Do not overstate memory confidence; distinguish retrieved context from guesses.`;
+
+const memoryDebugSystemPrompt = `Memory debug mode is enabled. When you choose to use memory-centric skills or tools such as qmd/Bash(qmd:*), make that behavior observable without revealing private chain-of-thought: emit a brief italicized memory note before the tool call stating the intended memory operation, and another brief italicized memory note after the tool result summarizing what was found or changed. Keep these notes concise and factual, for example: _Memory retrieval: searching qmd notes for apple color._`;
+
+function chatSystemPrompt(memoryDebug: boolean): string {
+  return memoryDebug ? `${baseChatSystemPrompt}\n\n${memoryDebugSystemPrompt}` : baseChatSystemPrompt;
+}
 
 function readLocalPiPackageSpecs(): string[] {
   const packageJsonPath = resolve(cwd, "package.json");
@@ -159,6 +167,10 @@ function isThinkingLevel(value: string): value is ThinkingLevel {
   return validThinkingLevels.includes(value as ThinkingLevel);
 }
 
+function truthyEnv(value: string | undefined): boolean {
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 function parseCliOptions(args: string[]): CliOptions {
   const options: Partial<CliOptions> = {};
   for (let i = 0; i < args.length; i++) {
@@ -180,6 +192,10 @@ function parseCliOptions(args: string[]): CliOptions {
       options.memory = memory;
     } else if (arg === "--memory-dir" && args[i + 1]) {
       options.memoryDir = args[++i];
+    } else if (arg === "--memory-debug") {
+      options.memoryDebug = true;
+    } else if (arg === "--no-memory-debug") {
+      options.memoryDebug = false;
     }
   }
 
@@ -197,6 +213,7 @@ function parseCliOptions(args: string[]): CliOptions {
   }
   options.memory ??= "none";
   options.memoryDir ??= process.env.MEMCHAT_MEMORY_DIR;
+  options.memoryDebug ??= truthyEnv(process.env.MEMCHAT_MEMORY_DEBUG);
   return options as CliOptions;
 }
 
@@ -274,10 +291,11 @@ function printCurrentModel(model: PiModel | undefined, thinking: string) {
   output.write(`Thinking: ${thinking}\n`);
 }
 
-function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string, memory: MemoryBackend, memoryMode: MemoryMode) {
+function printBanner(packageSources: PackageSource[], model: PiModel | undefined, thinking: string, memory: MemoryBackend, memoryMode: MemoryMode, memoryDebug: boolean) {
   output.write("\nmemchat hello-world\n");
   output.write("Type a message and press Enter. Commands: /help, /model, /memory, /plugins, /exit\n");
   output.write(`Memory: ${memoryMode.id} (backend: ${memory.id}, persistence: ${memoryMode.persistence}, retrieval: ${memoryMode.retrieval})\n`);
+  output.write(`Memory debug: ${memoryDebug ? "on" : "off"}\n`);
   if (memoryMode.allowSkillTools) output.write("Tools: built-in pi tools enabled so memory skills can invoke declared tools such as Bash(qmd:*).\n");
   output.write(`Model: ${isUsableModel(model) ? modelLabel(model) : "none selected"} (thinking: ${thinking})\n`);
   output.write(`Local pi packages: ${packageSources.length === 0 ? "none" : packageSources.join(", ")}\n\n`);
@@ -299,6 +317,33 @@ async function printMemoryStatus(memory: MemoryBackend, memoryMode: MemoryMode) 
 
 function printMemoryBackends() {
   output.write(`Memory modes: ${memoryModeIds.join(", ")}\n`);
+}
+
+function italic(text: string): string {
+  return output.isTTY ? `\x1b[3m${text}\x1b[23m` : `_${text}_`;
+}
+
+function printMemoryDebugEvent(event: MemoryDebugEvent): void {
+  output.write(`${italic(`[memory ${event.backend}/${event.operation}] ${event.detail}`)}\n`);
+}
+
+function printInjectedMemoryContext(context: string): void {
+  if (!context.trim()) return;
+  output.write(`${italic(`[memory injected-context]\n${context}`)}\n`);
+}
+
+function isQmdToolCall(toolName: string, args: unknown): boolean {
+  if (toolName === "qmd") return true;
+  if (toolName !== "bash") return false;
+  if (!args || typeof args !== "object" || !("command" in args)) return false;
+  const command = String((args as { command?: unknown }).command ?? "").trim();
+  return /(^|[;&|()\s])(?:\.\/node_modules\/\.bin\/)?qmd(?:\s|$)/.test(command);
+}
+
+function summarizeToolArgs(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  if ("command" in args) return String((args as { command?: unknown }).command ?? "");
+  return JSON.stringify(args);
 }
 
 function resolvePackageRoot(packageName: string): string {
@@ -337,6 +382,7 @@ function printHelp() {
   output.write(
     `\nCommands:\n` +
       `  /help                Show this help\n` +
+      `  /new                 Start a fresh chat/memory session without restarting\n` +
       `  /model               Show the active model\n` +
       `  /model list [text]   List configured models (* means auth is available)\n` +
       `  /model <model>       Switch model, e.g. /model openai/gpt-4o or /model sonnet:high\n` +
@@ -348,7 +394,7 @@ function printHelp() {
       `  /memory index        Initialize/reindex memory files\n` +
       `  /plugins             Show npm-managed local pi packages configured for this run\n` +
       `  /exit                End the chat\n\n` +
-      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR.\n` +
+      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --memory-debug, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR, MEMCHAT_MEMORY_DEBUG.\n` +
       `Configure local pi packages with package.json memchat.piPackages or MEMCHAT_PI_PACKAGES.\n\n`,
   );
 }
@@ -358,7 +404,19 @@ async function main() {
   const cliOptions = parseCliOptions(argv.slice(2));
   const packageSources = getLocalPiPackageSources();
   const memoryMode = resolveMemoryMode(cliOptions.memory);
-  const memory = createMemoryBackend({ id: memoryMode.backend, cwd, root: cliOptions.memoryDir });
+  let spinner: InlineSpinner | undefined;
+  function createConfiguredMemory(): MemoryBackend {
+    return createMemoryBackend({
+      id: memoryMode.backend,
+      cwd,
+      root: cliOptions.memoryDir,
+      onDebug: cliOptions.memoryDebug ? (event) => {
+        spinner?.stop();
+        printMemoryDebugEvent(event);
+      } : undefined,
+    });
+  }
+  let memory = createConfiguredMemory();
   const memorySkills = getMemorySkills(memoryMode);
   const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
@@ -377,7 +435,7 @@ async function main() {
     additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
     noExtensions: true,
     noContextFiles: true,
-    systemPrompt: chatSystemPrompt,
+    systemPrompt: chatSystemPrompt(cliOptions.memoryDebug),
     skillsOverride: (current) => ({
       skills: [...current.skills, ...memorySkills],
       diagnostics: current.diagnostics,
@@ -390,7 +448,7 @@ async function main() {
     output.write(`[extension error] ${error.path}: ${error.error}\n`);
   }
 
-  const { session } = await createAgentSession({
+  let { session } = await createAgentSession({
     cwd,
     agentDir,
     authStorage,
@@ -427,24 +485,76 @@ async function main() {
   }
 
   const rl = readline.createInterface({ input, output });
-  const spinner = new InlineSpinner(output);
+  spinner = new InlineSpinner(output);
   let activeAssistantText = "";
   let activeAssistantStarted = false;
+  const memoryToolCallIds = new Set<string>();
 
-  session.subscribe((event) => {
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      const delta = event.assistantMessageEvent.delta;
-      if (!activeAssistantStarted) {
-        activeAssistantStarted = true;
-        spinner.stop();
-        output.write("memchat> ");
+  let unsubscribeSession: (() => void) | undefined;
+
+  function attachSessionEvents(currentSession: AgentSession): void {
+    unsubscribeSession?.();
+    unsubscribeSession = currentSession.subscribe((event) => {
+      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+        const delta = event.assistantMessageEvent.delta;
+        if (!activeAssistantStarted) {
+          activeAssistantStarted = true;
+          spinner?.stop();
+          output.write("memchat> ");
+        }
+        activeAssistantText += delta;
+        output.write(delta);
       }
-      activeAssistantText += delta;
-      output.write(delta);
-    }
-  });
+      if (cliOptions.memoryDebug && event.type === "tool_execution_start" && isQmdToolCall(event.toolName, event.args)) {
+        memoryToolCallIds.add(event.toolCallId);
+        spinner?.stop();
+        output.write(`${italic(`[memory tool/start] ${event.toolName}: ${summarizeToolArgs(event.args)}`)}\n`);
+      }
+      if (cliOptions.memoryDebug && event.type === "tool_execution_end" && memoryToolCallIds.has(event.toolCallId)) {
+        memoryToolCallIds.delete(event.toolCallId);
+        spinner?.stop();
+        output.write(`${italic(`[memory tool/end] ${event.toolName}: ${event.isError ? "error" : "ok"}`)}\n`);
+      }
+    });
+  }
 
-  printBanner(packageSources, session.model, session.thinkingLevel, memory, memoryMode);
+  async function startNewSession(): Promise<void> {
+    const previousModel = session.model;
+    const previousThinking = session.thinkingLevel;
+    unsubscribeSession?.();
+    unsubscribeSession = undefined;
+    session.dispose();
+    await memory.dispose?.();
+    memory = createConfiguredMemory();
+    ({ session } = await createAgentSession({
+      cwd,
+      agentDir,
+      authStorage,
+      modelRegistry,
+      resourceLoader,
+      settingsManager,
+      sessionManager: SessionManager.inMemory(cwd),
+      ...(memoryMode.allowSkillTools ? {} : { noTools: "builtin" as const }),
+      thinkingLevel: previousThinking,
+    }));
+    if (isUsableModel(previousModel)) {
+      try {
+        await session.setModel(previousModel);
+      } catch (error) {
+        output.write(`[model warning] Could not preserve ${modelLabel(previousModel)} in new session: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+    session.setThinkingLevel(previousThinking);
+    activeAssistantText = "";
+    activeAssistantStarted = false;
+    memoryToolCallIds.clear();
+    attachSessionEvents(session);
+    const status = await memory.status();
+    output.write(`Started new session${status.sessionId ? ` (${status.sessionId})` : ""}.\n`);
+  }
+
+  attachSessionEvents(session);
+  printBanner(packageSources, session.model, session.thinkingLevel, memory, memoryMode, cliOptions.memoryDebug);
 
   async function handleInput(line: string): Promise<boolean> {
     const text = line.trim();
@@ -453,6 +563,10 @@ async function main() {
     if (text === "/exit" || text === "/quit") return false;
     if (text === "/help") {
       printHelp();
+      return true;
+    }
+    if (text === "/new") {
+      await startNewSession();
       return true;
     }
     if (text === "/model") {
@@ -522,11 +636,15 @@ async function main() {
 
     activeAssistantText = "";
     activeAssistantStarted = false;
-    spinner.start("working...");
+    spinner?.start("working...");
     try {
       const memoryContext = memoryMode.retrieval === "hardwired" || memoryMode.retrieval === "hybrid" ? await memory.beforePrompt({ userText: text }) : { text: "", hits: [] };
+      if (cliOptions.memoryDebug) printInjectedMemoryContext(memoryContext.text);
+      if (cliOptions.memoryDebug) output.write(`${italic("[model] working...")}\n`);
+      if (!activeAssistantStarted) spinner?.start("working...");
       await session.prompt(formatPromptWithMemory(text, memoryContext.text));
-      spinner.stop();
+      spinner?.stop();
+      if (cliOptions.memoryDebug && activeAssistantStarted) output.write("\n");
       if (memoryMode.persistence === "hardwired" || memoryMode.persistence === "hybrid") {
         await memory.afterTurn({
           userText: text,
@@ -536,7 +654,7 @@ async function main() {
         });
       }
     } catch (error) {
-      spinner.stop();
+      spinner?.stop();
       output.write(`\n[error] ${error instanceof Error ? error.message : String(error)}\n`);
       if (!isUsableModel(session.model)) output.write("Use /model list to inspect configured models, then /model <provider/model> to select one.\n");
     }
@@ -556,8 +674,9 @@ async function main() {
       }
     }
   } finally {
-    spinner.stop();
+    spinner?.stop();
     rl.close();
+    unsubscribeSession?.();
     await memory.dispose?.();
     session.dispose();
   }

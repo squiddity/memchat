@@ -49,6 +49,15 @@ export type MemoryContext = {
   hits: MemoryHit[];
 };
 
+export type MemoryDebugEvent = {
+  operation: "recall" | "before-prompt" | "write" | "index";
+  backend: MemoryBackendId;
+  detail: string;
+  query?: string;
+  hits?: number;
+  source?: string;
+};
+
 export type ConversationTurn = {
   userText: string;
   assistantText: string;
@@ -72,6 +81,7 @@ type MemoryOptions = {
   root?: string;
   sessionId?: string;
   maxPromptHits?: number;
+  onDebug?: (event: MemoryDebugEvent) => void;
 };
 
 type TranscriptRecord = {
@@ -84,7 +94,7 @@ type TranscriptRecord = {
 };
 
 function sessionId(): string {
-  return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17);
 }
 
 function escapeJsonLine(value: unknown): string {
@@ -169,11 +179,17 @@ class TranscriptMemoryBackend implements MemoryBackend {
   protected readonly root: string;
   protected readonly sessionId: string;
   protected readonly maxPromptHits: number;
+  protected readonly onDebug: ((event: MemoryDebugEvent) => void) | undefined;
 
   constructor(options: MemoryOptions) {
     this.root = options.root ? resolve(options.cwd, options.root) : resolve(options.cwd, ".memchat");
     this.sessionId = options.sessionId ?? sessionId();
     this.maxPromptHits = options.maxPromptHits ?? 4;
+    this.onDebug = options.onDebug;
+  }
+
+  protected debug(event: Omit<MemoryDebugEvent, "backend">): void {
+    this.onDebug?.({ backend: this.id, ...event });
   }
 
   protected get sessionsDir(): string {
@@ -197,7 +213,9 @@ class TranscriptMemoryBackend implements MemoryBackend {
   }
 
   async beforePrompt(input: MemoryInput): Promise<MemoryContext> {
+    this.debug({ operation: "before-prompt", detail: `preparing memory context with up to ${this.maxPromptHits} hit(s)`, query: input.userText });
     const hits = (await this.recall(input.userText)).slice(0, this.maxPromptHits);
+    this.debug({ operation: "before-prompt", detail: `injecting ${hits.length} remembered context hit(s)`, query: input.userText, hits: hits.length });
     return { text: renderContext(hits), hits };
   }
 
@@ -212,11 +230,16 @@ class TranscriptMemoryBackend implements MemoryBackend {
       assistant: turn.assistantText,
     };
     await appendFile(this.transcriptPath, escapeJsonLine(record), "utf-8");
+    this.debug({ operation: "write", detail: "appended turn to JSONL transcript", source: this.transcriptPath });
   }
 
   async recall(query: string): Promise<MemoryHit[]> {
     const tokens = tokenize(query);
-    if (tokens.length === 0 || !existsSync(this.sessionsDir)) return [];
+    this.debug({ operation: "recall", detail: `running transcript lexical search with ${tokens.length} token(s)`, query });
+    if (tokens.length === 0 || !existsSync(this.sessionsDir)) {
+      this.debug({ operation: "recall", detail: "transcript lexical search skipped; no query tokens or transcript directory", query, hits: 0 });
+      return [];
+    }
     const files = (await readdir(this.sessionsDir)).filter((file) => file.endsWith(".jsonl"));
     const hits: MemoryHit[] = [];
 
@@ -244,11 +267,14 @@ class TranscriptMemoryBackend implements MemoryBackend {
       }
     }
 
-    return hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 10);
+    const results = hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 10);
+    this.debug({ operation: "recall", detail: `transcript lexical search scanned ${files.length} file(s) and returned ${results.length} hit(s)`, query, hits: results.length });
+    return results;
   }
 
   async index(): Promise<string> {
     await ensureDir(this.sessionsDir);
+    this.debug({ operation: "index", detail: "transcript backend checked JSONL directory; no separate index required", source: this.sessionsDir });
     return "transcript backend uses JSONL directly; no separate index is required.";
   }
 }
@@ -281,7 +307,9 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   }
 
   override async beforePrompt(input: MemoryInput): Promise<MemoryContext> {
+    this.debug({ operation: "before-prompt", detail: `preparing qmd-shaped memory context with up to ${this.maxPromptHits} hit(s)`, query: input.userText });
     const hits = (await this.recall(input.userText)).slice(0, this.maxPromptHits);
+    this.debug({ operation: "before-prompt", detail: `injecting ${hits.length} qmd-shaped remembered context hit(s)`, query: input.userText, hits: hits.length });
     return { text: renderContext(hits), hits };
   }
 
@@ -298,22 +326,30 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
       `- Assistant: ${turn.assistantText.replace(/\n/g, " ")}`,
     ].join("\n");
     await appendFile(summaryPath, `${entry}\n`, "utf-8");
+    this.debug({ operation: "write", detail: "appended turn to markdown summary memory", source: summaryPath });
   }
 
   override async recall(query: string): Promise<MemoryHit[]> {
     const tokens = tokenize(query);
-    if (tokens.length === 0) return [];
+    this.debug({ operation: "recall", detail: `running qmd-shaped lexical recall over markdown plus transcript with ${tokens.length} token(s)`, query });
+    if (tokens.length === 0) {
+      this.debug({ operation: "recall", detail: "qmd-shaped lexical recall skipped; no query tokens", query, hits: 0 });
+      return [];
+    }
     await this.ensureSeedFiles();
-    const markdownHits = await this.searchMarkdown(tokens);
+    const markdownHits = await this.searchMarkdown(tokens, query);
     const transcriptHits = await super.recall(query);
-    return [...markdownHits, ...transcriptHits]
+    const results = [...markdownHits, ...transcriptHits]
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)))
       .slice(0, 10);
+    this.debug({ operation: "recall", detail: `qmd-shaped lexical recall returned ${results.length} total hit(s)`, query, hits: results.length });
+    return results;
   }
 
   override async index(): Promise<string> {
     await this.ensureSeedFiles();
     const files = await walkMarkdown(this.memoryDir);
+    this.debug({ operation: "index", detail: `checked ${files.length} markdown memory file(s) for qmd-compatible lexical recall`, source: this.memoryDir });
     return `indexed ${files.length} markdown memory file(s) for lexical qmd-compatible recall.`;
   }
 
@@ -330,8 +366,9 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     }
   }
 
-  private async searchMarkdown(tokens: string[]): Promise<MemoryHit[]> {
+  private async searchMarkdown(tokens: string[], query: string): Promise<MemoryHit[]> {
     const files = await walkMarkdown(this.memoryDir);
+    this.debug({ operation: "recall", detail: `running markdown lexical search across ${files.length} file(s)`, query, source: this.memoryDir });
     const hits: MemoryHit[] = [];
     for (const path of files) {
       const content = await readFile(path, "utf-8");
@@ -348,6 +385,7 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
         timestamp: stats.mtime.toISOString(),
       });
     }
+    this.debug({ operation: "recall", detail: `markdown lexical search returned ${hits.length} hit(s)`, query, hits: hits.length, source: this.memoryDir });
     return hits;
   }
 

@@ -39,7 +39,33 @@ Expected:
 - `/memory backends` lists hardwired and skill memory modes.
 - `/memory index` completes without an external server.
 
-## 4. QMD skill retrieval mode smoke test
+## 4. New session command smoke test
+
+```bash
+rm -rf /tmp/memchat-new-smoke
+printf '/memory status\n/new\n/memory status\n/exit\n' | npm run dev -- --memory transcript --memory-dir /tmp/memchat-new-smoke
+```
+
+Expected:
+
+- Both `/memory status` outputs show the same root.
+- The session id/path after `/new` differs from the initial session id/path.
+- Process exits with `bye`.
+
+## 5. Memory debug output smoke test
+
+```bash
+rm -rf /tmp/memchat-debug-smoke
+printf '/memory index\n/memory recall apple\n/exit\n' | npm run dev -- --memory qmd-hardwired --memory-dir /tmp/memchat-debug-smoke --memory-debug
+```
+
+Expected:
+
+- Banner shows `Memory debug: on`.
+- Italic/underscore memory debug lines print for qmd-shaped indexing and lexical recall.
+- Process exits with `bye`.
+
+## 6. QMD skill retrieval mode smoke test
 
 ```bash
 printf '/memory\n/exit\n' | npm run dev -- --memory qmd-skill-retrieval
@@ -53,7 +79,7 @@ Expected:
 
 Note: this smoke test requires `npm install` to have completed successfully so local `@tobilu/qmd`, its package-provided skill, and the local `qmd` executable are present. End-to-end qmd skill evaluation additionally requires using a configured model.
 
-## 5. Model listing / selection smoke test
+## 7. Model listing / selection smoke test
 
 If local Lemonade env is configured in `.env`, verify provider discovery:
 
@@ -81,7 +107,7 @@ If Lemonade is unavailable, use another configured provider/model from:
 npm run dev -- --list-models
 ```
 
-## 6. Actual model interaction
+## 8. Actual model interaction
 
 Use a configured chat-capable model and send a trivial prompt:
 
