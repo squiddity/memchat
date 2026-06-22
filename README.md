@@ -138,6 +138,8 @@ Interactive memory commands:
 - `/memory` or `/memory status` shows backend status.
 - `/memory backends` lists available memory modes.
 - `/memory recall <query>` searches the selected backend.
+- `/memory ignore last` marks the previous turn as mistaken/ignored for future memory retrieval and synthesis.
+- `/memory ignore recent <n>` marks a small recent range as mistaken/ignored while retaining raw transcript audit records.
 - `/memory index` initializes or refreshes backend-local indexes/files.
 
 For observable memory debugging, start with `--memory-debug` or `MEMCHAT_MEMORY_DEBUG=1`:
@@ -146,13 +148,13 @@ For observable memory debugging, start with `--memory-debug` or `MEMCHAT_MEMORY_
 npm run dev -- --memory qmd-hybrid --memory-debug
 ```
 
-This prints italicized memory notes for hardwired memory operations such as before-prompt recall, lexical search, injected remembered context, indexing, and transcript/markdown writes. In qmd skill modes, memchat also adds setup guidance asking the model to pair model-centric qmd tool use with concise italicized memory notes, without modifying the third-party qmd skill itself.
+This prints italicized memory notes for hardwired memory operations such as before-prompt recall, lexical search, injected remembered context, indexing, and transcript/markdown writes. In an interactive terminal, memchat clears and redraws the active `you>` line around asynchronous debug blocks so scrollback remains readable without switching to a full-screen TUI. In qmd skill modes, memchat also adds setup guidance asking the model to pair model-centric qmd tool use with concise italicized memory notes, without modifying the third-party qmd skill itself.
 
 By default, memory lives under `.memchat/`. Use separate memory directories to preserve long-running progress, start clean experiments, or compare backends against different corpora.
 
-For qmd modes, JSONL transcripts remain append-only source/audit logs. Markdown memory is the synthesized retrieval layer: per-turn model synthesis appends compact summary bullets, facts, state updates, and conflict/retcon notes, and the end-of-session hook compacts/restates the current markdown memory. If no summarizer model is available, memchat falls back to a minimal unsynthesized summary bullet rather than blocking transcript persistence.
+For qmd-compatible modes, JSONL transcripts remain append-only source/audit logs. Markdown memory is the synthesized retrieval layer: per-turn markdown synthesis appends compact summary bullets, facts, state updates, and conflict/retcon notes, and the end-of-session hook compacts/restates the current markdown memory. JSONL transcript append is the immediate durability boundary; markdown synthesis may run as background work and is flushed or reported by explicit memory inspection and lifecycle commands. `/new` and `/exit` print a lifecycle message while flush/compaction owns the prompt, then render the next prompt only after the new session exists or shutdown is ready. If no summarizer model is available, memchat falls back to a minimal unsynthesized summary bullet rather than blocking transcript persistence. Ignore annotations from `/memory ignore ...` tombstone current-session hits immediately, skip pending synthesis when possible, and filter source-cited markdown from future retrieval/compaction without deleting the raw audit turns.
 
-The initial hardwired `qmd` modes intentionally keep markdown and JSONL as authoritative storage and use a TypeScript lexical search fallback. Hardwired retrieval is now two-stage: search synthesized markdown memory first, then search JSONL transcript only when markdown hits are absent, weak, conflict/uncertainty-related, or need source verification. Skill-based modes evaluate model-centric retrieval using the exact qmd skill shipped by `@tobilu/qmd`; memchat adds wrapper system guidance telling the model to use the same synthesized-first, transcript-as-audit strategy without modifying the third-party skill. A later change can add a hardwired `@tobilu/qmd` index/search backend without changing the storage layout.
+The initial hardwired `qmd` modes intentionally keep markdown and JSONL as authoritative storage and use a TypeScript lexical search fallback. Hardwired retrieval is now session-aware and two-stage: compare current-session details with synthesized markdown memory first, then search JSONL transcript only when markdown hits are absent, weak, conflict/uncertainty-related, or need source verification. Current-session hits get lightweight value ranking: meaningful state, inventory, names, locations, and retcons retain precedence, while short acknowledgements, accidental strings, and meta-corrections no longer crowd out stronger persisted story memory when prompt context is capped. Possible current-session conflicts or retcons are rendered in context for now; a later conflict-resolution strategy may turn these comparisons into durable conflict events. Skill-based modes evaluate model-centric retrieval using the exact qmd skill shipped by `@tobilu/qmd`; memchat adds wrapper system guidance telling the model to use the same synthesized-first, transcript-as-audit strategy without modifying the third-party skill. A later change can add a hardwired `@tobilu/qmd` index/search backend without changing the storage layout.
 
 ### npm-managed local pi packages
 
@@ -217,11 +219,12 @@ Use `interactive` when the user wants full manual control and the agent should w
 
 Useful manual test pattern:
 
-1. Start with a clean or named memory directory, for example `npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/closet-test`.
-2. Establish several fictional facts in the TUI.
-3. Ask about them after intervening turns.
-4. Restart memchat against the same memory directory inside another `interactive_shell` session.
-5. Use `/memory status`, `/memory recall <query>`, and direct questions to check whether memory survived and stayed consistent.
+1. Start with a clean or named memory directory, for example `npm run dev -- --memory qmd-hybrid --memory-dir .memchat-experiments/closet-test --memory-debug`.
+2. Establish several fictional facts in the TUI and confirm debug blocks appear as separate scrollback lines from `you>` prompts.
+3. Enter one or two accidental inputs, then run `/memory ignore last` or `/memory ignore recent 2`; later `/memory recall <query>` should omit those turns while raw JSONL audit records remain.
+4. Run `/new` and verify the lifecycle message appears before `Started new session` and before the next prompt.
+5. Restart memchat against the same memory directory inside another `interactive_shell` session.
+6. Use `/memory status`, `/memory recall <query>`, and direct questions to check whether durable memory survived and stayed consistent without the ignored turns.
 
 ## Development status
 
