@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { argv, stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
+import { CliOutputCoordinator } from "./output-coordinator.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   AuthStorage,
@@ -365,10 +366,14 @@ async function flushMemory(memory: MemoryBackend, reason: "recall" | "index" | "
   if (!memory.flush) return;
   const result = await memory.flush({ reason, timeoutMs: memoryFlushTimeoutMs });
   if (result.pending > 0 || result.failed > 0 || result.timedOut > 0) {
-    output.write(
-      `[memory warning] ${reason} flush incomplete: pending=${result.pending}, failed=${result.failed}, timedOut=${result.timedOut}\n`,
-    );
-    for (const failure of result.failures) output.write(`[memory warning] ${failure}\n`);
+    const warning = `[memory warning] ${reason} flush incomplete: pending=${result.pending}, failed=${result.failed}, timedOut=${result.timedOut}\n`;
+    if (cliOutput) cliOutput.writeAsyncBlock(warning);
+    else output.write(warning);
+    for (const failure of result.failures) {
+      const line = `[memory warning] ${failure}\n`;
+      if (cliOutput) cliOutput.writeAsyncBlock(line);
+      else output.write(line);
+    }
   }
 }
 
@@ -384,8 +389,12 @@ function memoryDebugStyle(text: string): string {
   return output.isTTY ? `\x1b[3m\x1b[36m${text}\x1b[39m\x1b[23m` : `_${text}_`;
 }
 
+let cliOutput: CliOutputCoordinator | undefined;
+
 function printMemoryDebugLine(text: string): void {
-  output.write(`${memoryDebugStyle(text)}\n`);
+  const line = `${memoryDebugStyle(text)}\n`;
+  if (cliOutput) cliOutput.writeAsyncBlock(line);
+  else output.write(line);
 }
 
 function printMemoryDebugEvent(event: MemoryDebugEvent): void {
@@ -516,6 +525,8 @@ function printHelp() {
       `  /memory status       Show memory backend status\n` +
       `  /memory backends     List available memory backends\n` +
       `  /memory recall <q>   Search memory\n` +
+      `  /memory ignore last  Mark the previous turn as mistaken/ignored for future memory\n` +
+      `  /memory ignore recent <n>  Mark the last n turns as mistaken/ignored\n` +
       `  /memory index        Initialize/reindex memory files\n` +
       `  /plugins             Show npm-managed local pi packages configured for this run\n` +
       `  /exit                End the chat\n\n` +
@@ -700,6 +711,8 @@ async function main() {
   memory = createConfiguredMemory();
 
   const rl = readline.createInterface({ input, output });
+  cliOutput = new CliOutputCoordinator(output);
+  cliOutput.setReadline(rl);
   spinner = new InlineSpinner(output);
   let activeAssistantText = "";
   let activeAssistantStarted = false;
@@ -738,6 +751,7 @@ async function main() {
   }
 
   async function startNewSession(): Promise<void> {
+    output.write("Starting new session; flushing and compacting memory before the next prompt...\n");
     const previousModel = session.model;
     const previousThinking = session.thinkingLevel;
     unsubscribeSession?.();
@@ -781,7 +795,10 @@ async function main() {
     const text = line.trim();
     if (!text) return true;
 
-    if (text === "/exit" || text === "/quit") return false;
+    if (text === "/exit" || text === "/quit") {
+      output.write("Shutting down; flushing memory before exit...\n");
+      return false;
+    }
     if (text === "/help") {
       printHelp();
       return true;
@@ -800,6 +817,13 @@ async function main() {
     }
     if (text === "/memory backends") {
       printMemoryBackends();
+      return true;
+    }
+    if (text === "/memory ignore last" || text.startsWith("/memory ignore recent ")) {
+      const countText = text === "/memory ignore last" ? "1" : text.slice("/memory ignore recent ".length).trim();
+      const count = /^\d+$/.test(countText) ? Number.parseInt(countText, 10) : Number.NaN;
+      if (!Number.isFinite(count) || count <= 0) output.write("Usage: /memory ignore last OR /memory ignore recent <n>\n");
+      else output.write(`${memory.ignoreRecentTurns ? await memory.ignoreRecentTurns(count) : "This backend does not support ignore annotations."}\n`);
       return true;
     }
     if (text.startsWith("/memory recall ")) {
@@ -888,8 +912,11 @@ async function main() {
 
   try {
     if (input.isTTY) {
-      while (await handleInput(await rl.question("you> "))) {
-        // Continue until /exit or /quit.
+      while (true) {
+        cliOutput.setAcceptingInput(true);
+        const line = await rl.question("you> ");
+        cliOutput.setAcceptingInput(false);
+        if (!(await handleInput(line))) break;
       }
     } else {
       for await (const line of rl) {

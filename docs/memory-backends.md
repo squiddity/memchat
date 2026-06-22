@@ -40,6 +40,8 @@ Interactive commands should start small:
 /memory status
 /memory backends
 /memory recall <query>
+/memory ignore last
+/memory ignore recent <n>
 /memory index
 ```
 
@@ -157,11 +159,12 @@ Current first implementation:
 3. Default the summarizer model to the active session model; allow `--summarizer-model` / `MEMCHAT_SUMMARIZER_MODEL` to choose a cheaper or specialized background model.
 4. On session disposal (`/new` or `/exit`), compact/restates markdown memory so summaries are concise, facts are deduplicated, current state is current, and conflicts remain explicit.
 5. `/memory index` initializes markdown files and reports indexed file count.
-6. In hardwired retrieval modes, before each prompt run session-aware two-stage lexical recall: compare current-session details with synthesized markdown first, and only fall back to JSONL transcript when markdown has no hits, weak hits, or conflict/uncertainty/source-verification cues.
-7. Inject top hits as “Relevant remembered context” in hardwired/hybrid retrieval modes, preferring synthesized markdown hits over transcript hits.
-8. In `qmd-skill-retrieval`, skip automatic context injection and rely on the loaded qmd skill for model-centric retrieval. Memchat adds wrapper system guidance, without modifying the third-party skill, telling the model to search `.memchat/memory` first and consult `.memchat/sessions` only for missing, weak, conflicting, or provenance-sensitive answers.
-9. In `qmd-hybrid`, combine automatic session-aware two-stage lexical recall with optional model-centric qmd skill retrieval using the same synthesized-first strategy.
-10. For now, render possible current-session conflicts or retcons in prompt context. A later conflict-resolution strategy may generate durable conflict events from the same comparison results.
+6. `/memory ignore last` and `/memory ignore recent <n>` append ignore annotations to the raw JSONL audit log. Ignored turns stay inspectable in transcripts, but current-session hits are tombstoned, pending synthesis is skipped when possible, and source-cited markdown is filtered from future retrieval/compaction.
+7. In hardwired retrieval modes, before each prompt run session-aware two-stage lexical recall: compare current-session details with synthesized markdown first, and only fall back to JSONL transcript when markdown has no hits, weak hits, or conflict/uncertainty/source-verification cues.
+8. Inject top hits as “Relevant remembered context” in hardwired/hybrid retrieval modes, preferring synthesized markdown hits over transcript hits.
+9. In `qmd-skill-retrieval`, skip automatic context injection and rely on the loaded qmd skill for model-centric retrieval. Memchat adds wrapper system guidance, without modifying the third-party skill, telling the model to search `.memchat/memory` first and consult `.memchat/sessions` only for missing, weak, conflicting, or provenance-sensitive answers.
+10. In `qmd-hybrid`, combine automatic session-aware two-stage lexical recall with optional model-centric qmd skill retrieval using the same synthesized-first strategy.
+11. For now, render possible current-session conflicts or retcons in prompt context. A later conflict-resolution strategy may generate durable conflict events from the same comparison results.
 
 Current safety note: qmd skill modes intentionally enable pi built-in tools so the unmodified package qmd skill declaring `allowed-tools: Bash(qmd:*)` can call `qmd` directly. A future hardening task should restrict actual Bash execution to qmd-only commands while preserving compatibility with unmodified qmd-style skills.
 

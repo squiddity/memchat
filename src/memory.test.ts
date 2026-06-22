@@ -199,6 +199,103 @@ test("qmd recall de-duplicates current-session and flushed markdown hits from th
   });
 });
 
+test("qmd ignore recent removes accidental current-session turns from prompt context and keeps audit", async () => {
+  await withTempDir(async (dir) => {
+    const memory = createMemoryBackend({ id: "qmd", cwd: process.cwd(), root: dir, sessionId: "session-a" });
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:00:00.000Z", userText: "asdf accidental", assistantText: "Could you clarify?" }));
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:01:00.000Z", userText: "oops ignore this accidental banana", assistantText: "No problem." }));
+
+    assert.match((await memory.beforePrompt({ userText: "accidental banana" })).text, /accidental banana/);
+    assert.ok(memory.ignoreRecentTurns);
+    assert.match(await memory.ignoreRecentTurns(2), /Ignored 2 recent turns/);
+
+    const context = await memory.beforePrompt({ userText: "accidental banana" });
+    assert.doesNotMatch(context.text, /accidental banana/);
+    assert.equal(context.hits.length, 0);
+
+    const transcript = await readFile(join(dir, "sessions", "session-a.jsonl"), "utf-8");
+    assert.match(transcript, /"type":"turn"/);
+    assert.match(transcript, /"type":"ignore"/);
+    assert.match(transcript, /user-marked-mistake/);
+    await flush(memory, "manual");
+  });
+});
+
+test("qmd recall filters ignored turns after markdown has already been written", async () => {
+  await withTempDir(async (dir) => {
+    const memory = createMemoryBackend({
+      id: "qmd",
+      cwd: process.cwd(),
+      root: dir,
+      sessionId: "session-a",
+      synthesisProvider: {
+        label: "filter-test",
+        async synthesizeTurn() {
+          return synthesis("accidental banana");
+        },
+      },
+    });
+
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:00:00.000Z", userText: "accidental banana", assistantText: "Noted." }));
+    await flush(memory, "manual");
+    const facts = await readFile(join(dir, "memory", "facts.md"), "utf-8");
+    assert.match(facts, /Fact accidental banana/);
+    assert.match((await memory.beforePrompt({ userText: "banana" })).text, /accidental banana/);
+    assert.ok(memory.ignoreRecentTurns);
+    await memory.ignoreRecentTurns(1);
+
+    const context = await memory.beforePrompt({ userText: "banana" });
+    assert.doesNotMatch(context.text, /Fact accidental banana/);
+    assert.doesNotMatch(context.text, /accidental banana/);
+  });
+});
+
+test("ignore recent reports clearly when not enough turns exist", async () => {
+  await withTempDir(async (dir) => {
+    const memory = createMemoryBackend({ id: "transcript", cwd: process.cwd(), root: dir, sessionId: "session-a" });
+    assert.ok(memory.ignoreRecentTurns);
+    assert.match(await memory.ignoreRecentTurns(1), /No recent turn available/);
+  });
+});
+
+test("qmd current-session value ranking prefers story inventory over generic chatter", async () => {
+  await withTempDir(async (dir) => {
+    const memory = createMemoryBackend({ id: "qmd", cwd: process.cwd(), root: dir, sessionId: "session-a" });
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:00:00.000Z", userText: "hello there", assistantText: "Hi!" }));
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:01:00.000Z", userText: "The party inventory contains a moon key.", assistantText: "The moon key is in the party inventory." }));
+
+    const hits = await memory.recall("assistant");
+    assert.match(hits[0]?.text ?? "", /moon key/);
+    await flush(memory, "manual");
+  });
+});
+
+test("qmd low-value current-session hit does not displace stronger persisted state when prompt hits are capped", async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, "memory"), { recursive: true });
+    await writeFile(join(dir, "memory", "state.md"), "# Current State\n\n- The vault contains a moon key. Source: .memchat/sessions/old.jsonl @ 2026-06-21T12:00:00.000Z\n", "utf-8");
+    const memory = createMemoryBackend({ id: "qmd", cwd: process.cwd(), root: dir, sessionId: "session-a", maxPromptHits: 1 });
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:00:00.000Z", userText: "moon key okay", assistantText: "ok" }));
+
+    const context = await memory.beforePrompt({ userText: "moon key" });
+    assert.match(context.text, /Persisted remembered context:/);
+    assert.match(context.text, /vault contains a moon key/);
+    assert.doesNotMatch(context.text, /moon key okay/);
+    await flush(memory, "manual");
+  });
+});
+
+test("qmd low-value current-session hit remains available when it is the only relevant memory", async () => {
+  await withTempDir(async (dir) => {
+    const memory = createMemoryBackend({ id: "qmd", cwd: process.cwd(), root: dir, sessionId: "session-a" });
+    await memory.afterTurn(turn({ timestamp: "2026-06-22T12:00:00.000Z", userText: "hello there", assistantText: "Hi!" }));
+
+    const context = await memory.beforePrompt({ userText: "hello" });
+    assert.match(context.text, /hello there/);
+    await flush(memory, "manual");
+  });
+});
+
 test("qmd retrieval renders current-session retcon candidates beside persisted memory", async () => {
   await withTempDir(async (dir) => {
     await mkdir(join(dir, "memory"), { recursive: true });
@@ -218,5 +315,6 @@ test("qmd retrieval renders current-session retcon candidates beside persisted m
     assert.match(context.text, /silver astrolabe/);
     assert.equal(context.hits[0]?.sourceTier, "current-session");
     assert.ok((context.hits[0]?.conflictsWith?.length ?? 0) > 0);
+    await flush(memory, "manual");
   });
 });

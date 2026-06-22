@@ -134,6 +134,7 @@ export interface MemoryBackend {
   beforePrompt(input: MemoryInput): Promise<MemoryContext>;
   afterTurn(turn: ConversationTurn): Promise<void>;
   recall(query: string): Promise<MemoryHit[]>;
+  ignoreRecentTurns?(count: number): Promise<string>;
   index?(): Promise<string>;
   flush?(options: MemoryFlushOptions): Promise<MemoryFlushResult>;
   dispose?(): Promise<void>;
@@ -149,17 +150,32 @@ type MemoryOptions = {
   onDebug?: (event: MemoryDebugEvent) => void;
 };
 
-type TranscriptRecord = {
+type TranscriptTurnRecord = {
   type: "turn";
   sessionId: string;
   timestamp: string;
+  turnRef: string;
   model?: string;
   user: string;
   assistant: string;
 };
 
+type TranscriptIgnoreRecord = {
+  type: "ignore";
+  sessionId: string;
+  timestamp: string;
+  turnRefs: string[];
+  reason: "user-marked-mistake";
+};
+
+type TranscriptRecord = TranscriptTurnRecord | TranscriptIgnoreRecord;
+
 function sessionId(): string {
   return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17);
+}
+
+function turnRef(sessionId: string, timestamp: string): string {
+  return `${sessionId}:${timestamp}`;
 }
 
 function escapeJsonLine(value: unknown): string {
@@ -237,6 +253,22 @@ function hasRetconCue(text: string): boolean {
   return /\b(actually|instead|retcon|changed|no longer|rather than|not anymore)\b/i.test(text);
 }
 
+function currentSessionValueScore(text: string): number {
+  const compact = text.replace(/\s+/g, " ").trim();
+  let score = 0;
+  if (/\b(inventory|contains?|carries|wears|holds|has|location|located|room|closet|door|key|map|name(?:d)?|called|relationship|quest|hook|state|fact)\b/i.test(compact)) score += 2;
+  if (hasRetconCue(compact)) score += 3;
+  if (/\b(yes|ok(?:ay)?|thanks?|hello|hi|cool|sure|got it|no problem|clarify|what do you mean)\b/i.test(compact)) score -= 2;
+  if (compact.length < 80) score -= 1;
+  if (/^[\W_\d\p{L}]{1,24}$/u.test(compact) && !/[.!?].*\b\p{L}{4,}\b/u.test(compact)) score -= 2;
+  if (/\b(oops|ignore this|accidental|mistake|typo|wrong chat|never mind|nevermind)\b/i.test(compact)) score -= 3;
+  return score;
+}
+
+function isLowValueCurrentSessionText(text: string): boolean {
+  return currentSessionValueScore(text) < 0;
+}
+
 function asBullets(items: string[]): string {
   return items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n");
 }
@@ -265,6 +297,10 @@ class NoneMemoryBackend implements MemoryBackend {
     return [];
   }
 
+  async ignoreRecentTurns(): Promise<string> {
+    return "Memory is disabled; there are no recent turns to ignore.";
+  }
+
   async index(): Promise<string> {
     return "none backend has nothing to index.";
   }
@@ -281,6 +317,8 @@ class TranscriptMemoryBackend implements MemoryBackend {
   protected readonly maxPromptHits: number;
   protected readonly synthesisProvider: MemorySynthesisProvider | undefined;
   protected readonly onDebug: ((event: MemoryDebugEvent) => void) | undefined;
+  protected readonly ignoredTurnRefs = new Set<string>();
+  protected readonly recentTurnRefs: string[] = [];
 
   constructor(options: MemoryOptions) {
     this.root = options.root ? resolve(options.cwd, options.root) : resolve(options.cwd, ".memchat");
@@ -323,20 +361,50 @@ class TranscriptMemoryBackend implements MemoryBackend {
   }
 
   async afterTurn(turn: ConversationTurn): Promise<void> {
+    await this.appendTurn(turn);
+  }
+
+  protected async appendTurn(turn: ConversationTurn): Promise<string> {
     await ensureDir(this.sessionsDir);
-    const record: TranscriptRecord = {
+    const ref = turnRef(this.sessionId, turn.timestamp);
+    const record: TranscriptTurnRecord = {
       type: "turn",
       sessionId: this.sessionId,
       timestamp: turn.timestamp,
+      turnRef: ref,
       model: turn.model,
       user: turn.userText,
       assistant: turn.assistantText,
     };
     await appendFile(this.transcriptPath, escapeJsonLine(record), "utf-8");
+    this.recentTurnRefs.push(ref);
+    if (this.recentTurnRefs.length > 100) this.recentTurnRefs.splice(0, this.recentTurnRefs.length - 100);
     this.debug({ operation: "write", detail: "appended turn to JSONL transcript", source: this.transcriptPath });
+    return ref;
+  }
+
+  async ignoreRecentTurns(count: number): Promise<string> {
+    const normalizedCount = Math.max(0, Math.floor(count));
+    if (normalizedCount <= 0) return "Choose at least one recent turn to ignore.";
+    const candidates = this.recentTurnRefs.filter((ref) => !this.ignoredTurnRefs.has(ref)).slice(-normalizedCount);
+    if (candidates.length === 0 || candidates.length < normalizedCount) return `No ${normalizedCount === 1 ? "recent turn" : `${normalizedCount} recent turns`} available to ignore.`;
+
+    await ensureDir(this.sessionsDir);
+    for (const ref of candidates) this.ignoredTurnRefs.add(ref);
+    const record: TranscriptIgnoreRecord = {
+      type: "ignore",
+      sessionId: this.sessionId,
+      timestamp: new Date().toISOString(),
+      turnRefs: candidates,
+      reason: "user-marked-mistake",
+    };
+    await appendFile(this.transcriptPath, escapeJsonLine(record), "utf-8");
+    this.debug({ operation: "write", detail: `recorded ignore annotation for ${candidates.length} turn(s)`, source: this.transcriptPath });
+    return `Ignored ${candidates.length} recent turn${candidates.length === 1 ? "" : "s"}. Raw transcript audit records were retained.`;
   }
 
   async recall(query: string): Promise<MemoryHit[]> {
+    await this.loadIgnoredTurnRefs();
     const tokens = tokenize(query);
     this.debug({ operation: "recall", detail: `running transcript lexical search with ${tokens.length} token(s)`, query });
     if (tokens.length === 0 || !existsSync(this.sessionsDir)) {
@@ -349,14 +417,22 @@ class TranscriptMemoryBackend implements MemoryBackend {
     for (const file of files) {
       const path = join(this.sessionsDir, file);
       const content = await readFile(path, "utf-8");
-      for (const line of content.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        let record: TranscriptRecord;
+      const records = content.split(/\r?\n/).flatMap((line): TranscriptRecord[] => {
+        if (!line.trim()) return [];
         try {
-          record = JSON.parse(line) as TranscriptRecord;
+          return [JSON.parse(line) as TranscriptRecord];
         } catch {
-          continue;
+          return [];
         }
+      });
+      const ignored = new Set(this.ignoredTurnRefs);
+      for (const record of records) {
+        if (record.type === "ignore") for (const ref of record.turnRefs) ignored.add(ref);
+      }
+      for (const record of records) {
+        if (record.type !== "turn") continue;
+        const ref = record.turnRef ?? turnRef(record.sessionId, record.timestamp);
+        if (ignored.has(ref)) continue;
         const text = `User: ${record.user}\nAssistant: ${record.assistant}`;
         const score = scoreText(tokens, text);
         if (score <= 0) continue;
@@ -375,6 +451,23 @@ class TranscriptMemoryBackend implements MemoryBackend {
     const results = hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 10);
     this.debug({ operation: "recall", detail: `transcript lexical search scanned ${files.length} file(s) and returned ${results.length} hit(s)`, query, hits: results.length });
     return results;
+  }
+
+  protected async loadIgnoredTurnRefs(): Promise<void> {
+    if (!existsSync(this.sessionsDir)) return;
+    const files = (await readdir(this.sessionsDir)).filter((file) => file.endsWith(".jsonl"));
+    for (const file of files) {
+      const content = await readFile(join(this.sessionsDir, file), "utf-8");
+      for (const line of content.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line) as TranscriptRecord;
+          if (record.type === "ignore") for (const ref of record.turnRefs) this.ignoredTurnRefs.add(ref);
+        } catch {
+          // Ignore malformed audit lines during recall.
+        }
+      }
+    }
   }
 
   async index(): Promise<string> {
@@ -445,14 +538,21 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   }
 
   override async afterTurn(turn: ConversationTurn): Promise<void> {
-    await super.afterTurn(turn);
-    this.recordCurrentSessionTurn(turn);
+    const ref = await this.appendTurn(turn);
+    this.recordCurrentSessionTurn(turn, ref);
     const summaryPath = this.summaryPathForTimestamp(turn.timestamp);
     this.touchedSummaryPaths.add(summaryPath);
-    this.enqueueMarkdownSynthesis(turn, summaryPath);
+    this.enqueueMarkdownSynthesis(turn, summaryPath, ref);
+  }
+
+  override async ignoreRecentTurns(count: number): Promise<string> {
+    const message = await super.ignoreRecentTurns(count);
+    this.currentSessionHits.splice(0, this.currentSessionHits.length, ...this.currentSessionHits.filter((hit) => !this.ignoredTurnRefs.has(this.hitIdentity(hit))));
+    return message;
   }
 
   override async recall(query: string): Promise<MemoryHit[]> {
+    await this.loadIgnoredTurnRefs();
     const tokens = tokenize(query);
     this.debug({ operation: "recall", detail: `running two-stage qmd lexical recall with ${tokens.length} token(s)`, query });
     if (tokens.length === 0) {
@@ -507,12 +607,13 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   }
 
   async dispose(): Promise<void> {
+    await this.loadIgnoredTurnRefs();
     if (this.work.pending > 0 && !this.skipDisposeFlushAfterTimeout) await this.flush({ reason: "dispose", timeoutMs: 10_000 });
     if (this.work.pending > 0) return;
     if (!this.synthesisProvider?.compactSession) return;
     await this.ensureSeedFiles();
     const summaryPaths = this.touchedSummaryPaths.size > 0 ? [...this.touchedSummaryPaths] : [this.summaryPathForTimestamp(new Date().toISOString())];
-    const sessionSummary = (await Promise.all(summaryPaths.map(async (path) => existsSync(path) ? await readFile(path, "utf-8") : ""))).join("\n\n");
+    const sessionSummary = this.stripIgnoredSourceBlocks((await Promise.all(summaryPaths.map(async (path) => existsSync(path) ? await readFile(path, "utf-8") : ""))).join("\n\n"));
     if (!sessionSummary.trim()) return;
     const sessionSummaryPath = summaryPaths[summaryPaths.length - 1];
     const transcriptSource = join(".memchat", "sessions", `${this.sessionId}.jsonl`);
@@ -550,11 +651,11 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     this.skipDisposeFlushAfterTimeout = false;
   }
 
-  private recordCurrentSessionTurn(turn: ConversationTurn): void {
+  private recordCurrentSessionTurn(turn: ConversationTurn, ref: string): void {
     const text = `User: ${turn.userText}\nAssistant: ${turn.assistantText}`;
     this.currentSessionHits.push({
       text: excerpt(text, [], 600),
-      source: `current-session:${this.sessionId}`,
+      source: `current-session:${ref}`,
       kind: "summary",
       score: 0,
       timestamp: turn.timestamp,
@@ -568,11 +669,13 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   private searchCurrentSession(tokens: string[], persistedHits: MemoryHit[] = []): MemoryHit[] {
     const persistedCueTokens = tokenize(persistedHits.map((hit) => hit.text).join("\n")).slice(0, 20);
     const hits = this.currentSessionHits
+      .filter((hit) => !this.ignoredTurnRefs.has(this.hitIdentity(hit)))
       .map((hit) => {
         const queryScore = scoreText(tokens, hit.text);
         const comparisonScore = persistedHits.length > 0 ? scoreText(persistedCueTokens, hit.text) : 0;
         const retconScore = persistedHits.length > 0 && hasRetconCue(hit.text) ? 1 : 0;
-        const score = queryScore + comparisonScore + retconScore;
+        const valueScore = Math.max(-2, Math.min(3, currentSessionValueScore(hit.text)));
+        const score = Math.max(queryScore, queryScore + comparisonScore + retconScore + valueScore);
         return {
           ...hit,
           score,
@@ -585,12 +688,16 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     return hits;
   }
 
-  private enqueueMarkdownSynthesis(turn: ConversationTurn, summaryPath: string): void {
+  private enqueueMarkdownSynthesis(turn: ConversationTurn, summaryPath: string, ref: string): void {
     this.work.pending += 1;
     this.debug({ operation: "queue", detail: `queued markdown synthesis; pending=${this.work.pending}`, source: summaryPath });
     const run = async () => {
       try {
-        await this.synthesizeAndWriteTurn(turn, summaryPath);
+        if (this.ignoredTurnRefs.has(ref)) {
+          this.debug({ operation: "synthesize", detail: "skipped markdown synthesis for ignored turn", source: summaryPath });
+        } else {
+          await this.synthesizeAndWriteTurn(turn, summaryPath);
+        }
         this.work.completed += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -644,13 +751,25 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   }
 
   private async snapshotMemory(summaryPath: string): Promise<MemoryFileSnapshot> {
-    const readExisting = async (path: string): Promise<string> => existsSync(path) ? await readFile(path, "utf-8") : "";
+    const readExisting = async (path: string): Promise<string> => this.stripIgnoredSourceBlocks(existsSync(path) ? await readFile(path, "utf-8") : "");
     return {
       facts: await readExisting(this.factsPath),
       state: await readExisting(this.statePath),
       conflicts: await readExisting(this.conflictsPath),
       recentSummary: await readExisting(summaryPath),
     };
+  }
+
+  private stripIgnoredSourceBlocks(markdown: string): string {
+    if (this.ignoredTurnRefs.size === 0 || !markdown.trim()) return markdown;
+    const blocks = markdown.split(/(?=\n## )/g);
+    return blocks.filter((block) => ![...this.ignoredTurnRefs].some((ref) => {
+      const separator = ref.indexOf(":");
+      if (separator === -1) return block.includes(ref);
+      const session = ref.slice(0, separator);
+      const timestamp = ref.slice(separator + 1);
+      return block.includes(`${session}.jsonl @ ${timestamp}`) || block.includes(ref);
+    })).join("");
   }
 
   private fallbackSynthesis(turn: ConversationTurn): MemorySynthesis {
@@ -693,9 +812,10 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
 
   private stageRank(hit: MemoryHit): number {
     if ((hit.conflictsWith?.length ?? 0) > 0) return 0;
-    if (hit.sourceTier === "current-session") return 1;
-    if (hit.kind === "transcript") return 3;
-    return 2;
+    if (hit.sourceTier === "current-session" && !isLowValueCurrentSessionText(hit.text)) return 1;
+    if (hit.sourceTier !== "current-session" && hit.kind !== "transcript") return 2;
+    if (hit.sourceTier === "current-session") return 3;
+    return 4;
   }
 
   private mergeHits(hits: MemoryHit[]): MemoryHit[] {
@@ -735,7 +855,8 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     this.debug({ operation: "recall", detail: `running markdown lexical search across ${files.length} file(s)`, query, source: this.memoryDir });
     const hits: MemoryHit[] = [];
     for (const path of files) {
-      const content = await readFile(path, "utf-8");
+      const content = this.stripIgnoredSourceBlocks(await readFile(path, "utf-8"));
+      if (!content.trim()) continue;
       const score = scoreText(tokens, content);
       if (score <= 0) continue;
       const relative = path.slice(resolve(this.root, "..").length + 1);
@@ -743,6 +864,7 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
       const stats = await stat(path);
       const text = excerpt(content, tokens);
       const sourceRef = this.sourceRefFromText(text);
+      if (sourceRef && this.ignoredTurnRefs.has(sourceRef)) continue;
       const sourceRefSeparator = sourceRef?.indexOf(":") ?? -1;
       const sourceSessionId = sourceRefSeparator >= 0 ? sourceRef?.slice(0, sourceRefSeparator) : undefined;
       const sourceTimestamp = sourceRefSeparator >= 0 ? sourceRef?.slice(sourceRefSeparator + 1) : undefined;

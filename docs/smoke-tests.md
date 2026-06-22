@@ -49,8 +49,9 @@ printf '/memory status\n/new\n/memory status\n/exit\n' | npm run dev -- --memory
 Expected:
 
 - Both `/memory status` outputs show the same root.
-- The session id/path after `/new` differs from the initial session id/path.
-- Process exits with `bye`.
+- `/new` prints `Starting new session; flushing and compacting memory before the next prompt...` before `Started new session`.
+- The session id/path after `/new` differs from the initial session id/path, and the next `you>` prompt appears only after `Started new session`.
+- `/exit` prints `Shutting down; flushing memory before exit...` and exits with `bye`.
 
 ## 5. Memory debug output smoke test
 
@@ -63,6 +64,7 @@ Expected:
 
 - Banner shows `Memory debug: on`.
 - Italic/underscore memory debug lines print for qmd-compatible indexing and two-stage lexical recall. With no relevant markdown hits, debug output may show transcript fallback.
+- In an interactive terminal or pi interactive shell, async memory debug blocks appear as separate scrollback lines; they should not overwrite or visually merge with the active `you>` prompt or partially typed input.
 - Process exits with `bye`.
 
 For markdown synthesis, use a configured model and optionally a cheaper summarizer model:
@@ -73,6 +75,21 @@ printf 'Remember: the closet contains a brass telescope, old coats, and a locked
 ```
 
 Expected: JSONL transcript is written immediately, markdown files under `/tmp/memchat-synthesis-smoke/memory/` contain synthesized bullets/facts/state rather than raw user/assistant transcript copies, and exit flushes pending markdown synthesis before compaction when synthesis succeeded.
+
+For the improved interactive memory UX, use a pi interactive shell or a local terminal with a clean directory:
+
+```bash
+rm -rf /tmp/memchat-ux-smoke
+npm run dev -- --memory qmd-hybrid --memory-dir /tmp/memchat-ux-smoke --memory-debug --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --summarizer-model lemonade/Qwen3.6-35B-A3B-MTP-GGUF
+```
+
+Manual scenario:
+
+1. Tell memchat a durable story detail, for example `The observatory inventory contains a brass telescope.`
+2. Type an accidental line such as `asdf banana mistake`, then run `/memory ignore last`.
+3. Ask about the observatory inventory and/or run `/memory recall banana`; ignored accidental content should not appear in injected memory or recall, while the JSONL transcript still contains an ignore audit record.
+4. Run `/new`; expect `Starting new session; flushing and compacting memory before the next prompt...` followed by `Started new session` before the next `you>` prompt.
+5. Ask for the durable story detail again; qmd-hybrid should be able to recall useful persisted state while excluding the ignored turn.
 
 For async/session-aware memory behavior, the automated test suite covers the deterministic cases that are hard to smoke manually:
 
@@ -86,6 +103,8 @@ Expected:
 - Failed markdown synthesis falls back to an unsynthesized summary without crashing queued work.
 - Rapid turns preserve write order through the background queue.
 - Current-session retcons render beside older persisted markdown as possible conflicts.
+- Ignored recent turns are excluded from current-session hits, source-cited markdown recall, and future compaction inputs while retaining audit records.
+- Low-value current-session chatter does not displace stronger story/state memory when prompt hits are capped.
 - `/memory status` reports queue state without flushing, while `/memory index` remains flush-aware.
 
 ## 6. QMD skill retrieval mode smoke test
