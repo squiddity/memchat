@@ -88,6 +88,7 @@ type MemchatPackageJson = {
 const baseChatSystemPrompt = `You are Memchat, a warm, internally consistent chat and fiction partner.
 
 Memchat may provide a "Relevant remembered context" block before a user message. Treat that block as retrieved memory, prefer it over invention, and use its citations when helpful.
+When the block separates current-session details from persisted remembered context, prefer current-session details for the active conversation. Treat possible conflicts or retcons as a signal to preserve the latest session state while acknowledging uncertainty when useful.
 If no memory context is provided, only rely on the active session context.
 
 Conversation priorities:
@@ -98,10 +99,13 @@ Conversation priorities:
 
 const memoryDebugSystemPrompt = `Memory debug mode is enabled. Memchat prints memory instrumentation automatically, including hardwired recall, injected context, and qmd/Bash(qmd:*) tool start/end events. Do not emit extra freeform "Memory retrieval" notes unless the user explicitly asks for them; keep normal answers separate from debug instrumentation.`;
 
+const memoryFlushTimeoutMs = 10_000;
+
 const qmdSkillRetrievalStrategyPrompt = `Qmd memory retrieval strategy:
 - Treat .memchat/memory markdown as the synthesized memory layer and .memchat/sessions JSONL as the raw transcript/audit layer.
 - When using qmd or Bash(qmd:*) for memory retrieval, search synthesized memory first: .memchat/memory/facts.md, .memchat/memory/state.md, .memchat/memory/conflicts.md, and .memchat/memory/summaries/*.md.
 - Only do an additional transcript/session search when synthesized memory has no relevant hits, hits are weak or ambiguous, a conflict/retcon needs source verification, the user asks for exact wording/provenance, or answering safely requires inspecting the raw turn.
+- Prefer current-session details when memchat injects them alongside older persisted memory.
 - Prefer concise answers grounded in synthesized memory; cite transcript only when you actually consulted it or need audit-level evidence.`;
 
 const memorySynthesisSystemPrompt = `You are Memchat's background memory synthesizer. Convert chat turns into durable, concise memory notes for future retrieval.
@@ -350,7 +354,22 @@ async function printMemoryStatus(memory: MemoryBackend, memoryMode: MemoryMode) 
   output.write(`${status.description}\n`);
   if (status.root) output.write(`Root: ${status.root}\n`);
   if (status.sessionId) output.write(`Session: ${status.sessionId}\n`);
+  if (status.work) {
+    output.write(`Memory work: pending=${status.work.pending}, completed=${status.work.completed}, failed=${status.work.failed}, timedOut=${status.work.timedOut}\n`);
+    for (const failure of status.work.failures) output.write(`- memory work failure: ${failure}\n`);
+  }
   for (const note of status.notes ?? []) output.write(`- ${note}\n`);
+}
+
+async function flushMemory(memory: MemoryBackend, reason: "recall" | "index" | "new-session" | "shutdown"): Promise<void> {
+  if (!memory.flush) return;
+  const result = await memory.flush({ reason, timeoutMs: memoryFlushTimeoutMs });
+  if (result.pending > 0 || result.failed > 0 || result.timedOut > 0) {
+    output.write(
+      `[memory warning] ${reason} flush incomplete: pending=${result.pending}, failed=${result.failed}, timedOut=${result.timedOut}\n`,
+    );
+    for (const failure of result.failures) output.write(`[memory warning] ${failure}\n`);
+  }
 }
 
 function printMemoryBackends() {
@@ -724,6 +743,7 @@ async function main() {
     unsubscribeSession?.();
     unsubscribeSession = undefined;
     session.dispose();
+    await flushMemory(memory, "new-session");
     await memory.dispose?.();
     memory = createConfiguredMemory();
     ({ session } = await createAgentSession({
@@ -784,6 +804,7 @@ async function main() {
     }
     if (text.startsWith("/memory recall ")) {
       const query = text.slice("/memory recall ".length).trim();
+      await flushMemory(memory, "recall");
       const hits = await memory.recall(query);
       if (hits.length === 0) output.write("No memory hits.\n");
       else {
@@ -794,6 +815,7 @@ async function main() {
       return true;
     }
     if (text === "/memory index") {
+      await flushMemory(memory, "index");
       output.write(`${memory.index ? await memory.index() : "This backend does not support indexing."}\n`);
       return true;
     }
@@ -879,6 +901,7 @@ async function main() {
     spinner?.stop();
     rl.close();
     unsubscribeSession?.();
+    await flushMemory(memory, "shutdown");
     await memory.dispose?.();
     summarizerSession?.dispose();
     session.dispose();

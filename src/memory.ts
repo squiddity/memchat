@@ -22,6 +22,25 @@ export type MemoryMode = {
 
 export type MemoryKind = "transcript" | "summary" | "fact" | "state" | "conflict";
 
+export type MemoryWorkStatus = {
+  pending: number;
+  completed: number;
+  failed: number;
+  timedOut: number;
+  failures: string[];
+};
+
+export type MemoryFlushReason = "manual" | "recall" | "index" | "new-session" | "shutdown" | "dispose";
+
+export type MemoryFlushOptions = {
+  reason: MemoryFlushReason;
+  timeoutMs?: number;
+};
+
+export type MemoryFlushResult = MemoryWorkStatus & {
+  reason: MemoryFlushReason;
+};
+
 export type MemoryStatus = {
   id: MemoryBackendId;
   enabled: boolean;
@@ -29,6 +48,7 @@ export type MemoryStatus = {
   root?: string;
   sessionId?: string;
   writable?: boolean;
+  work?: MemoryWorkStatus;
   notes?: string[];
 };
 
@@ -36,12 +56,18 @@ export type MemoryInput = {
   userText: string;
 };
 
+export type MemorySourceTier = "current-session" | "markdown" | "transcript";
+
 export type MemoryHit = {
   text: string;
   source: string;
   kind: MemoryKind;
   score?: number;
   timestamp?: string;
+  sessionId?: string;
+  sourceTier?: MemorySourceTier;
+  pending?: boolean;
+  conflictsWith?: string[];
 };
 
 export type MemoryContext = {
@@ -50,7 +76,7 @@ export type MemoryContext = {
 };
 
 export type MemoryDebugEvent = {
-  operation: "recall" | "before-prompt" | "write" | "index" | "synthesize" | "compact";
+  operation: "recall" | "before-prompt" | "write" | "index" | "synthesize" | "compact" | "queue" | "flush";
   backend: MemoryBackendId;
   detail: string;
   query?: string;
@@ -109,6 +135,7 @@ export interface MemoryBackend {
   afterTurn(turn: ConversationTurn): Promise<void>;
   recall(query: string): Promise<MemoryHit[]>;
   index?(): Promise<string>;
+  flush?(options: MemoryFlushOptions): Promise<MemoryFlushResult>;
   dispose?(): Promise<void>;
 }
 
@@ -150,15 +177,34 @@ function scoreText(queryTokens: string[], text: string): number {
 
 function renderContext(hits: MemoryHit[]): string {
   if (hits.length === 0) return "";
-  const bullets = hits.map((hit, index) => {
-    const citation = `${hit.kind}:${hit.source}${hit.timestamp ? ` @ ${hit.timestamp}` : ""}`;
-    return `${index + 1}. [${citation}] ${hit.text}`;
-  });
-  return `Relevant remembered context:\n${bullets.join("\n")}`;
+  const citation = (hit: MemoryHit): string => `${hit.kind}:${hit.source}${hit.timestamp ? ` @ ${hit.timestamp}` : ""}`;
+  const renderGroup = (title: string, groupHits: MemoryHit[]): string[] => {
+    if (groupHits.length === 0) return [];
+    return [title, ...groupHits.map((hit, index) => `${index + 1}. [${citation(hit)}] ${hit.text}`)];
+  };
+
+  const conflicts = hits.filter((hit) => (hit.conflictsWith?.length ?? 0) > 0);
+  const current = hits.filter((hit) => hit.sourceTier === "current-session" && !conflicts.includes(hit));
+  const persisted = hits.filter((hit) => hit.sourceTier !== "current-session" && !conflicts.includes(hit));
+  const lines = [
+    "Relevant remembered context:",
+    ...renderGroup("Current session details:", current),
+    ...renderGroup("Persisted remembered context:", persisted),
+    ...renderGroup("Possible conflicts or retcons:", conflicts),
+  ];
+  return lines.join("\n");
 }
 
 async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
+}
+
+function emptyWorkStatus(): MemoryWorkStatus {
+  return { pending: 0, completed: 0, failed: 0, timedOut: 0, failures: [] };
+}
+
+function emptyFlushResult(reason: MemoryFlushReason): MemoryFlushResult {
+  return { reason, ...emptyWorkStatus() };
 }
 
 async function walkMarkdown(root: string): Promise<string[]> {
@@ -185,6 +231,10 @@ function excerpt(text: string, queryTokens: string[], maxLength = 600): string {
 
 function normalizeMarkdown(markdown: string): string {
   return `${markdown.trim()}\n`;
+}
+
+function hasRetconCue(text: string): boolean {
+  return /\b(actually|instead|retcon|changed|no longer|rather than|not anymore)\b/i.test(text);
 }
 
 function asBullets(items: string[]): string {
@@ -217,6 +267,10 @@ class NoneMemoryBackend implements MemoryBackend {
 
   async index(): Promise<string> {
     return "none backend has nothing to index.";
+  }
+
+  async flush(options: MemoryFlushOptions): Promise<MemoryFlushResult> {
+    return emptyFlushResult(options.reason);
   }
 }
 
@@ -256,6 +310,7 @@ class TranscriptMemoryBackend implements MemoryBackend {
       root: this.root,
       sessionId: this.sessionId,
       writable: true,
+      work: emptyWorkStatus(),
       notes: [`Transcript: ${this.transcriptPath}`],
     };
   }
@@ -311,6 +366,8 @@ class TranscriptMemoryBackend implements MemoryBackend {
           kind: "transcript",
           score,
           timestamp: record.timestamp,
+          sessionId: record.sessionId,
+          sourceTier: "transcript",
         });
       }
     }
@@ -325,11 +382,20 @@ class TranscriptMemoryBackend implements MemoryBackend {
     this.debug({ operation: "index", detail: "transcript backend checked JSONL directory; no separate index required", source: this.sessionsDir });
     return "transcript backend uses JSONL directly; no separate index is required.";
   }
+
+  async flush(options: MemoryFlushOptions): Promise<MemoryFlushResult> {
+    this.debug({ operation: "flush", detail: `no pending transcript memory work for ${options.reason}` });
+    return emptyFlushResult(options.reason);
+  }
 }
 
 class QmdMemoryBackend extends TranscriptMemoryBackend {
   id = "qmd" as const;
   private readonly touchedSummaryPaths = new Set<string>();
+  private readonly currentSessionHits: MemoryHit[] = [];
+  private readonly work: MemoryWorkStatus = emptyWorkStatus();
+  private backgroundTail: Promise<void> = Promise.resolve();
+  private skipDisposeFlushAfterTimeout = false;
 
   private get memoryDir(): string {
     return join(this.root, "memory");
@@ -355,10 +421,11 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     return {
       id: this.id,
       enabled: true,
-      description: "Markdown memory notes under .memchat/memory with qmd-shaped lexical recall; JSONL transcript is also retained.",
+      description: "Markdown memory notes under .memchat/memory with qmd-compatible lexical recall; JSONL transcript is also retained.",
       root: this.root,
       sessionId: this.sessionId,
       writable: true,
+      work: this.workSnapshot(),
       notes: [
         `Transcript: ${this.transcriptPath}`,
         `Markdown source: ${this.memoryDir}`,
@@ -371,33 +438,18 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   }
 
   override async beforePrompt(input: MemoryInput): Promise<MemoryContext> {
-    this.debug({ operation: "before-prompt", detail: `preparing qmd-shaped memory context with up to ${this.maxPromptHits} hit(s)`, query: input.userText });
+    this.debug({ operation: "before-prompt", detail: `preparing qmd-compatible memory context with up to ${this.maxPromptHits} hit(s)`, query: input.userText });
     const hits = (await this.recall(input.userText)).slice(0, this.maxPromptHits);
-    this.debug({ operation: "before-prompt", detail: `injecting ${hits.length} qmd-shaped remembered context hit(s)`, query: input.userText, hits: hits.length });
+    this.debug({ operation: "before-prompt", detail: `injecting ${hits.length} qmd-compatible remembered context hit(s)`, query: input.userText, hits: hits.length });
     return { text: renderContext(hits), hits };
   }
 
   override async afterTurn(turn: ConversationTurn): Promise<void> {
     await super.afterTurn(turn);
-    await ensureDir(this.summariesDir);
-    await this.ensureSeedFiles();
+    this.recordCurrentSessionTurn(turn);
     const summaryPath = this.summaryPathForTimestamp(turn.timestamp);
     this.touchedSummaryPaths.add(summaryPath);
-    const transcriptSource = join(".memchat", "sessions", `${this.sessionId}.jsonl`);
-    const memory = await this.snapshotMemory(summaryPath);
-    let synthesis: MemorySynthesis | undefined;
-
-    if (this.synthesisProvider) {
-      this.debug({ operation: "synthesize", detail: `synthesizing markdown memory with ${this.synthesisProvider.label}`, source: summaryPath });
-      try {
-        synthesis = await this.synthesisProvider.synthesizeTurn({ turn, sessionId: this.sessionId, transcriptSource, memory });
-      } catch (error) {
-        this.debug({ operation: "synthesize", detail: `synthesis failed; falling back to minimal bullet: ${error instanceof Error ? error.message : String(error)}`, source: summaryPath });
-      }
-    }
-
-    synthesis ??= this.fallbackSynthesis(turn);
-    await this.writeSynthesis(turn, synthesis, transcriptSource, summaryPath);
+    this.enqueueMarkdownSynthesis(turn, summaryPath);
   }
 
   override async recall(query: string): Promise<MemoryHit[]> {
@@ -409,16 +461,15 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     }
     await this.ensureSeedFiles();
     const markdownHits = await this.searchMarkdown(tokens, query);
-    if (!this.shouldFallbackToTranscript(markdownHits, tokens)) {
-      const results = markdownHits.slice(0, 10);
-      this.debug({ operation: "recall", detail: `stage 1 synthesized markdown memory was sufficient; skipped transcript fallback`, query, hits: results.length });
+    const currentSessionHits = this.searchCurrentSession(tokens, markdownHits);
+    if (!this.shouldFallbackToTranscript([...currentSessionHits, ...markdownHits], tokens)) {
+      const results = this.mergeHits([...currentSessionHits, ...markdownHits]).slice(0, 10);
+      this.debug({ operation: "recall", detail: `current-session and markdown memory were sufficient; skipped transcript fallback`, query, hits: results.length });
       return results;
     }
 
     const transcriptHits = await super.recall(query);
-    const results = [...markdownHits, ...transcriptHits]
-      .sort((a, b) => this.stageRank(a) - this.stageRank(b) || (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)))
-      .slice(0, 10);
+    const results = this.mergeHits([...currentSessionHits, ...markdownHits, ...transcriptHits]).slice(0, 10);
     this.debug({ operation: "recall", detail: `stage 2 transcript fallback returned ${transcriptHits.length} transcript hit(s); ${results.length} total hit(s)`, query, hits: results.length });
     return results;
   }
@@ -430,7 +481,34 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     return `indexed ${files.length} markdown memory file(s) for lexical qmd-compatible recall.`;
   }
 
+  override async flush(options: MemoryFlushOptions): Promise<MemoryFlushResult> {
+    this.debug({ operation: "flush", detail: `flushing markdown synthesis work for ${options.reason}; pending=${this.work.pending}` });
+    if (this.work.pending === 0) return { reason: options.reason, ...this.workSnapshot() };
+
+    if (options.timeoutMs === undefined) {
+      await this.backgroundTail;
+      return { reason: options.reason, ...this.workSnapshot() };
+    }
+
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((resolveTimeout) => {
+      timeoutHandle = setTimeout(() => resolveTimeout("timeout"), options.timeoutMs);
+    });
+    const result = await Promise.race([this.backgroundTail.then(() => "done" as const), timeout]);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (result === "timeout") {
+      this.work.timedOut += 1;
+      this.skipDisposeFlushAfterTimeout = true;
+      this.debug({ operation: "flush", detail: `flush timed out for ${options.reason}; pending=${this.work.pending}` });
+    } else {
+      this.markCurrentSessionSettled();
+    }
+    return { reason: options.reason, ...this.workSnapshot() };
+  }
+
   async dispose(): Promise<void> {
+    if (this.work.pending > 0 && !this.skipDisposeFlushAfterTimeout) await this.flush({ reason: "dispose", timeoutMs: 10_000 });
+    if (this.work.pending > 0) return;
     if (!this.synthesisProvider?.compactSession) return;
     await this.ensureSeedFiles();
     const summaryPaths = this.touchedSummaryPaths.size > 0 ? [...this.touchedSummaryPaths] : [this.summaryPathForTimestamp(new Date().toISOString())];
@@ -455,6 +533,97 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
     } catch (error) {
       this.debug({ operation: "compact", detail: `compaction failed: ${error instanceof Error ? error.message : String(error)}`, source: this.memoryDir });
     }
+  }
+
+  private workSnapshot(): MemoryWorkStatus {
+    return { ...this.work, failures: [...this.work.failures] };
+  }
+
+  private recordWorkFailure(message: string): void {
+    this.work.failed += 1;
+    this.work.failures.push(message);
+    if (this.work.failures.length > 10) this.work.failures.splice(0, this.work.failures.length - 10);
+  }
+
+  private markCurrentSessionSettled(): void {
+    for (const hit of this.currentSessionHits) hit.pending = false;
+    this.skipDisposeFlushAfterTimeout = false;
+  }
+
+  private recordCurrentSessionTurn(turn: ConversationTurn): void {
+    const text = `User: ${turn.userText}\nAssistant: ${turn.assistantText}`;
+    this.currentSessionHits.push({
+      text: excerpt(text, [], 600),
+      source: `current-session:${this.sessionId}`,
+      kind: "summary",
+      score: 0,
+      timestamp: turn.timestamp,
+      sessionId: this.sessionId,
+      sourceTier: "current-session",
+      pending: true,
+    });
+    if (this.currentSessionHits.length > 50) this.currentSessionHits.splice(0, this.currentSessionHits.length - 50);
+  }
+
+  private searchCurrentSession(tokens: string[], persistedHits: MemoryHit[] = []): MemoryHit[] {
+    const persistedCueTokens = tokenize(persistedHits.map((hit) => hit.text).join("\n")).slice(0, 20);
+    const hits = this.currentSessionHits
+      .map((hit) => {
+        const queryScore = scoreText(tokens, hit.text);
+        const comparisonScore = persistedHits.length > 0 ? scoreText(persistedCueTokens, hit.text) : 0;
+        const retconScore = persistedHits.length > 0 && hasRetconCue(hit.text) ? 1 : 0;
+        const score = queryScore + comparisonScore + retconScore;
+        return {
+          ...hit,
+          score,
+          conflictsWith: retconScore > 0 && persistedHits.length > 0 ? persistedHits.map((persisted) => persisted.source) : hit.conflictsWith,
+        };
+      })
+      .filter((hit) => (hit.score ?? 0) > 0)
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)))
+      .slice(0, 10);
+    return hits;
+  }
+
+  private enqueueMarkdownSynthesis(turn: ConversationTurn, summaryPath: string): void {
+    this.work.pending += 1;
+    this.debug({ operation: "queue", detail: `queued markdown synthesis; pending=${this.work.pending}`, source: summaryPath });
+    const run = async () => {
+      try {
+        await this.synthesizeAndWriteTurn(turn, summaryPath);
+        this.work.completed += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.recordWorkFailure(message);
+        this.debug({ operation: "synthesize", detail: `markdown synthesis task failed: ${message}`, source: summaryPath });
+      } finally {
+        this.work.pending = Math.max(0, this.work.pending - 1);
+        if (this.work.pending === 0) this.markCurrentSessionSettled();
+      }
+    };
+    this.backgroundTail = this.backgroundTail.then(run, run);
+  }
+
+  private async synthesizeAndWriteTurn(turn: ConversationTurn, summaryPath: string): Promise<void> {
+    await ensureDir(this.summariesDir);
+    await this.ensureSeedFiles();
+    const transcriptSource = join(".memchat", "sessions", `${this.sessionId}.jsonl`);
+    const memory = await this.snapshotMemory(summaryPath);
+    let synthesis: MemorySynthesis | undefined;
+
+    if (this.synthesisProvider) {
+      this.debug({ operation: "synthesize", detail: `synthesizing markdown memory with ${this.synthesisProvider.label}`, source: summaryPath });
+      try {
+        synthesis = await this.synthesisProvider.synthesizeTurn({ turn, sessionId: this.sessionId, transcriptSource, memory });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.recordWorkFailure(message);
+        this.debug({ operation: "synthesize", detail: `synthesis failed; falling back to minimal bullet: ${message}`, source: summaryPath });
+      }
+    }
+
+    synthesis ??= this.fallbackSynthesis(turn);
+    await this.writeSynthesis(turn, synthesis, transcriptSource, summaryPath);
   }
 
   private async ensureSeedFiles(): Promise<void> {
@@ -523,7 +692,42 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
   }
 
   private stageRank(hit: MemoryHit): number {
-    return hit.kind === "transcript" ? 1 : 0;
+    if ((hit.conflictsWith?.length ?? 0) > 0) return 0;
+    if (hit.sourceTier === "current-session") return 1;
+    if (hit.kind === "transcript") return 3;
+    return 2;
+  }
+
+  private mergeHits(hits: MemoryHit[]): MemoryHit[] {
+    const sorted = [...hits].sort((a, b) => this.stageRank(a) - this.stageRank(b) || (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)));
+    const currentIdentities = new Set(sorted
+      .filter((hit) => hit.sourceTier === "current-session" && hit.sessionId && hit.timestamp)
+      .map((hit) => `${hit.sessionId}:${hit.timestamp}`));
+    const byIdentity = new Map<string, MemoryHit>();
+    for (const hit of sorted) {
+      const identity = this.hitIdentity(hit);
+      if (hit.sourceTier !== "current-session" && currentIdentities.has(identity)) continue;
+      const existing = byIdentity.get(identity);
+      if (!existing) {
+        byIdentity.set(identity, hit);
+        continue;
+      }
+      if (this.stageRank(hit) < this.stageRank(existing)) byIdentity.set(identity, hit);
+    }
+    return [...byIdentity.values()].sort((a, b) => this.stageRank(a) - this.stageRank(b) || (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp)));
+  }
+
+  private hitIdentity(hit: MemoryHit): string {
+    const sourceRef = this.sourceRefFromText(hit.text);
+    if (sourceRef) return sourceRef;
+    if (hit.sessionId && hit.timestamp) return `${hit.sessionId}:${hit.timestamp}`;
+    return `${hit.source}:${hit.timestamp ?? ""}:${hit.text.slice(0, 80)}`;
+  }
+
+  private sourceRefFromText(text: string): string | undefined {
+    const match = text.match(/\.memchat\/sessions\/([^/\s]+)\.jsonl @ ([0-9TZ:.-]+)/);
+    if (!match) return undefined;
+    return `${match[1]}:${match[2]}`;
   }
 
   private async searchMarkdown(tokens: string[], query: string): Promise<MemoryHit[]> {
@@ -537,12 +741,19 @@ class QmdMemoryBackend extends TranscriptMemoryBackend {
       const relative = path.slice(resolve(this.root, "..").length + 1);
       const kind = this.kindForMarkdown(path);
       const stats = await stat(path);
+      const text = excerpt(content, tokens);
+      const sourceRef = this.sourceRefFromText(text);
+      const sourceRefSeparator = sourceRef?.indexOf(":") ?? -1;
+      const sourceSessionId = sourceRefSeparator >= 0 ? sourceRef?.slice(0, sourceRefSeparator) : undefined;
+      const sourceTimestamp = sourceRefSeparator >= 0 ? sourceRef?.slice(sourceRefSeparator + 1) : undefined;
       hits.push({
-        text: excerpt(content, tokens),
+        text,
         source: relative,
         kind,
         score,
-        timestamp: stats.mtime.toISOString(),
+        timestamp: sourceTimestamp ?? stats.mtime.toISOString(),
+        sessionId: sourceSessionId,
+        sourceTier: "markdown",
       });
     }
     const results = hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 10);
@@ -598,7 +809,7 @@ export function resolveMemoryMode(value: MemoryModeId): MemoryMode {
       retrieval: "hardwired",
       skills: [],
       allowSkillTools: false,
-      description: "Hardwired markdown/qmd-shaped persistence with hardwired lexical retrieval.",
+      description: "Hardwired qmd-compatible markdown persistence with hardwired lexical retrieval.",
     };
   }
   if (value === "qmd-skill-retrieval") {
@@ -609,7 +820,7 @@ export function resolveMemoryMode(value: MemoryModeId): MemoryMode {
       retrieval: "skill",
       skills: ["qmd"],
       allowSkillTools: true,
-      description: "Hardwired markdown/qmd-shaped persistence; model-centric retrieval via the qmd skill.",
+      description: "Hardwired qmd-compatible markdown persistence; model-centric retrieval via the qmd skill.",
     };
   }
   return {
@@ -619,7 +830,7 @@ export function resolveMemoryMode(value: MemoryModeId): MemoryMode {
     retrieval: "hybrid",
     skills: ["qmd"],
     allowSkillTools: true,
-    description: "Hardwired markdown/qmd-shaped persistence and recall plus optional model-centric qmd skill retrieval.",
+    description: "Hardwired qmd-compatible markdown persistence and recall plus optional model-centric qmd skill retrieval.",
   };
 }
 
