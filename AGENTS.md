@@ -1,52 +1,39 @@
 # Agent instructions for memchat
 
-## Project purpose
+## Purpose
 
-This repository is for building `memchat`: a TypeScript chat agent on top of `@earendil-works/pi-coding-agent` focused on memory-intensive, multi-session conversations. The priority is internal consistency over time, especially for fiction/chat scenarios where arbitrary invented details are acceptable only if they are remembered later.
+Build `memchat`: a TypeScript chat agent on `@earendil-works/pi-coding-agent` for memory-intensive, multi-session conversations where long-term internal consistency matters.
 
-## Key principles
+## Core rules
 
 - Prioritize cross-session consistency and traceable memory behavior.
-- Keep the initial agent simple before adding complex memory systems.
-- Design memory as a pluggable subsystem so models, storage backends, and pi memory plugins can be compared.
-- Preserve compatibility with pi SDK concepts and pi packages/extensions when practical.
-- Favor discussion/fiction state models over coding-agent assumptions when they conflict.
+- Keep memory pluggable; do not hard-code one model provider or backend.
+- Use TypeScript and prefer small, explicit interfaces and event/state types.
+- When implementing memory, distinguish raw transcript/events, extracted facts, summaries, current state, and conflicts/retcons.
+- Add tests or eval fixtures for meaningful memory behavior changes when feasible.
+- After changes, run the relevant checks from `docs/smoke-tests.md`.
+- When asked to push, use the configured GitHub CLI auth (`gh auth status`, `gh auth setup-git`) rather than unauthenticated HTTPS prompts.
 
-## Development guidance
+## Read docs on demand
 
-- Use TypeScript for source code.
-- Prefer small interfaces and explicit event/state types.
-- Avoid hard-coding one model provider or one memory backend.
-- When implementing memory, distinguish at least:
-  - raw transcript/events,
-  - extracted facts,
-  - summaries,
-  - current world/chat state,
-  - conflicts or retcons.
-- Add tests or eval fixtures for new memory behavior when feasible.
-- Keep README.md updated as architecture decisions become real.
-- After changes, run the relevant smoke tests in `docs/smoke-tests.md`.
-- For memory backend planning and implementation order, consult `docs/memory-backends.md`.
-- When asked to push, use the GitHub CLI authentication already configured for this repository (`gh auth status` / `gh auth setup-git`) instead of unauthenticated HTTPS prompts.
+Do not load every doc by default. Read the smallest relevant doc for the task:
+
+- `README.md` — project overview, quick start, and docs map.
+- `docs/cli.md` — CLI flags, commands, model selection, memory modes, local package loading.
+- `docs/playtesting.md` — how the agent should run manual shell playtests; default to `interactive_shell`, a fresh memory dir, `qmd-hybrid`, and `--memory-debug` unless the user asks otherwise.
+- `docs/memory-backends.md` — backend strategy, storage layout, comparison, and implementation order.
+- `docs/architecture.md` — goals, memory quality bar, design direction, and current roadmap.
+- `docs/smoke-tests.md` — validation commands after code changes.
+- `docs/plans/*.md` — only when a task explicitly references a plan or when implementation details need the latest plan context.
 
 ## Pi references
 
-All file reads should stay inside this project folder. For npm packages, consult only packages installed under this repository's `./node_modules` and declared in `package.json`.
+Stay inside this repository for file reads. For npm packages, consult only local `./node_modules` and `package.json`.
 
-For SDK and extension details, consult the local pi docs before implementing:
+When a task depends on pi SDK or extension behavior, load the relevant local pi docs first:
 
-- Main docs/index: `./node_modules/@earendil-works/pi-coding-agent/docs/index.md`
-- SDK docs: `./node_modules/@earendil-works/pi-coding-agent/docs/sdk.md`
-- Extensions docs: `./node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
-- Skills docs: `./node_modules/@earendil-works/pi-coding-agent/docs/skills.md`
-- Package docs: `./node_modules/@earendil-works/pi-coding-agent/docs/packages.md`
-
-## Memory evaluation mindset
-
-When adding features, consider how they help answer:
-
-- Can the agent recall a detail invented many turns ago?
-- Can it avoid contradicting entity attributes, locations, relationships, inventory, and plot hooks?
-- Can it survive process/session restarts?
-- Can it cite or inspect the memory source for a claim?
-- Can different memory systems be swapped and compared fairly?
+- `./node_modules/@earendil-works/pi-coding-agent/docs/index.md`
+- `./node_modules/@earendil-works/pi-coding-agent/docs/sdk.md`
+- `./node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+- `./node_modules/@earendil-works/pi-coding-agent/docs/skills.md`
+- `./node_modules/@earendil-works/pi-coding-agent/docs/packages.md`
