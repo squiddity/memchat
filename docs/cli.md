@@ -105,6 +105,7 @@ World import is a skill-first importer for HTML/XHTML directories, ZIPs, and EPU
 
 ```bash
 npm run world-import -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5
+npm run world-import -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5 --debug --show-tool-updates
 npm run world-import-helper -- normalize --input ./sources --output /tmp/memchat-world
 ```
 

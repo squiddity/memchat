@@ -32,6 +32,9 @@ Options:
 - `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` — optional stronger reviewer model.
 - `--thinking` — pi thinking level.
 - `--dry-run` — validate setup and normalization without doing semantic extraction.
+- `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` — print startup, paths, model selection, prompt, and tool start/end diagnostics to stderr.
+- `--show-thinking` / `MEMCHAT_WORLD_IMPORT_SHOW_THINKING=1` — print thinking deltas when the selected provider/model exposes them. If `--thinking off` or the provider does not emit thinking blocks, there may be no thinking output.
+- `--show-tool-updates` / `MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES=1` — with debug enabled, print verbose tool update payloads in addition to tool start/end lines.
 
 ## Helper commands
 
@@ -82,3 +85,13 @@ Extraction candidates are model-authored and opaque to helper code except for op
 ```
 
 See `skills/world-import/references/contracts.md` for model-facing details.
+
+## Debugging model runs
+
+Use debug mode when checking whether a model is following the skill workflow:
+
+```bash
+npm run world-import -- --input ~/Downloads/pg11-images-3.epub --output /tmp/pg11-world --model openrouter/google/gemma-4-31b-it:free --debug --show-tool-updates
+```
+
+The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, and a final output summary. A successful model turn with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly.

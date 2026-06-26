@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AuthStorage,
@@ -14,6 +15,20 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { isUsableModel, modelLabel, requireResolvedModel, type ThinkingLevel } from "../model-selection.js";
 
+export type WorldImportDebugOptions = {
+  enabled?: boolean;
+  showThinking?: boolean;
+  showToolUpdates?: boolean;
+};
+
+export type WorldImportOutputSummary = {
+  manifestExists: boolean;
+  normalizedUnits: number;
+  extractionStages: number;
+  mergeStageExists: boolean;
+  worldMarkdownFiles: number;
+};
+
 export type WorldImportRunOptions = {
   cwd?: string;
   packageRoot?: string;
@@ -23,13 +38,18 @@ export type WorldImportRunOptions = {
   reviewerModel?: string;
   thinking?: ThinkingLevel;
   dryRun?: boolean;
+  debug?: WorldImportDebugOptions;
   onText?: (text: string) => void;
+  onStatus?: (text: string) => void;
+  onThinking?: (text: string) => void;
+  onToolEvent?: (text: string) => void;
 };
 
 export type WorldImportRunResult = {
   responseText: string;
   model?: string;
   outputRoot: string;
+  outputSummary: WorldImportOutputSummary;
 };
 
 export function defaultPackageRoot(): string {
@@ -59,15 +79,76 @@ export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOpt
   })}`;
 }
 
+function status(options: WorldImportRunOptions, text: string): void {
+  if (options.debug?.enabled) options.onStatus?.(`[world-import] ${text}\n`);
+}
+
+function stringifyForLog(value: unknown, maxLength = 4000): string {
+  let rendered: string;
+  try {
+    rendered = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  } catch {
+    rendered = String(value);
+  }
+  return rendered.length > maxLength ? `${rendered.slice(0, maxLength)}…` : rendered;
+}
+
+function eventRecord(event: unknown): Record<string, unknown> {
+  return event && typeof event === "object" ? event as Record<string, unknown> : {};
+}
+
+async function countFiles(dir: string, predicate: (name: string) => boolean): Promise<number> {
+  if (!existsSync(dir)) return 0;
+  let count = 0;
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) count += await countFiles(path, predicate);
+    else if (entry.isFile() && predicate(entry.name)) count += 1;
+  }
+  return count;
+}
+
+export async function inspectWorldImportOutput(outputRoot: string): Promise<WorldImportOutputSummary> {
+  const manifestPath = join(outputRoot, "sources", "manifest.json");
+  let normalizedUnits = 0;
+  if (existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(await readFile(manifestPath, "utf-8")) as { units?: unknown[] };
+      normalizedUnits = Array.isArray(manifest.units) ? manifest.units.length : 0;
+    } catch {
+      normalizedUnits = 0;
+    }
+  }
+  return {
+    manifestExists: existsSync(manifestPath),
+    normalizedUnits,
+    extractionStages: await countFiles(join(outputRoot, "stages", "extraction"), (name) => name.endsWith(".json")),
+    mergeStageExists: existsSync(join(outputRoot, "stages", "merge", "merged-candidates.json")),
+    worldMarkdownFiles: await countFiles(join(outputRoot, "world"), (name) => name.endsWith(".md")),
+  };
+}
+
 export async function runWorldImportSkill(options: WorldImportRunOptions): Promise<WorldImportRunResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const packageRoot = resolve(options.packageRoot ?? defaultPackageRoot());
   const helperCommand = cwd === packageRoot ? "npm run world-import-helper --" : "memchat-world-import-helper";
   const agentDir = getAgentDir();
-  const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
+  status(options, `cwd=${cwd}`);
+  status(options, `packageRoot=${packageRoot}`);
+  status(options, `input=${resolve(options.input)}`);
+  status(options, `output=${resolve(options.outputRoot)}`);
+  status(options, `agentDir=${agentDir}`);
+  status(options, `helperCommand=${helperCommand}`);
+  const authPath = resolve(agentDir, "auth.json");
+  const modelsPath = resolve(agentDir, "models.json");
+  status(options, `authPath=${authPath} (${existsSync(authPath) ? "exists" : "missing"})`);
+  status(options, `modelsPath=${modelsPath} (${existsSync(modelsPath) ? "exists" : "missing"})`);
+  const authStorage = AuthStorage.create(authPath);
+  const modelRegistry = ModelRegistry.create(authStorage, modelsPath);
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, packages: [packageRoot] });
+  status(options, "loading world-import skill");
   const skill = worldImportSkill(packageRoot);
+  status(options, `loaded skill ${skill.name} from ${skill.filePath}`);
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -76,6 +157,7 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
     skillsOverride: (current) => ({ skills: [...current.skills, skill], diagnostics: current.diagnostics }),
   });
   await resourceLoader.reload();
+  status(options, "resource loader ready; creating agent session");
 
   const { session } = await createAgentSession({
     cwd,
@@ -89,24 +171,57 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
   });
 
   try {
-    if (options.model) await session.setModel(requireResolvedModel(options.model, session.modelRegistry));
+    status(options, `session created; initial model=${isUsableModel(session.model) ? modelLabel(session.model) : "none"}; thinking=${session.thinkingLevel}`);
+    if (options.model) {
+      status(options, `resolving requested model=${options.model}`);
+      await session.setModel(requireResolvedModel(options.model, session.modelRegistry));
+    }
     if (options.thinking) session.setThinkingLevel(options.thinking);
     if (!isUsableModel(session.model)) throw new Error("No usable model selected. Pass --model provider/model or configure a default pi model.");
+    status(options, `active model=${modelLabel(session.model)}; thinking=${session.thinkingLevel}`);
 
     let responseText = "";
+    let thinkingStarted = false;
+    const debugTools = options.debug?.enabled;
     const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-        responseText += event.assistantMessageEvent.delta;
-        options.onText?.(event.assistantMessageEvent.delta);
+      if (event.type === "message_update") {
+        const messageEvent = event.assistantMessageEvent;
+        if (messageEvent.type === "text_delta") {
+          responseText += messageEvent.delta;
+          options.onText?.(messageEvent.delta);
+        } else if (messageEvent.type === "thinking_delta" && options.debug?.showThinking) {
+          if (!thinkingStarted) {
+            thinkingStarted = true;
+            options.onThinking?.("\n[world-import thinking]\n");
+          }
+          options.onThinking?.(messageEvent.delta);
+        }
+      }
+      if (debugTools && event.type === "tool_execution_start") {
+        options.onToolEvent?.(`\n[world-import tool/start] ${event.toolName} ${stringifyForLog(event.args)}\n`);
+      }
+      if (debugTools && options.debug?.showToolUpdates && event.type === "tool_execution_update") {
+        options.onToolEvent?.(`\n[world-import tool/update] ${stringifyForLog(eventRecord(event))}\n`);
+      }
+      if (debugTools && event.type === "tool_execution_end") {
+        const record = eventRecord(event);
+        options.onToolEvent?.(`\n[world-import tool/end] ${event.toolName} ${event.isError ? "error" : "ok"} ${stringifyForLog(record.details ?? record.result ?? record, 8000)}\n`);
       }
     });
     try {
-      await session.prompt(renderWorldImportSkillInvocation({ ...options, helperCommand }));
+      const prompt = renderWorldImportSkillInvocation({ ...options, helperCommand });
+      status(options, `prompt=${prompt}`);
+      status(options, "invoking model/skill");
+      await session.prompt(prompt);
+      status(options, "model/skill run completed");
     } finally {
       unsubscribe();
     }
-    return { responseText, model: modelLabel(session.model), outputRoot: options.outputRoot };
+    const outputSummary = await inspectWorldImportOutput(options.outputRoot);
+    status(options, `output summary=${JSON.stringify(outputSummary)}`);
+    return { responseText, model: modelLabel(session.model), outputRoot: options.outputRoot, outputSummary };
   } finally {
+    status(options, "disposing session");
     session.dispose();
   }
 }
