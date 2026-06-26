@@ -44,6 +44,7 @@ npm run world-import -- --input ./sources --output /tmp/memchat-world --dry-run
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
 - [`docs/world-import.md`](docs/world-import.md) — skill-first world import package, helper commands, and artifact format
+- [`docs/world-import-run-guide.md`](docs/world-import-run-guide.md) — shell-oriented quick-start for running imports and helpers
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 
 ## Status

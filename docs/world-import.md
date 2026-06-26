@@ -84,6 +84,8 @@ Extraction candidates are model-authored and opaque to helper code except for op
 }
 ```
 
+For a concise shell-oriented quick-start covering build, API key setup, run flags, helper commands, and output inspection, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
+
 See `skills/world-import/references/contracts.md` for model-facing details.
 
 ## Debugging model runs
