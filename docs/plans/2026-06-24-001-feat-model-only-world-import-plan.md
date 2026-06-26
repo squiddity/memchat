@@ -312,6 +312,39 @@ Runtime output produced by the importer should follow a separate data-root struc
 
 ---
 
+## Session Notes (2026-06-26) — First Successful End-to-End Run
+
+Ran the full import pipeline against Project Gutenberg's *Alice's Adventures in Wonderland* EPUB (`pg11-images-3.epub`, 15 normalized units) using `openrouter/deepseek/deepseek-v4-pro`.
+
+### Results
+
+- **Normalization**: ✅ 15 units from EPUB (13 narrative chapters + TOC + Gutenberg license)
+- **Extraction**: ✅ 14 extraction stages (model correctly skipped the Gutenberg boilerplate)
+- **Merge**: ✅ 72 artifact packets merged from candidates
+- **Emission**: ✅ 72 markdown files written to `world/people/` (35), `world/places/` (8), `world/things/` (7), `world/facts/` (22)
+- **Deterministic eval**: ✅ All 5 checks passed
+- **Reviewer eval**: Score 5/5 (DeepSeek V4 Pro reviewing its own output — per the plan's R15-R16 reviewer model should differ from extraction model)
+
+### Observations
+
+- **Auth resolution works correctly** — CLI found `~/.pi/agent/auth.json` and `models.json` via pi SDK's standard paths.
+- **Free-tier Gemma model** failed to progress past normalization (poor tool-use capability). DeepSeek V4 Pro completed the full workflow successfully.
+- **10-minute timeout** was barely enough for extraction phase; the extraction ran to completion but merge + emit finished only on a second run with a longer timeout.
+- The model correctly identified and skipped the Gutenberg license unit (non-narrative boilerplate).
+
+### Next Session: Scrutinize Evaluation, Guidance, and Quality
+
+- **Evaluate the evaluation process itself**: The reviewer scored 5/5 but was the same model as the extractor (DeepSeek). Per R16, the reviewer should be a stronger, larger-context model. Need to test with a separate reviewer model and compare scores.
+- **Scrutinize extraction quality**: 72 artifacts sounds comprehensive, but we need to check for:
+  - False positives (hallucinated entities/facts)
+  - False negatives (missed characters, events, or locations)
+  - Merge correctness (were aliases handled properly?)
+  - Provenance accuracy (do quotes actually match the source?)
+  - Section quality (are summaries useful or just rephrased excerpts?)
+- **Review model guidance/prompts in the skill**: The skill's SKILL.md and workflow references drive model behavior. Need to audit whether the prompts push the model toward good extraction vs. over-generation.
+- **Establish quality criteria**: Define what "good" looks like — recall targets, acceptable hallucination rate, provenance accuracy threshold — so evaluation isn't ad hoc.
+- **Add fixtures with known ground truth**: The plan mentions fixtures (U6) but they don't exist yet. Need small corpora with hand-authored expected artifacts to measure against.
+
 ## Sources / Research
 
 - `docs/brainstorms/2026-06-24-provenance-preserving-world-library-requirements.md` — origin requirements, flows, success criteria, and scope boundaries.
