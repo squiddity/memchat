@@ -1,6 +1,6 @@
 # Smoke tests
 
-Run these after changes that affect CLI startup, model selection, providers/extensions, or chat behavior.
+Run these after changes that affect CLI startup, model selection, providers/extensions, chat behavior, or world-import helpers.
 
 ## 1. Build
 
@@ -163,6 +163,30 @@ Expected:
 - The process remains interactive until `/exit`.
 
 If using a different configured model, replace `lemonade/Qwen3.6-35B-A3B-MTP-GGUF` with that provider/model. If the command prints `Command aborted` without an assistant response, retry once after checking the local model server; this can indicate a transient Lemonade/server-side failure rather than a memchat CLI failure.
+
+## 9. World import helper smoke test
+
+For deterministic world-import helper changes:
+
+```bash
+rm -rf /tmp/memchat-world-smoke /tmp/memchat-world-src
+mkdir -p /tmp/memchat-world-src
+cat > /tmp/memchat-world-src/chapter1.html <<'HTML'
+<html><head><title>Chapter One</title></head><body><p>Ada guards the glass tower.</p><p>The tower overlooks Moon Bay.</p></body></html>
+HTML
+npm run world-import-helper -- normalize --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke
+npm run world-import-helper -- list-units --output /tmp/memchat-world-smoke
+```
+
+Expected: `manifest.json` is written, at least one normalized unit appears, and anchors such as `b0001` are present.
+
+For model-backed world import, use a configured model and a scratch output dir:
+
+```bash
+npm run world-import -- --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --dry-run
+```
+
+Expected: the skill loads and reports normalization/listing results without doing semantic extraction in dry-run mode.
 
 ## Notes
 
