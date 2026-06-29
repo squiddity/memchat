@@ -2,6 +2,15 @@
 
 The workflow is model-owned for semantic steps and helper-owned for deterministic operations.
 
+## 0. Determine whether this is a new world or a maintained world
+
+Before merging any new source material, inspect whether `<output>` already contains an emitted world bundle.
+
+- **New world** — no prior bundle of interest exists. Proceed normally.
+- **Maintained world** — prior world pages already exist and should be treated as world state to revise rather than output to discard mentally.
+
+For a maintained world, inspect the existing `world/index.md`, relevant group indexes, affected artifact pages, `world/coverage.md`, `world/log.md`, and the prior `World Overview` / `Corpus Synopsis` artifact if present. There are not yet dedicated helper commands for all of this inspection, so use the emitted markdown files themselves together with the helper commands below.
+
 ## 1. Normalize
 
 ```bash
@@ -100,6 +109,8 @@ Example good extraction (rich) vs poor extraction (too brief):
 - Prefer useful discovery metadata in the merge packet: `type`, a concise `description`, and tags when they materially help indexing.
 - Preserve multiple provenance refs after merge.
 - Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly.
-- Keep weak aliases or contradictions visible in sections/metadata instead of flattening them.
+- For maintained worlds, enrich existing artifacts when identity continuity is supported instead of cloning near-duplicates. If identity is uncertain, keep the ambiguity visible rather than forcing a merge.
+- For maintained worlds, preserve prior provenance and make retcons/conflicts explicit in sections or metadata. Do not silently drop older evidence just because newer material exists.
+- For substantive imports, include or update a `World Overview` / `Corpus Synopsis` artifact as a normal `facts` artifact. Revise it from prior overview + affected artifacts + new evidence, not from new input alone.
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.

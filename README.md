@@ -21,6 +21,10 @@ Make multi-session chat feel consistent over time: if the agent invents or learn
 - support agent-driven interactive-shell playtesting
 - provide a skill-first world-import pipeline for provenance-rich, OKF-compatible markdown world wiki bundles from HTML-like sources
 
+## Design principle
+
+Memchat favors small deterministic helpers plus model-owned semantic workflows. For memory and world-import features, TypeScript should make state, provenance, links, and validation inspectable; skills, prompts, and evals should own interpretation, synopsis quality, identity matching, continuity, conflicts, and narrative judgment.
+
 ## Quick start
 
 ```bash

@@ -200,7 +200,7 @@ npm run world-import-helper -- write-merge --output /tmp/memchat-world-smoke < /
 npm run world-import-helper -- emit --output /tmp/memchat-world-smoke
 ```
 
-Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001` are present, `world/index.md` exists, and at least one retained source-unit page appears under `world/sources/units/`.
+Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001` are present, `world/index.md` exists, and every emitted provenance link resolves to a retained source-unit page under `world/sources/units/` for the cited unit(s).
 
 For model-backed world import, use a configured model and a scratch output dir:
 

@@ -5,7 +5,7 @@ description: Import HTML/XHTML directories, ZIPs, or EPUB-like archives into pro
 
 # World Import
 
-You are running a model-owned, provenance-preserving world import. Keep semantic judgment in this skill workflow. Do not ask helper commands to decide entities, aliases, relationships, conflicts, or merge identity.
+You are running a model-owned, provenance-preserving world import. Keep semantic judgment in this skill workflow. Do not ask helper commands to decide entities, aliases, relationships, conflicts, merge identity, world-overview prose, or update/retcon decisions.
 
 ## Philosophy: Build a rich, browseable, vector-search-ready world library
 
@@ -45,6 +45,19 @@ When merging candidates about the same entity, combine all useful detail from ev
 
 ### Provenance target for v1
 The emitted bundle retains normalized source-unit markdown pages under `world/sources/units/`. Treat those retained normalized source pages as the canonical v1 citation target for emitted provenance links. Original EPUB/HTML layout fidelity may be partial; preserve original-path metadata, but do not assume page numbers or byte offsets exist.
+
+### New world vs maintained world
+Treat a fresh import and an update to an existing world as different postures:
+
+- **New world** — create the initial artifact set from the normalized source units.
+- **Maintained world** — inspect the existing emitted bundle first and treat it as world state to revise, not disposable output to ignore.
+
+For maintained worlds:
+
+- Read `world/index.md`, relevant group indexes, the existing `World Overview` / `Corpus Synopsis` artifact if present, and affected artifact pages before deciding how new source material changes the world.
+- Preserve prior provenance, source history, and uncertainty unless new evidence justifies revision.
+- Prefer enriching an existing artifact when identity continuity is supported; create a new artifact when identity is genuinely uncertain.
+- Preserve conflicts and retcons visibly in sections such as `Uncertainty`, `Open Questions and Conflicts`, or equivalent project-owned headings rather than silently flattening them.
 
 ## Extraction guidance by entity type
 
@@ -123,10 +136,11 @@ Installed-package users may call `memchat-world-import-helper` with the same arg
 
 1. Normalize the input. Inspect manifest diagnostics before continuing.
 2. For each normalized unit, read bounded text and produce an extraction stage envelope. **Extract rich, detailed candidates — not chapter summaries.** Preserve provenance spans for every candidate. Follow the entity-type guidance above.
-3. Merge from staged candidates, not whole raw files. **Combine and preserve all useful detail from each candidate** rather than distilling to minimal summaries. Use `read-slice` only when candidate evidence is ambiguous or conflicting and only for the minimum anchor range needed.
-4. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate.
-5. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
-6. If a reviewer model is configured, run the eval helper after emission; otherwise report that reviewer-model scoring was skipped.
-7. Summarize outputs, diagnostics, and any uncertainty/disputes preserved in metadata or sections.
+3. If the output already contains an emitted world bundle and this is not a dry run, inspect the existing world indexes, affected artifacts, coverage, log, and any existing `World Overview` / `Corpus Synopsis` artifact before merging new material.
+4. Merge from staged candidates, not whole raw files. **Combine and preserve all useful detail from each candidate** rather than distilling to minimal summaries. Use `read-slice` only when candidate evidence is ambiguous or conflicting and only for the minimum anchor range needed. For maintained worlds, enrich existing artifacts when evidence supports continuity, preserve older provenance unless it is superseded or contested, and keep retcons/conflicts visible rather than silently flattening them.
+5. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. For substantive imports, include or update a corpus-level `World Overview` artifact as a normal model-authored packet rather than relying on the emitter to summarize the world.
+6. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
+7. If a reviewer model is configured, run the eval helper after emission; otherwise report that reviewer-model scoring was skipped.
+8. Summarize outputs, diagnostics, and any uncertainty/disputes preserved in metadata or sections.
 
 When `dryRun` is true, stop after normalization/listing and report whether the helper surface is available.

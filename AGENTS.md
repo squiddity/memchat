@@ -10,6 +10,8 @@ Build `memchat`: a TypeScript chat agent on `@earendil-works/pi-coding-agent` fo
 - Keep memory pluggable; do not hard-code one model provider or backend.
 - Use TypeScript and prefer small, explicit interfaces and event/state types.
 - When implementing memory, distinguish raw transcript/events, extracted facts, summaries, current state, and conflicts/retcons.
+- For skill-first workflows such as `world-import`, keep TypeScript helpers deterministic and operational: normalize, persist, validate shape, emit browseable artifacts, and check provenance/link integrity. Keep entity identity, relationship meaning, canon truth, retcons/conflicts, synopsis quality, and update decisions in model/skill workflow guidance rather than helper code.
+- When semantic quality depends on judgment, invest first in skill instructions, bounded inspection tools, contracts, reviewer prompts, and eval fixtures so the executing model has enough leeway and context to produce high-quality maintained wiki outputs.
 - Add tests or eval fixtures for meaningful memory behavior changes when feasible.
 - After changes, run the relevant checks from `docs/smoke-tests.md`.
 - When asked to push, use the configured GitHub CLI auth (`gh auth status`, `gh auth setup-git`) rather than unauthenticated HTTPS prompts.
@@ -23,6 +25,7 @@ Do not load every doc by default. Read the smallest relevant doc for the task:
 - `docs/playtesting.md` — how the agent should run manual shell playtests; default to `interactive_shell`, a fresh memory dir, `qmd-hybrid`, and `--memory-debug` unless the user asks otherwise.
 - `docs/memory-backends.md` — backend strategy, storage layout, comparison, and implementation order.
 - `docs/architecture.md` — goals, memory quality bar, design direction, and current roadmap.
+- `docs/world-import.md` — skill-first world-import architecture, helper contract boundary, emitted wiki bundle shape, and update expectations.
 - `docs/smoke-tests.md` — validation commands after code changes.
 - `docs/plans/*.md` — only when a task explicitly references a plan or when implementation details need the latest plan context.
 

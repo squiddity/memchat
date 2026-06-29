@@ -1,6 +1,6 @@
 # World import contracts
 
-This contract is skill-owned guidance for the model. TypeScript helpers validate only the operational envelope: JSON shape, source-span refs, output group routing, and markdown packet fields. Helpers must not decide entity identity, aliases, fact semantics, conflicts, or merge correctness.
+This contract is skill-owned guidance for the model. TypeScript helpers validate only the operational envelope: JSON shape, source-span refs, output group routing, and markdown packet fields. Helpers must not decide entity identity, aliases, fact semantics, conflicts, merge correctness, or world-overview/update correctness.
 
 ## Source span reference
 
@@ -93,6 +93,26 @@ Persist a single merge stage:
 
 The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes. `type`, `description`, `tags`, `resource`, and `timestamp` are optional interoperability fields for emitted OKF-style concept pages; helpers should validate their structure but must not infer their values.
 
+For substantive imports, the merge stage may also include a corpus-level overview as a normal artifact packet, for example:
+
+```json
+{
+  "id": "world-overview",
+  "group": "facts",
+  "type": "World Overview",
+  "title": "World Overview",
+  "description": "Story-so-far synopsis with major entities, timeline, and open conflicts.",
+  "sections": [
+    { "heading": "Current Synopsis", "body": "Model-authored overview text." },
+    { "heading": "Major Characters", "body": "Linked and summarized major character set." },
+    { "heading": "Timeline / Story So Far", "body": "High-level sequence of key events." },
+    { "heading": "Open Questions and Conflicts", "body": "Visible contradictions, retcons, and unresolved issues." }
+  ],
+  "provenance": [{ "sourceId": "...", "unitId": "...", "startAnchor": "b0001", "endAnchor": "b0002", "quote": "..." }],
+  "related": ["alice", "queens-croquet-game"]
+}
+```
+
 ### Section guidance
 
 Recommended sections for richer artifacts:
@@ -103,6 +123,7 @@ Recommended sections for richer artifacts:
 | places | Summary, Description, Atmosphere, Notable Events, Visitors & Inhabitants, Significance, Uncertainty |
 | things | Summary, Description, Significance, Possessor & Use, Narrative Context, Uncertainty |
 | facts | Summary, What Happened, Participants, Cause & Effect, Setting, Significance, Uncertainty |
+| world overview / corpus synopsis | Current Synopsis, Major Characters, Major Places, Timeline / Story So Far, Open Questions and Conflicts, Provenance Notes |
 
 The model may choose different headings as appropriate. The goal is **rich, standalone detail** balanced with **cross-references for deduplication**:
 
@@ -117,6 +138,7 @@ The model may choose different headings as appropriate. The goal is **rich, stan
 - Merge only when evidence supports same identity or same durable fact.
 - **Combine all evidence** — when merging, preserve every useful detail from each candidate. Avoid losing specificity during merge.
 - Preserve multiple provenance refs after merge.
-- Keep weak aliases or contradictions visible in sections/metadata instead of flattening them.
+- For maintained worlds, revise existing artifacts and the `world-overview` artifact from prior emitted state plus new evidence rather than treating each run as a fresh isolated summary.
+- Preserve prior provenance and keep weak aliases, contradictions, and retcons visible in sections/metadata instead of flattening them.
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.

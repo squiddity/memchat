@@ -53,6 +53,20 @@ npm run world-import -- \
   --model openrouter/deepseek/deepseek-v4-pro
 ```
 
+## Maintained-world note
+
+World-import is moving toward maintained world updates, where later source material enriches an existing world bundle instead of replacing it conceptually. The current helper/emitter surface is already useful for inspecting and revising an existing bundle, but `emit` still rewrites `world/`, so repeated imports into the same output root should be treated as a deliberate maintenance workflow rather than a casual rerun.
+
+When doing that kind of update work, inspect the existing bundle first:
+
+- `world/index.md`
+- relevant group indexes and artifact pages
+- `world/coverage.md`
+- `world/log.md`
+- the prior `World Overview` / `Corpus Synopsis` artifact if present
+
+Then merge new source evidence into maintained artifacts and preserve older provenance/conflicts visibly when they still matter.
+
 ## Normalize only (deterministic, no model)
 
 ```bash
@@ -143,6 +157,7 @@ A healthy wiki bundle should normally include:
 - `world/index.md` plus group/source indexes
 - `world/log.md` and `world/coverage.md`
 - retained source-unit pages under `world/sources/units/` for provenance inspection
+- for substantive corpora, a model-authored `World Overview` / `Corpus Synopsis` artifact that links to the detailed pages it summarizes
 
 ## Evaluating output
 

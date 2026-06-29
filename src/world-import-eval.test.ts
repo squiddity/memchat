@@ -3,17 +3,10 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { deterministicWorldImportChecks, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
+import { buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
 import { writeManifest, writeMergeStage } from "./world-import/staging.js";
 
-test("deterministic evaluation reports degraded output before reviewer-model work", async () => {
-  const output = await mkdtemp(join(tmpdir(), "memchat-world-eval-"));
-  const checks = await deterministicWorldImportChecks(output);
-  assert.equal(checks.passed, false);
-  assert.ok(checks.checks.some((check) => check.name === "manifest exists" && !check.passed));
-});
-
-test("evaluation bundle records deterministic pass and skipped reviewer state", async () => {
+async function createReviewableWorldOutput(options: { includeSourcePage?: boolean } = {}): Promise<string> {
   const output = await mkdtemp(join(tmpdir(), "memchat-world-eval-"));
   await writeManifest({
     version: 1,
@@ -56,7 +49,8 @@ A tower.
    > A tower.
 `, "utf-8");
   await writeFile(join(output, "world", "places", "index.md"), "# Places\n\n- [Glass Tower](/places/glass-tower.md) - A tower.\n", "utf-8");
-  await writeFile(join(output, "world", "sources", "units", "u.md"), `---
+  if (options.includeSourcePage !== false) {
+    await writeFile(join(output, "world", "sources", "units", "u.md"), `---
 type: "Source Unit"
 title: "u"
 description: "Normalized source text for u."
@@ -74,10 +68,66 @@ normalizer_version: 1
 
 A tower.
 `, "utf-8");
+  }
   await writeFile(join(output, "world", "sources", "index.md"), "# Sources\n\n- [u](/sources/units/u.md) - Normalized source text for u.\n", "utf-8");
   await writeFile(join(output, "world", "coverage.md"), "# Source Coverage\n\n## [u](/sources/units/u.md)\n\n- [Glass Tower](/places/glass-tower.md) - A tower.\n", "utf-8");
   await writeFile(join(output, "world", "index.md"), "# World Index\n\n## Groups\n- [Places](/places/index.md) - 1 concept page(s).\n\n## Sources\n- [Sources](/sources/index.md) - 1 retained source-unit page(s).\n\n## Coverage\n- [Source Coverage](/coverage.md) - Maps retained source units to emitted concept pages.\n", "utf-8");
   await writeFile(join(output, "world", "log.md"), "# World Update Log\n\n## 2026-06-24\n* **Emit**: Generated 1 concept page(s).\n", "utf-8");
+  return output;
+}
+
+test("deterministic evaluation reports degraded output before reviewer-model work", async () => {
+  const output = await mkdtemp(join(tmpdir(), "memchat-world-eval-"));
+  const checks = await deterministicWorldImportChecks(output);
+  assert.equal(checks.passed, false);
+  assert.ok(checks.checks.some((check) => check.name === "manifest exists" && !check.passed));
+});
+
+test("deterministic evaluation reports referenced source page coverage", async () => {
+  const output = await createReviewableWorldOutput();
+  const checks = await deterministicWorldImportChecks(output);
+  assert.equal(checks.passed, true);
+  assert.ok(checks.checks.some((check) => check.name === "retained source pages emitted" && check.message === "1/1 referenced source page(s) emitted"));
+});
+
+test("deterministic evaluation fails clearly when cited source pages are missing", async () => {
+  const output = await createReviewableWorldOutput({ includeSourcePage: false });
+  const checks = await deterministicWorldImportChecks(output);
+  assert.equal(checks.passed, false);
+  assert.ok(checks.checks.some((check) => check.name === "retained source pages emitted" && check.message === "0/1 referenced source page(s) emitted" && !check.passed));
+});
+
+test("review bundle includes wiki navigation files and cited source-unit pages", async () => {
+  const output = await createReviewableWorldOutput();
+  const bundle = await buildReviewBundle(output);
+  assert.match(bundle.markdown["index.md"], /# World Index/);
+  assert.match(bundle.markdown["coverage.md"], /# Source Coverage/);
+  assert.match(bundle.markdown["sources\/index.md"], /# Sources/);
+  assert.match(bundle.markdown["sources\/units\/u.md"], /## b0001/);
+});
+
+test("reviewer prompt JSON example includes all scored dimensions", async () => {
+  const output = await createReviewableWorldOutput();
+  const prompt = buildReviewerPrompt(await buildReviewBundle(output));
+  assert.match(prompt, /enriched instead of duplicated/);
+  for (const dimension of [
+    "entityRecall",
+    "detailRichness",
+    "sourceCoverage",
+    "provenance",
+    "mergeQuality",
+    "answerability",
+    "navigability",
+    "progressiveDisclosure",
+    "duplicateNarrativeControl",
+    "citationReconstructability",
+  ]) {
+    assert.match(prompt, new RegExp(`"dimension": "${dimension}"`));
+  }
+});
+
+test("evaluation bundle records deterministic pass and skipped reviewer state", async () => {
+  const output = await createReviewableWorldOutput();
 
   const result = await writeEvaluationResult(output, { skipped: true, reason: "no reviewer model configured" });
   assert.equal(result.deterministic.passed, true);

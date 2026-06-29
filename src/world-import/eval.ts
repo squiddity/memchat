@@ -12,10 +12,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { manifestPath, mergedCandidatesPath, readManifest, readMergeStage, readNormalizedUnit, writeJson } from "./staging.js";
 import { requireResolvedModel } from "../model-selection.js";
-import type { EvaluationResult, ReviewBundle, ReviewerDimensionScore } from "./types.js";
+import type { ArtifactPacket, EvaluationResult, ReviewBundle, ReviewerDimensionScore } from "./types.js";
 
 const MAX_SOURCE_CHARS = 60_000; // total source text budget for the review bundle
 const MAX_UNIT_CHARS = 12_000;   // per-unit cap so no single unit dominates
+const MAX_MARKDOWN_FILE_CHARS = 8_000;
+const MAX_SOURCE_PAGE_COUNT = 6;
 const QA_QUESTION_COUNT = 5;     // number of QA questions to generate/answer
 
 async function listMarkdownFiles(dir: string): Promise<string[]> {
@@ -43,6 +45,14 @@ function sourceLinkTargets(content: string): string[] {
   return [...content.matchAll(/\((\/sources\/units\/[^)#]+\.md#b\d{4})\)/g)].map((match) => match[1]);
 }
 
+function referencedUnitIdsFromArtifacts(artifacts: ArtifactPacket[] | undefined): string[] {
+  return [...new Set((artifacts ?? []).flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)))].sort((a, b) => a.localeCompare(b));
+}
+
+async function readMarkdownSnippet(path: string, maxChars = MAX_MARKDOWN_FILE_CHARS): Promise<string> {
+  return (await readFile(path, "utf-8")).slice(0, maxChars);
+}
+
 export async function deterministicWorldImportChecks(outputRoot: string): Promise<EvaluationResult["deterministic"]> {
   const checks: EvaluationResult["deterministic"]["checks"] = [];
   checks.push({ name: "manifest exists", passed: existsSync(manifestPath(outputRoot)) });
@@ -58,9 +68,11 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
   }
 
   let artifactCount = 0;
+  let referencedUnitIds: string[] = [];
   try {
     const merge = await readMergeStage(outputRoot);
     artifactCount = merge.artifacts?.length ?? 0;
+    referencedUnitIds = referencedUnitIdsFromArtifacts(merge.artifacts);
     checks.push({ name: "merge has artifact packets", passed: artifactCount > 0, message: `${artifactCount} artifact(s)` });
   } catch (error) {
     checks.push({ name: "merge parses", passed: false, message: error instanceof Error ? error.message : String(error) });
@@ -111,7 +123,14 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
     });
   }
 
-  if (manifestUnits > 0) checks.push({ name: "retained source pages emitted", passed: existsSync(join(worldRoot, "sources", "units")), message: `${manifestUnits} manifest unit(s)` });
+  if (manifestUnits > 0) {
+    const emittedReferencedSourcePages = referencedUnitIds.filter((unitId) => existsSync(join(worldRoot, "sources", "units", `${unitId}.md`))).length;
+    checks.push({
+      name: "retained source pages emitted",
+      passed: referencedUnitIds.length === 0 ? existsSync(join(worldRoot, "sources", "units")) : emittedReferencedSourcePages === referencedUnitIds.length,
+      message: referencedUnitIds.length === 0 ? `${manifestUnits} manifest unit(s); no artifact citations yet` : `${emittedReferencedSourcePages}/${referencedUnitIds.length} referenced source page(s) emitted`,
+    });
+  }
   if (artifactCount > 0) checks.push({ name: "concept pages emitted", passed: conceptFiles.length > 0, message: `${conceptFiles.length} concept page(s)` });
 
   return { passed: checks.every((check) => check.passed), checks };
@@ -124,7 +143,7 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
  * - The merged artifact packets
  * - The emitted markdown artifacts
  */
-async function buildReviewBundle(outputRoot: string): Promise<ReviewBundle> {
+export async function buildReviewBundle(outputRoot: string): Promise<ReviewBundle> {
   const manifest = await readManifest(outputRoot);
   const merge = await readMergeStage(outputRoot);
 
@@ -143,16 +162,31 @@ async function buildReviewBundle(outputRoot: string): Promise<ReviewBundle> {
     }
   }
 
-  // Read markdown artifacts (up to 20 per group)
+  // Read markdown artifacts and navigational files
   const worldRoot = join(outputRoot, "world");
   const markdown: Record<string, string> = {};
   if (existsSync(worldRoot)) {
+    const addMarkdown = async (relativePath: string): Promise<void> => {
+      const file = join(worldRoot, relativePath);
+      if (!existsSync(file) || markdown[relativePath]) return;
+      markdown[relativePath] = await readMarkdownSnippet(file);
+    };
+
+    await addMarkdown("index.md");
+    await addMarkdown("coverage.md");
+    await addMarkdown("log.md");
+    await addMarkdown("sources/index.md");
+
     for (const group of ["people", "places", "things", "facts"]) {
       const groupDir = join(worldRoot, group);
       if (!existsSync(groupDir)) continue;
       for (const file of (await readdir(groupDir)).filter((name) => name.endsWith(".md")).slice(0, 20)) {
-        markdown[`${group}/${file}`] = await readFile(join(groupDir, file), "utf-8");
+        await addMarkdown(`${group}/${file}`);
       }
+    }
+
+    for (const unitId of referencedUnitIdsFromArtifacts(merge.artifacts).slice(0, MAX_SOURCE_PAGE_COUNT)) {
+      await addMarkdown(`sources/units/${unitId}.md`);
     }
   }
 
@@ -219,7 +253,7 @@ function parseReviewerScore(text: string): number | undefined {
  * 2. QA task — answer questions about the source using only the artifacts
  * 3. Dimension scoring — per-dimension scores + evidence
  */
-function buildReviewerPrompt(bundle: ReviewBundle): string {
+export function buildReviewerPrompt(bundle: ReviewBundle): string {
   const sourceOverview = bundle.manifest.units
     .map((u, i) => `${i + 1}. ${u.title || u.unitId} (${u.blockCount} blocks)`)
     .join("\n");
@@ -301,6 +335,8 @@ Score the world library 1-5 (5 = best) on each dimension:
 
 Provide evidence from the artifacts and source text for each score.
 
+If the bundle looks like a maintained-world update rather than a one-shot import, also comment on whether existing artifacts appear to be enriched instead of duplicated and whether continuity changes remain visible.
+
 ---
 
 Return your results as a JSON object at the very end of your response with this exact structure:
@@ -314,7 +350,11 @@ Return your results as a JSON object at the very end of your response with this 
     {"dimension": "sourceCoverage", "score": <1-5>, "justification": "..."},
     {"dimension": "provenance", "score": <1-5>, "justification": "..."},
     {"dimension": "mergeQuality", "score": <1-5>, "justification": "..."},
-    {"dimension": "answerability", "score": <1-5>, "justification": "..."}
+    {"dimension": "answerability", "score": <1-5>, "justification": "..."},
+    {"dimension": "navigability", "score": <1-5>, "justification": "..."},
+    {"dimension": "progressiveDisclosure", "score": <1-5>, "justification": "..."},
+    {"dimension": "duplicateNarrativeControl", "score": <1-5>, "justification": "..."},
+    {"dimension": "citationReconstructability", "score": <1-5>, "justification": "..."}
   ],
   "qaResults": [
     {"question": "...", "answerable": true, "answer": "...", "confidence": "high|medium|low"}
