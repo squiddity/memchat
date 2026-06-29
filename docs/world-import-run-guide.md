@@ -93,14 +93,15 @@ npm run world-import-helper -- read-slice --output /tmp/world-normalize --unit <
 
 ## Full model-backed import
 
-Debug and thinking are on by default — just run:
+For normal or recovery runs, prefer a stronger model and keep debug output enabled:
 
 ```bash
 rm -rf /tmp/world-out 2>/dev/null
 npm run world-import -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-out \
-  --model openrouter/google/gemma-4-31b-it:free
+  --model openrouter/deepseek/deepseek-v4-pro \
+  --show-tool-updates
 ```
 
 To silence debug/thinking output:
@@ -125,13 +126,13 @@ npm run world-import -- \
 
 ## Verbose tool update output
 
-Debug and thinking are on by default. For even more detail showing tool update payloads:
+Debug and thinking are on by default. When a run is exploratory, recovering from a failed/no-output attempt, or using a less-trusted model, treat `--show-tool-updates` as the default so you can inspect tool-level failures and partial workflow progress:
 
 ```bash
 npm run world-import -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-debug \
-  --model openrouter/google/gemma-4-31b-it:free \
+  --model openrouter/deepseek/deepseek-v4-pro \
   --show-tool-updates
 ```
 

@@ -12,6 +12,7 @@ Build `memchat`: a TypeScript chat agent on `@earendil-works/pi-coding-agent` fo
 - When implementing memory, distinguish raw transcript/events, extracted facts, summaries, current state, and conflicts/retcons.
 - For skill-first workflows such as `world-import`, keep TypeScript helpers deterministic and operational: normalize, persist, validate shape, emit browseable artifacts, and check provenance/link integrity. Keep entity identity, relationship meaning, canon truth, retcons/conflicts, synopsis quality, and update decisions in model/skill workflow guidance rather than helper code.
 - When semantic quality depends on judgment, invest first in skill instructions, bounded inspection tools, contracts, reviewer prompts, and eval fixtures so the executing model has enough leeway and context to produce high-quality maintained wiki outputs.
+- For model-backed `world-import` shell runs, prefer stronger debugging by default when behavior is uncertain or a prior run failed to emit world docs: use a stronger model, keep `--debug`, and add `--show-tool-updates` so the next session can inspect tool-level failures quickly.
 - Add tests or eval fixtures for meaningful memory behavior changes when feasible.
 - After changes, run the relevant checks from `docs/smoke-tests.md`.
 - When asked to push, use the configured GitHub CLI auth (`gh auth status`, `gh auth setup-git`) rather than unauthenticated HTTPS prompts.

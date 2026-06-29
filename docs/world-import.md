@@ -130,10 +130,10 @@ When importing additional source material into an existing output root, treat th
 
 ## Debugging model runs
 
-Use debug mode when checking whether a model is following the skill workflow:
+Use debug mode when checking whether a model is following the skill workflow. For exploratory runs or retries after a no-output run, prefer a stronger model and include verbose tool updates by default:
 
 ```bash
-npm run world-import -- --input ~/Downloads/pg11-images-3.epub --output /tmp/pg11-world --model openrouter/google/gemma-4-31b-it:free --debug --show-tool-updates
+npm run world-import -- --input ~/Downloads/pg11-images-3.epub --output /tmp/pg11-world --model openrouter/deepseek/deepseek-v4-pro --debug --show-tool-updates
 ```
 
-The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, and a final output summary. A successful model turn with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly.
+The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, and a final output summary. A successful model turn with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly. In that case, rerun with a stronger model and keep `--show-tool-updates` enabled so tool-level failures are visible.
