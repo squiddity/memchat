@@ -30,3 +30,4 @@ dist/
 .ripgreprc
 .zprofile
 .zshrc
+world-output/

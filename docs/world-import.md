@@ -14,8 +14,22 @@ It does **not** decide entity identity, aliases, relationships, conflicts, or fa
 
 ## CLI
 
+The repo has a gitignored `world-output/` directory for persistent extractions. Use a distinct subdirectory per run:
+
 ```bash
-npm run world-import -- --input ./sources --output /tmp/world-import --model anthropic/claude-sonnet-4-5
+npm run world-import -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
+```
+
+For quick disposable test runs, use `/tmp/`:
+
+```bash
+npm run world-import -- --input ./sources --output /tmp/world-test --model anthropic/claude-sonnet-4-5
+```
+
+### Equivalent installed binary
+
+```bash
+memchat-world-import --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
 ```
 
 Equivalent installed binary:
@@ -30,11 +44,11 @@ Options:
 - `--output` — output root.
 - `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` — model used by the skill.
 - `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` — optional stronger reviewer model.
-- `--thinking` — pi thinking level.
+- `--thinking` — pi thinking level (default: low; pass `off` to disable).
 - `--dry-run` — validate setup and normalization without doing semantic extraction.
-- `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` — print startup, paths, model selection, prompt, and tool start/end diagnostics to stderr.
-- `--show-thinking` / `MEMCHAT_WORLD_IMPORT_SHOW_THINKING=1` — print thinking deltas when the selected provider/model exposes them. If `--thinking off` or the provider does not emit thinking blocks, there may be no thinking output.
-- `--show-tool-updates` / `MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES=1` — with debug enabled, print verbose tool update payloads in addition to tool start/end lines.
+- `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` — print startup, paths, model selection, prompt, and tool call diagnostics to stderr (default: on; set env to `0` to silence).
+- `--show-thinking` / `MEMCHAT_WORLD_IMPORT_SHOW_THINKING=1` — print model thinking deltas when the provider exposes them (default: on; set env to `0` to silence).
+- `--show-tool-updates` / `MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES=1` — print verbose tool update payloads, not only start/end lines (default: off).
 
 ## Helper commands
 

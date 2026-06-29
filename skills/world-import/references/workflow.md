@@ -24,49 +24,79 @@ For each unit:
 npm run world-import-helper -- read-unit --output <output> --unit <unit-id>
 ```
 
-Produce one extraction stage envelope per unit following `contracts.md`. Extract reusable world-canon candidates with source spans. Do not summarize chapters. Do not merge across units in this phase.
+Produce one extraction stage envelope per unit following `contracts.md`. Extract reusable world-canon candidates with source spans.
 
-Persist each envelope:
+### Extraction detail guidelines
 
-```bash
-npm run world-import-helper -- write-extraction --output <output> --unit <unit-id> < /tmp/extraction-stage.json
+The world library will be used with **vector search and semantic retrieval**. Artifacts need to be **detailed and self-contained** to be useful when retrieved in isolation.
+
+**Do not summarize.** Extract full, rich descriptions. For each entity or fact found in a unit, capture:
+
+**Characters:**
+- Full physical description from the text
+- Personality traits as shown through actions and dialogue
+- Role in this unit's events
+- Key actions they take
+- Relationships to others mentioned
+- Dialogue excerpts that reveal character
+
+**Places:**
+- Full sensory description (look, feel, atmosphere)
+- What happens in this place during this unit
+- Who is present there
+- Mood and significance
+
+**Things:**
+- Full description
+- Context of appearance
+- Who uses or possesses it
+- Its role in events
+
+**Facts/Events:**
+- Full narrative detail of what happens
+- Participant actions and reactions
+- Temporal sequence
+- Cause and effect
+- Dialogue or direct speech that advances the event
+
+Example good extraction (rich) vs poor extraction (too brief):
+
+```
+// POOR — too summary-like, loses detail:
+{
+  "id": "alice",
+  "group": "people",
+  "title": "Alice",
+  "provenance": [...],
+  "payload": { "description": "Alice is a curious girl who follows the White Rabbit." }
+}
+
+// GOOD — rich, retrievable, standalone:
+{
+  "id": "alice",
+  "group": "people",
+  "title": "Alice",
+  "provenance": [...],
+  "payload": {
+    "description": "Alice is a young girl, evidently of an imaginative and curious disposition. She is shown sitting on a riverbank with her sister, feeling 'very sleepy and stupid' but is intrigued when she sees a White Rabbit with pink eyes who takes a watch out of his waistcoat pocket.",
+    "personality": "Curious to the point of recklessness — she follows the Rabbit down the hole without hesitation. Also practical and level-headed for her age; she tries to make sense of the absurd situations she encounters.",
+    "actionsInUnit": [
+      "Sits bored on the riverbank with her sister",
+      "Sees the White Rabbit and follows him",
+      "Falls down the rabbit hole, observing her surroundings as she falls"
+    ],
+    "dialogue": "'Dear, dear! How queer everything is to-day! And yesterday things went on just as usual.'"
+  }
+}
 ```
 
-## 3. Merge from staged candidates
+### Merge rules
 
-Read staged candidate files under `<output>/stages/extraction/`. Merge semantically in the model:
-
-- cluster likely-same entities or durable facts;
-- preserve all useful provenance refs;
-- preserve uncertainty/disputes instead of flattening them;
-- keep output as artifact packets, not hard-coded TypeScript types.
-
-If more evidence is needed, reread only the smallest anchor range:
-
-```bash
-npm run world-import-helper -- read-slice --output <output> --unit <unit-id> --start b0002 --end b0004
-```
-
-Persist merged artifact packets:
-
-```bash
-npm run world-import-helper -- write-merge --output <output> < /tmp/merge-stage.json
-```
-
-## 4. Emit markdown
-
-```bash
-npm run world-import-helper -- emit --output <output>
-```
-
-The emitter renders model-authored packet sections and provenance into `world/people`, `world/places`, `world/things`, and `world/facts`.
-
-## 5. Review/evaluate
-
-For fixtures or serious imports, run deterministic checks and, when available, a stronger reviewer model:
-
-```bash
-npm run world-import-helper -- eval --output <output> --reviewer-model <provider/model>
-```
-
-The reviewer should judge recall, duplicate/alias handling, provenance correctness, conflict visibility, and artifact usefulness. If no reviewer model is configured, record a skipped/degraded reviewer result instead of implying deterministic checks cover semantic quality.
+- Start from extraction candidates, not raw full text.
+- **Combine all evidence** — when merging multiple candidates about the same entity, preserve all useful detail from every candidate. Do not condense.
+- **Standalone summaries + cross-references for full detail.** Each artifact should have enough context to be useful when retrieved alone (via vector search), but use `related` links to avoid duplicating full event narratives across multiple entities. The full event blow-by-blow lives in a `facts` artifact — character and place artifacts summarize and link.
+- Think of `related` as the deduplication mechanism: the croquet game gets one detailed fact artifact; Alice's entry links to it rather than retelling the entire scene.
+- Preserve multiple provenance refs after merge.
+- Keep weak aliases or contradictions visible in sections/metadata instead of flattening them.
+- Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
+- Do not invent facts to fill a taxonomy.

@@ -31,10 +31,32 @@ Or add it to `.env` in the repo root:
 echo 'OPENROUTER_API_KEY="sk-or-..."' >> .env
 ```
 
+## Output directory convention
+
+The repo has a gitignored `world-output/` directory at the project root for persistent extraction results.
+Use a distinct subdirectory per run to avoid collisions:
+
+```bash
+# Name by source material and date
+npm run world-import -- \
+  --input ~/Downloads/pg11-images-3.epub \
+  --output world-output/alice-2026-06-26 \
+  --model openrouter/deepseek/deepseek-v4-pro
+```
+
+For quick test runs, use `/tmp/` instead:
+
+```bash
+npm run world-import -- \
+  --input ~/Downloads/pg11-images-3.epub \
+  --output /tmp/world-test \
+  --model openrouter/deepseek/deepseek-v4-pro
+```
+
 ## Normalize only (deterministic, no model)
 
 ```bash
-npm run world-import-helper -- normalize --input ~/Downloads/pg11-images-3.epub --output /tmp/world-normalize
+npm run world-import-helper -- normalize --input ~/Downloads/pg11-images-3.epub --output world-output/alice-normalize
 ```
 
 Inspect the manifest:
@@ -57,8 +79,19 @@ npm run world-import-helper -- read-slice --output /tmp/world-normalize --unit <
 
 ## Full model-backed import
 
+Debug and thinking are on by default — just run:
+
 ```bash
 rm -rf /tmp/world-out 2>/dev/null
+npm run world-import -- \
+  --input ~/Downloads/pg11-images-3.epub \
+  --output /tmp/world-out \
+  --model openrouter/google/gemma-4-31b-it:free
+```
+
+To silence debug/thinking output:
+
+```bash
 npm run world-import -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-out \
@@ -73,21 +106,19 @@ npm run world-import -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-dry \
   --model openrouter/google/gemma-4-31b-it:free \
-  --thinking off \
   --dry-run
 ```
 
-## Debug mode
+## Verbose tool update output
 
-Shows startup paths, auth resolution, model selection, the full skill prompt, tool calls/ends, and a final output summary:
+Debug and thinking are on by default. For even more detail showing tool update payloads:
 
 ```bash
 npm run world-import -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-debug \
   --model openrouter/google/gemma-4-31b-it:free \
-  --thinking off \
-  --debug --show-tool-updates
+  --show-tool-updates
 ```
 
 ## Inspecting output

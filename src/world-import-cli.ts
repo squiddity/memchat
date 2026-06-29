@@ -26,11 +26,11 @@ function usage(): string {
     `Options:\n` +
     `  --model <provider/model>          Extraction and merge model for the world-import skill\n` +
     `  --reviewer-model <provider/model> Reviewer model passed through to the skill/eval workflow\n` +
-    `  --thinking <level>                off|minimal|low|medium|high|xhigh (default: off)\n` +
+    `  --thinking <level>                off|minimal|low|medium|high|xhigh (default: low)\n` +
     `  --dry-run                         Ask the skill to validate setup without importing\n` +
-    `  --debug                           Print startup, model, prompt, and tool-call diagnostics to stderr\n` +
-    `  --show-thinking                   Print model thinking deltas when the provider exposes them\n` +
-    `  --show-tool-updates               With --debug, print verbose tool update payloads, not only start/end\n` +
+    `  --debug                           Print startup, model, prompt, and tool-call diagnostics to stderr (default: on)\n` +
+    `  --show-thinking                   Print model thinking deltas when the provider exposes them (default: on)\n` +
+    `  --show-tool-updates               Print verbose tool update payloads, not only start/end (default: off)\n` +
     `  --help                            Show this help\n`;
 }
 
@@ -54,13 +54,17 @@ function truthyEnv(value: string | undefined): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+/** Respect an explicit env-var toggle; fall back to a given default when unset. */
+function envToggle(key: string, defaultValue: boolean): boolean {
+  const raw = process.env[key];
+  return raw !== undefined ? truthyEnv(raw) : defaultValue;
+}
+
 function parseArgs(args: string[]): CliOptions {
-  const envShowThinking = truthyEnv(process.env.MEMCHAT_WORLD_IMPORT_SHOW_THINKING);
-  const envShowToolUpdates = truthyEnv(process.env.MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES);
   const options: CliOptions = {
-    debug: truthyEnv(process.env.MEMCHAT_WORLD_IMPORT_DEBUG) || envShowThinking || envShowToolUpdates,
-    showThinking: envShowThinking,
-    showToolUpdates: envShowToolUpdates,
+    debug: envToggle("MEMCHAT_WORLD_IMPORT_DEBUG", true),
+    showThinking: envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true),
+    showToolUpdates: envToggle("MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES", false),
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

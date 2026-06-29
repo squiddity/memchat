@@ -82,12 +82,25 @@ export type ArtifactPacket = {
   metadata?: Record<string, unknown>;
 };
 
+export type ReviewBundle = {
+  manifest: SourceManifest;
+  sources: Array<{ unitId: string; sourceId: string; title?: string; order: number; content: string }>;
+  merge: StageEnvelope;
+  markdown: Record<string, string>;
+};
+
 export type RereadRequest = {
   reason: string;
   sourceId: string;
   unitId: string;
   startAnchor: string;
   endAnchor: string;
+};
+
+export type ReviewerDimensionScore = {
+  dimension: string;
+  score: number; // 1-5
+  justification: string;
 };
 
 export type EvaluationResult = {
@@ -102,7 +115,10 @@ export type EvaluationResult = {
     model?: string;
     skipped?: boolean;
     reason?: string;
-    score?: number;
+    score?: number; // overall 1-5
+    dimensionScores?: ReviewerDimensionScore[]; // per-dimension breakdown
+    reconstructionSummary?: string; // reviewer's summary reconstructed from artifacts
+    qaResults?: Array<{ question: string; answerable: boolean; answer: string; confidence: "high" | "medium" | "low" }>;
     notes?: string;
   };
 };

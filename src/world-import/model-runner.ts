@@ -167,7 +167,7 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
     resourceLoader,
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
-    thinkingLevel: options.thinking ?? "off",
+    thinkingLevel: options.thinking ?? "low",
   });
 
   try {
