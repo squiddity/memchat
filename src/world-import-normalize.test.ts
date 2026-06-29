@@ -31,6 +31,10 @@ test("normalizes an HTML directory into stable units and anchors", async () => {
   const unit = await readNormalizedUnit(output, first.units[0].unitId);
   assert.match(unit.content, /\[b0001\] Ada guards/);
   assert.match(readSlice(unit, "b0002", "b0002"), /Moon Bay/);
+  assert.equal(first.units[0].normalizedPath, `sources/normalized/${unit.unitId}.json`);
+  assert.equal(first.units[0].sourceHash, unit.sourceHash);
+  assert.equal(first.units[0].contentHash, unit.contentHash);
+  assert.equal(first.units[0].normalizerVersion, 1);
 });
 
 test("normalizes an EPUB-style archive when zip tooling is available", async (t) => {
@@ -62,6 +66,9 @@ test("normalizes an EPUB-style archive when zip tooling is available", async (t)
   assert.equal(manifest.units[0].kind, "archive-entry");
   assert.match(manifest.units[0].inputPath, /z-last\.xhtml$/);
   assert.match(manifest.units[1].inputPath, /a-first\.xhtml$/);
-  const normalized = await readFile(manifest.units[0].normalizedPath, "utf-8");
+  const normalized = await readFile(join(root, "output", manifest.units[0].normalizedPath), "utf-8");
   assert.match(normalized, /silver compass/);
+  assert.equal(manifest.units[0].normalizerVersion, 1);
+  assert.match(manifest.units[0].sourceHash, /^[a-f0-9]{16}$/);
+  assert.match(manifest.units[0].contentHash, /^[a-f0-9]{16}$/);
 });

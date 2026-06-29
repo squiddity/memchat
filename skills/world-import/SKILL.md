@@ -14,6 +14,15 @@ The world library is designed to be queried via **vector search and semantic ret
 ### Standalone detail
 Each artifact should be useful when retrieved in isolation via vector search. Characters need descriptions, personality, and narrative context. Places need atmosphere and significance. A user or agent should get meaningful context from a single artifact.
 
+### Progressive disclosure
+Do not force a choice between brevity and completeness. Each artifact should have layers:
+
+- **Frontmatter metadata** such as `type`, `title`, and a one-line `description` for indexes and previews.
+- A **short summary/capsule section** that tells a reader what this artifact is in a few lines.
+- **Detailed sections** below that preserve the rich evidence, relationships, and narrative context.
+
+This lets the top of the page stay skimmable while the full artifact stays substantive.
+
 ### Cross-references to avoid duplication
 Use `related` links to avoid repeating the same full event narrative across every participant's artifact. The principle:
 
@@ -25,13 +34,17 @@ This way the full narrative lives once under `facts/` rather than being duplicat
 
 ### Detail balance
 - **Do** include rich descriptions, personality traits, relationships, and narrative context in each artifact.
+- **Do** provide `type`, a concise `description`, and useful tags when they genuinely help discovery.
 - **Do** use `related` to point to fact artifacts for full event blow-by-blow, rather than retelling the entire event inside a character or place entry.
-- **Do** give each artifact a Summary section that provides the gist without requiring related-link traversal.
+- **Do** give each artifact a Summary or Capsule section that provides the gist without requiring related-link traversal.
 - **Do not** over-summarize — characters should feel like real people, places should feel vivid, facts should feel substantive.
 - **Do not** duplicate the same full event text across N character artifacts.
 
 ### Preserve evidence, don't distil it
 When merging candidates about the same entity, combine all useful detail from every source rather than condensing into a bare summary. Multiple provenance refs are a feature, not a bug.
+
+### Provenance target for v1
+The emitted bundle retains normalized source-unit markdown pages under `world/sources/units/`. Treat those retained normalized source pages as the canonical v1 citation target for emitted provenance links. Original EPUB/HTML layout fidelity may be partial; preserve original-path metadata, but do not assume page numbers or byte offsets exist.
 
 ## Extraction guidance by entity type
 
@@ -111,8 +124,8 @@ Installed-package users may call `memchat-world-import-helper` with the same arg
 1. Normalize the input. Inspect manifest diagnostics before continuing.
 2. For each normalized unit, read bounded text and produce an extraction stage envelope. **Extract rich, detailed candidates — not chapter summaries.** Preserve provenance spans for every candidate. Follow the entity-type guidance above.
 3. Merge from staged candidates, not whole raw files. **Combine and preserve all useful detail from each candidate** rather than distilling to minimal summaries. Use `read-slice` only when candidate evidence is ambiguous or conflicting and only for the minimum anchor range needed.
-4. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections.
-5. Emit markdown from the artifact packets.
+4. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate.
+5. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
 6. If a reviewer model is configured, run the eval helper after emission; otherwise report that reviewer-model scoring was skipped.
 7. Summarize outputs, diagnostics, and any uncertainty/disputes preserved in metadata or sections.
 

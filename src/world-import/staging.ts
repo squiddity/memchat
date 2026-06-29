@@ -97,6 +97,16 @@ function assertString(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0) throw new Error(`${label} must be a non-empty string`);
 }
 
+function assertOptionalString(value: unknown, label: string): void {
+  if (value !== undefined) assertString(value, label);
+}
+
+function assertOptionalStringArray(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  value.forEach((item, index) => assertString(item, `${label}[${index}]`));
+}
+
 function validateProvenance(value: unknown, label: string): asserts value is SourceSpanRef[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`${label}.provenance must be a non-empty array`);
   for (const [index, ref] of value.entries()) {
@@ -109,7 +119,14 @@ function validateArtifactPacket(value: unknown, label: string): asserts value is
   assertRecord(value, label);
   assertString(value.id, `${label}.id`);
   if (!["people", "places", "things", "facts"].includes(String(value.group))) throw new Error(`${label}.group must be people, places, things, or facts`);
+  assertOptionalString(value.type, `${label}.type`);
   assertString(value.title, `${label}.title`);
+  assertOptionalString(value.description, `${label}.description`);
+  assertOptionalString(value.resource, `${label}.resource`);
+  assertOptionalStringArray(value.tags, `${label}.tags`);
+  assertOptionalString(value.timestamp, `${label}.timestamp`);
+  assertOptionalStringArray(value.related, `${label}.related`);
+  if (value.metadata !== undefined) assertRecord(value.metadata, `${label}.metadata`);
   if (!Array.isArray(value.sections)) throw new Error(`${label}.sections must be an array`);
   for (const [index, section] of value.sections.entries()) {
     assertRecord(section, `${label}.sections[${index}]`);

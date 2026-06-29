@@ -67,7 +67,11 @@ Persist a single merge stage:
     {
       "id": "stable-human-readable-id",
       "group": "people|places|things|facts",
+      "type": "Character|Location|Object|Event|...",
       "title": "Artifact title",
+      "description": "One-line capsule used for indexes and previews.",
+      "tags": ["character", "protagonist"],
+      "timestamp": "2026-06-29T00:00:00Z",
       "sections": [
         { "heading": "Summary", "body": "Model-authored markdown body." },
         { "heading": "Description", "body": "Full physical and personality description." },
@@ -87,7 +91,7 @@ Persist a single merge stage:
 }
 ```
 
-The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes.
+The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes. `type`, `description`, `tags`, `resource`, and `timestamp` are optional interoperability fields for emitted OKF-style concept pages; helpers should validate their structure but must not infer their values.
 
 ### Section guidance
 

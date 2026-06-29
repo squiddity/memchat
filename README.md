@@ -19,7 +19,7 @@ Make multi-session chat feel consistent over time: if the agent invents or learn
 - persist memory in selectable modes, including transcript and qmd-based flows
 - support session restarts, recall commands, ignore/tombstone commands, and memory inspection
 - support agent-driven interactive-shell playtesting
-- provide a skill-first world-import pipeline for provenance-rich markdown world libraries from HTML-like sources
+- provide a skill-first world-import pipeline for provenance-rich, OKF-compatible markdown world wiki bundles from HTML-like sources
 
 ## Quick start
 
@@ -43,7 +43,7 @@ npm run world-import -- --input ./sources --output /tmp/memchat-world --dry-run
 - [`docs/playtesting.md`](docs/playtesting.md) — interactive-shell playtesting workflow and agent defaults
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
-- [`docs/world-import.md`](docs/world-import.md) — skill-first world import package, helper commands, and artifact format
+- [`docs/world-import.md`](docs/world-import.md) — skill-first world import package, helper commands, emitted wiki bundle shape, and artifact format
 - [`docs/world-import-run-guide.md`](docs/world-import-run-guide.md) — shell-oriented quick-start for running imports and helpers
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 

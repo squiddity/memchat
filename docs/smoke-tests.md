@@ -176,9 +176,31 @@ cat > /tmp/memchat-world-src/chapter1.html <<'HTML'
 HTML
 npm run world-import-helper -- normalize --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke
 npm run world-import-helper -- list-units --output /tmp/memchat-world-smoke
+UNIT_JSON=$(npm run world-import-helper -- list-units --output /tmp/memchat-world-smoke)
+SOURCE_ID=$(node -e 'const units = JSON.parse(process.argv[1]); console.log(units[0].sourceId)' "$UNIT_JSON")
+UNIT_ID=$(node -e 'const units = JSON.parse(process.argv[1]); console.log(units[0].unitId)' "$UNIT_JSON")
+cat > /tmp/memchat-world-merge.json <<JSON
+{
+  "version": 1,
+  "kind": "merge",
+  "artifacts": [
+    {
+      "id": "ada",
+      "group": "people",
+      "type": "Character",
+      "title": "Ada",
+      "description": "Tower guardian overlooking Moon Bay.",
+      "sections": [{ "heading": "Summary", "body": "Ada guards the glass tower." }],
+      "provenance": [{ "sourceId": "$SOURCE_ID", "unitId": "$UNIT_ID", "startAnchor": "b0001", "endAnchor": "b0001", "quote": "Ada guards the glass tower." }]
+    }
+  ]
+}
+JSON
+npm run world-import-helper -- write-merge --output /tmp/memchat-world-smoke < /tmp/memchat-world-merge.json
+npm run world-import-helper -- emit --output /tmp/memchat-world-smoke
 ```
 
-Expected: `manifest.json` is written, at least one normalized unit appears, and anchors such as `b0001` are present.
+Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001` are present, `world/index.md` exists, and at least one retained source-unit page appears under `world/sources/units/`.
 
 For model-backed world import, use a configured model and a scratch output dir:
 

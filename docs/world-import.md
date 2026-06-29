@@ -1,6 +1,6 @@
 # World import
 
-World import is a package-first pipeline for turning HTML/XHTML source collections, ZIPs, and EPUB-like archives into a provenance-rich markdown world library.
+World import is a package-first pipeline for turning HTML/XHTML source collections, ZIPs, and EPUB-like archives into a provenance-rich, OKF-compatible markdown world wiki bundle.
 
 The architecture deliberately keeps semantics in skills and model prompts. TypeScript helper code handles deterministic operations only:
 
@@ -8,7 +8,7 @@ The architecture deliberately keeps semantics in skills and model prompts. TypeS
 - create stable source/unit ids and block anchors;
 - list units and read bounded source slices;
 - persist generic stage envelopes;
-- emit model-authored artifact packets as markdown.
+- emit model-authored artifact packets as markdown concept pages, indexes, logs, coverage views, and retained source-unit citation targets.
 
 It does **not** decide entity identity, aliases, relationships, conflicts, or fact semantics.
 
@@ -76,27 +76,47 @@ npm run world-import-helper -- eval --output /tmp/world-import --reviewer-model 
     extraction/<unit-id>.json
     merge/merged-candidates.json
   world/
+    index.md
+    log.md
+    coverage.md
     people/
+      index.md
     places/
+      index.md
     things/
+      index.md
     facts/
+      index.md
+    sources/
+      index.md
+      units/
 ```
 
 ## Stage contract boundary
 
-Extraction candidates are model-authored and opaque to helper code except for optional routing/provenance envelope fields. Merged artifacts use a generic packet:
+Extraction candidates are model-authored and opaque to helper code except for optional routing/provenance envelope fields. Emission now produces both concept pages and bundle-local source-unit pages so provenance links can resolve within the emitted wiki bundle. Merged artifacts use a generic packet:
 
 ```json
 {
   "id": "artifact-id",
   "group": "people",
+  "type": "Character",
   "title": "Artifact Title",
+  "description": "One-line capsule used for indexes and previews.",
+  "tags": ["character"],
+  "timestamp": "2026-06-29T00:00:00Z",
   "sections": [{ "heading": "Summary", "body": "Markdown body" }],
   "provenance": [{ "sourceId": "...", "unitId": "...", "startAnchor": "b0001", "endAnchor": "b0001", "quote": "..." }],
   "related": [],
   "metadata": {}
 }
 ```
+
+## Provenance and citations
+
+`SourceSpanRef` remains the canonical evidence model. In the emitted wiki bundle, provenance links should resolve to retained normalized source-unit markdown pages under `world/sources/units/` when those targets are available. This makes the emitted bundle self-contained for provenance inspection even when the original EPUB/HTML source is not present.
+
+Those emitted source-unit pages are a v1 citation target. They preserve original path metadata where available, but they are still normalized representations rather than perfect original-format selectors such as EPUB CFIs, DOM selectors, page numbers, or byte offsets.
 
 For a concise shell-oriented quick-start covering build, API key setup, run flags, helper commands, and output inspection, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
 

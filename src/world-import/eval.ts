@@ -18,35 +18,102 @@ const MAX_SOURCE_CHARS = 60_000; // total source text budget for the review bund
 const MAX_UNIT_CHARS = 12_000;   // per-unit cap so no single unit dominates
 const QA_QUESTION_COUNT = 5;     // number of QA questions to generate/answer
 
-async function countMarkdownFiles(dir: string): Promise<number> {
-  if (!existsSync(dir)) return 0;
-  let count = 0;
+async function listMarkdownFiles(dir: string): Promise<string[]> {
+  if (!existsSync(dir)) return [];
+  const files: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) count += await countMarkdownFiles(path);
-    else if (entry.isFile() && entry.name.endsWith(".md")) count += 1;
+    if (entry.isDirectory()) files.push(...await listMarkdownFiles(path));
+    else if (entry.isFile() && entry.name.endsWith(".md")) files.push(path);
   }
-  return count;
+  return files.sort();
+}
+
+async function countMarkdownFiles(dir: string): Promise<number> {
+  return (await listMarkdownFiles(dir)).length;
+}
+
+function hasRequiredFrontmatter(content: string): boolean {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!match) return false;
+  return /(^|\n)type: .+/m.test(match[1]) && /(^|\n)description: .+/m.test(match[1]);
+}
+
+function sourceLinkTargets(content: string): string[] {
+  return [...content.matchAll(/\((\/sources\/units\/[^)#]+\.md#b\d{4})\)/g)].map((match) => match[1]);
 }
 
 export async function deterministicWorldImportChecks(outputRoot: string): Promise<EvaluationResult["deterministic"]> {
   const checks: EvaluationResult["deterministic"]["checks"] = [];
   checks.push({ name: "manifest exists", passed: existsSync(manifestPath(outputRoot)) });
   checks.push({ name: "merge stage exists", passed: existsSync(mergedCandidatesPath(outputRoot)) });
+
+  let manifestUnits = 0;
   try {
     const manifest = await readManifest(outputRoot);
+    manifestUnits = manifest.units.length;
     checks.push({ name: "manifest has normalized units", passed: manifest.units.length > 0, message: `${manifest.units.length} unit(s)` });
   } catch (error) {
     checks.push({ name: "manifest parses", passed: false, message: error instanceof Error ? error.message : String(error) });
   }
+
+  let artifactCount = 0;
   try {
     const merge = await readMergeStage(outputRoot);
-    checks.push({ name: "merge has artifact packets", passed: (merge.artifacts?.length ?? 0) > 0, message: `${merge.artifacts?.length ?? 0} artifact(s)` });
+    artifactCount = merge.artifacts?.length ?? 0;
+    checks.push({ name: "merge has artifact packets", passed: artifactCount > 0, message: `${artifactCount} artifact(s)` });
   } catch (error) {
     checks.push({ name: "merge parses", passed: false, message: error instanceof Error ? error.message : String(error) });
   }
-  const markdownCount = await countMarkdownFiles(join(outputRoot, "world"));
+
+  const worldRoot = join(outputRoot, "world");
+  const markdownCount = await countMarkdownFiles(worldRoot);
   checks.push({ name: "world markdown emitted", passed: markdownCount > 0, message: `${markdownCount} markdown file(s)` });
+
+  const conceptFiles: string[] = [];
+  for (const group of ["people", "places", "things", "facts"]) {
+    const groupDir = join(worldRoot, group);
+    if (!existsSync(groupDir)) continue;
+    const groupFiles = (await readdir(groupDir)).filter((name) => name.endsWith(".md") && name !== "index.md").map((name) => join(groupDir, name));
+    conceptFiles.push(...groupFiles);
+    if (groupFiles.length > 0) checks.push({ name: `${group} index exists`, passed: existsSync(join(groupDir, "index.md")) });
+  }
+
+  checks.push({ name: "root index exists", passed: existsSync(join(worldRoot, "index.md")) });
+  checks.push({ name: "sources index exists", passed: existsSync(join(worldRoot, "sources", "index.md")) });
+  checks.push({ name: "coverage exists", passed: existsSync(join(worldRoot, "coverage.md")) });
+  checks.push({ name: "log exists", passed: existsSync(join(worldRoot, "log.md")) });
+
+  if (conceptFiles.length > 0) {
+    const conceptContents = await Promise.all(conceptFiles.map((path) => readFile(path, "utf-8")));
+    checks.push({
+      name: "concept frontmatter includes type and description",
+      passed: conceptContents.every((content) => hasRequiredFrontmatter(content)),
+      message: `${conceptFiles.length} concept file(s) checked`,
+    });
+
+    const targets = conceptContents.flatMap((content) => sourceLinkTargets(content));
+    const unresolved: string[] = [];
+    for (const target of targets) {
+      const [pathPart, anchor] = target.split("#");
+      const file = join(worldRoot, pathPart.replace(/^\//, ""));
+      if (!existsSync(file)) {
+        unresolved.push(target);
+        continue;
+      }
+      const content = await readFile(file, "utf-8");
+      if (!content.includes(`## ${anchor}`)) unresolved.push(target);
+    }
+    checks.push({
+      name: "provenance source-target resolvability",
+      passed: targets.length > 0 && unresolved.length === 0,
+      message: targets.length > 0 ? `${targets.length - unresolved.length}/${targets.length} resolved` : "no source links found",
+    });
+  }
+
+  if (manifestUnits > 0) checks.push({ name: "retained source pages emitted", passed: existsSync(join(worldRoot, "sources", "units")), message: `${manifestUnits} manifest unit(s)` });
+  if (artifactCount > 0) checks.push({ name: "concept pages emitted", passed: conceptFiles.length > 0, message: `${conceptFiles.length} concept page(s)` });
+
   return { passed: checks.every((check) => check.passed), checks };
 }
 
@@ -227,6 +294,10 @@ Score the world library 1-5 (5 = best) on each dimension:
 4. **provenance** — Are source span references and quotes accurate and useful?
 5. **mergeQuality** — Are aliases handled? Is detail preserved rather than over-summarized across sources?
 6. **answerability** — Can someone answer substantive questions about the source using only the artifacts?
+7. **navigability** — Do indexes, summaries, and links make the bundle easy to browse?
+8. **progressiveDisclosure** — Do artifacts balance concise top-level summaries with richer detail below?
+9. **duplicateNarrativeControl** — Do entity/place artifacts summarize linked events instead of repeating full event narratives unnecessarily?
+10. **citationReconstructability** — Can a reader follow emitted provenance links to retained source-unit pages inside the bundle?
 
 Provide evidence from the artifacts and source text for each score.
 

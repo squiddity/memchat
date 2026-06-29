@@ -16,6 +16,9 @@ export type NormalizedSourceUnit = {
   inputPath: string;
   archivePath?: string;
   order: number;
+  sourceHash: string;
+  contentHash: string;
+  normalizerVersion: 1;
   content: string;
   blocks: SourceBlock[];
 };
@@ -31,6 +34,9 @@ export type SourceManifestEntry = {
   blockCount: number;
   anchors: string[];
   normalizedPath: string;
+  sourceHash: string;
+  contentHash: string;
+  normalizerVersion: 1;
 };
 
 export type ManifestDiagnostic = {
@@ -75,7 +81,12 @@ export type MarkdownSection = {
 export type ArtifactPacket = {
   id: string;
   group: WorldImportGroup;
+  type?: string;
   title: string;
+  description?: string;
+  resource?: string;
+  tags?: string[];
+  timestamp?: string;
   sections: MarkdownSection[];
   provenance: SourceSpanRef[];
   related?: string[];

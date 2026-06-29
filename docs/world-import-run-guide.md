@@ -123,7 +123,7 @@ npm run world-import -- \
 
 ## Inspecting output
 
-After a run, check whether world artifacts were produced:
+After a run, check whether the wiki bundle was produced:
 
 ```bash
 echo "--- manifest units ---"; node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/world-out/sources/manifest.json','utf8')).units.length)"
@@ -131,9 +131,18 @@ echo "--- manifest units ---"; node -e "console.log(JSON.parse(require('fs').rea
 echo "--- extraction stages ---"; find /tmp/world-out/stages/extraction -name '*.json' 2>/dev/null | wc -l
 echo "--- merge stage ---"; ls /tmp/world-out/stages/merge/merged-candidates.json 2>/dev/null && echo "yes" || echo "no"
 echo "--- world markdown files ---"; find /tmp/world-out/world -name '*.md' 2>/dev/null | wc -l
+echo "--- root index ---"; test -f /tmp/world-out/world/index.md && echo yes || echo no
+echo "--- source-unit pages ---"; find /tmp/world-out/world/sources/units -name '*.md' 2>/dev/null | wc -l
 ```
 
 A run that exits code 0 with `world markdown files: 0` means the model did not complete the import workflow.
+
+A healthy wiki bundle should normally include:
+
+- concept pages under `world/people`, `world/places`, `world/things`, and `world/facts`
+- `world/index.md` plus group/source indexes
+- `world/log.md` and `world/coverage.md`
+- retained source-unit pages under `world/sources/units/` for provenance inspection
 
 ## Evaluating output
 
@@ -170,10 +179,20 @@ npm run world-import-helper -- validate-stage --kind merge --file stage.json
     merge/merged-candidates.json
     review.json                 # optional evaluation result
   world/
-    people/                     # artifact markdown
+    index.md                    # root wiki index
+    log.md                      # deterministic update log
+    coverage.md                 # source-to-artifact coverage view
+    people/                     # concept markdown + group index
+      index.md
     places/
+      index.md
     things/
+      index.md
     facts/
+      index.md
+    sources/
+      index.md
+      units/                    # retained normalized source-unit pages for provenance links
 ```
 
 ## Related docs

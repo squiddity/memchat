@@ -17,6 +17,8 @@ export type NormalizeOptions = {
   now?: Date;
 };
 
+const NORMALIZER_VERSION = 1;
+
 function stableHash(text: string, length = 10): string {
   return createHash("sha256").update(text).digest("hex").slice(0, length);
 }
@@ -132,6 +134,7 @@ function createUnit(params: { pathKey: string; displayPath: string; archivePath?
   if (blocks.length === 0) return undefined;
   const sourceId = sourceIdFor(params.pathKey);
   const unitId = `${sourceId}-u001`;
+  const content = renderUnitContent(blocks);
   return {
     sourceId,
     unitId,
@@ -140,7 +143,10 @@ function createUnit(params: { pathKey: string; displayPath: string; archivePath?
     inputPath: params.displayPath,
     archivePath: params.archivePath,
     order: params.order,
-    content: renderUnitContent(blocks),
+    sourceHash: stableHash(params.html, 16),
+    contentHash: stableHash(content, 16),
+    normalizerVersion: NORMALIZER_VERSION,
+    content,
     blocks,
   };
 }
@@ -213,7 +219,10 @@ export async function normalizeSources(options: NormalizeOptions): Promise<Sourc
       order: unit.order,
       blockCount: unit.blocks.length,
       anchors: unit.blocks.map((block) => block.anchor),
-      normalizedPath: normalizedUnitPath(outputRoot, unit.unitId),
+      normalizedPath: relative(outputRoot, normalizedUnitPath(outputRoot, unit.unitId)).split(sep).join("/"),
+      sourceHash: unit.sourceHash,
+      contentHash: unit.contentHash,
+      normalizerVersion: unit.normalizerVersion,
     })),
     diagnostics,
   };

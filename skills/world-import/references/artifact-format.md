@@ -19,7 +19,10 @@ Each artifact becomes one markdown file:
 ---
 id: "artifact-id"
 group: people
+type: "Character"
 title: "Artifact title"
+description: "One-line capsule used for indexes and previews."
+tags: ["character"]
 related: ["other-id"]
 ---
 
@@ -51,11 +54,11 @@ Optional: any ambiguity, disputes, or gaps in knowledge about this entity. This 
 
 ## Related
 
-- [[other-artifact-id]]
+- [other-artifact-id](/people/other-artifact-id.md)
 
 ## Provenance
 
-1. `source-id/unit-id#b0001-b0002`
+1. [`source-id/unit-id#b0001-b0002`](/sources/units/unit-id.md#b0001)
    > Supporting quote.
 ```
 
@@ -108,9 +111,9 @@ Recommended sections:
 
 ## Detail principle
 
-**Standalone context + cross-references for deduplication.** These artifacts are designed for vector search retrieval, but also for humans browsing the world library.
+**Progressive disclosure + cross-references for deduplication.** These artifacts are designed for vector search retrieval, but also for humans browsing the world library.
 
-- Each artifact should be **useful when retrieved alone** — a Summary section that gives the gist, enough context that a single hit isn't confusing.
+- Each artifact should be **useful when retrieved alone** — frontmatter `description` plus a Summary/Capsule section should give the gist before the reader reaches the denser sections.
 - Use **`related` to avoid duplicating full event narratives** across artifacts. The full blow-by-blow of an event lives once under `facts/`. Character and place artifacts link to it via `related: ["event-id"]` rather than retelling the entire event.
 - Include **narrative context in the entity's own artifact** (e.g., "Alice participated in the croquet game where the Queen ordered beheadings") and link to the fact artifact for the scene-by-scene detail.
 - Use quotes and direct evidence generously.
@@ -120,3 +123,5 @@ Recommended sections:
 ## Provenance
 
 Every artifact needs at least one provenance ref. Prefer short quotes that establish the claim. When an artifact combines multiple sources, include multiple refs. Quote accuracy matters for the provenance dimension of evaluation.
+
+The emitted bundle retains normalized source-unit pages under `world/sources/units/`. In v1, provenance links should resolve to those retained normalized source pages when available. Treat those as the canonical emitted citation target, while preserving original-source metadata separately.

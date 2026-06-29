@@ -30,7 +30,7 @@ Produce one extraction stage envelope per unit following `contracts.md`. Extract
 
 The world library will be used with **vector search and semantic retrieval**. Artifacts need to be **detailed and self-contained** to be useful when retrieved in isolation.
 
-**Do not summarize.** Extract full, rich descriptions. For each entity or fact found in a unit, capture:
+**Do not collapse everything into one summary blob.** Extract full, rich descriptions, but also preserve the material needed for a concise top-of-page summary/capsule later. For each entity or fact found in a unit, capture:
 
 **Characters:**
 - Full physical description from the text
@@ -94,9 +94,12 @@ Example good extraction (rich) vs poor extraction (too brief):
 
 - Start from extraction candidates, not raw full text.
 - **Combine all evidence** — when merging multiple candidates about the same entity, preserve all useful detail from every candidate. Do not condense.
+- **Progressive disclosure:** every emitted artifact should support a one-line description plus a short summary/capsule at the top, then richer sections below.
 - **Standalone summaries + cross-references for full detail.** Each artifact should have enough context to be useful when retrieved alone (via vector search), but use `related` links to avoid duplicating full event narratives across multiple entities. The full event blow-by-blow lives in a `facts` artifact — character and place artifacts summarize and link.
 - Think of `related` as the deduplication mechanism: the croquet game gets one detailed fact artifact; Alice's entry links to it rather than retelling the entire scene.
+- Prefer useful discovery metadata in the merge packet: `type`, a concise `description`, and tags when they materially help indexing.
 - Preserve multiple provenance refs after merge.
+- Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly.
 - Keep weak aliases or contradictions visible in sections/metadata instead of flattening them.
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.
