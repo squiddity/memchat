@@ -45,10 +45,10 @@ A tower.
 
 ## Provenance
 
-1. [\`s/u#b0001-b0001\`](/sources/units/u.md#b0001)
+1. [\`s/u#b0001-b0001\`](../sources/units/u.md#b0001)
    > A tower.
 `, "utf-8");
-  await writeFile(join(output, "world", "places", "index.md"), "# Places\n\n- [Glass Tower](/places/glass-tower.md) - A tower.\n", "utf-8");
+  await writeFile(join(output, "world", "places", "index.md"), "# Places\n\n- [Glass Tower](glass-tower.md) - A tower.\n", "utf-8");
   if (options.includeSourcePage !== false) {
     await writeFile(join(output, "world", "sources", "units", "u.md"), `---
 type: "Source Unit"
@@ -69,9 +69,9 @@ normalizer_version: 1
 A tower.
 `, "utf-8");
   }
-  await writeFile(join(output, "world", "sources", "index.md"), "# Sources\n\n- [u](/sources/units/u.md) - Normalized source text for u.\n", "utf-8");
-  await writeFile(join(output, "world", "coverage.md"), "# Source Coverage\n\n## [u](/sources/units/u.md)\n\n- [Glass Tower](/places/glass-tower.md) - A tower.\n", "utf-8");
-  await writeFile(join(output, "world", "index.md"), "# World Index\n\n## Groups\n- [Places](/places/index.md) - 1 concept page(s).\n\n## Sources\n- [Sources](/sources/index.md) - 1 retained source-unit page(s).\n\n## Coverage\n- [Source Coverage](/coverage.md) - Maps retained source units to emitted concept pages.\n", "utf-8");
+  await writeFile(join(output, "world", "sources", "index.md"), "# Sources\n\n- [u](units/u.md) - Normalized source text for u.\n", "utf-8");
+  await writeFile(join(output, "world", "coverage.md"), "# Source Coverage\n\n## [u](sources/units/u.md)\n\n- [Glass Tower](places/glass-tower.md) - A tower.\n", "utf-8");
+  await writeFile(join(output, "world", "index.md"), "# World Index\n\n## Groups\n- [Places](places/index.md) - 1 concept page(s).\n\n## Sources\n- [Sources](sources/index.md) - 1 retained source-unit page(s).\n\n## Coverage\n- [Source Coverage](coverage.md) - Maps retained source units to emitted concept pages.\n", "utf-8");
   await writeFile(join(output, "world", "log.md"), "# World Update Log\n\n## 2026-06-24\n* **Emit**: Generated 1 concept page(s).\n", "utf-8");
   return output;
 }

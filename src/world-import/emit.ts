@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { ArtifactPacket, MarkdownSection, NormalizedSourceUnit, SourceManifest, SourceSpanRef, WorldImportGroup } from "./types.js";
 import { readManifest, readMergeStage, readNormalizedUnit, validateStageEnvelope } from "./staging.js";
 
@@ -13,13 +13,14 @@ const defaultTypes: Record<WorldImportGroup, string> = {
 };
 
 type EmitContext = {
-  relatedLinks: Record<string, string>;
-  sourceLinks: Record<string, string>;
+  relatedTargets: Record<string, string>;
+  sourceTargets: Record<string, string>;
+  currentRelativePath: string;
 };
 
 type IndexEntry = {
   title: string;
-  path: string;
+  targetPath: string;
   description: string;
 };
 
@@ -42,8 +43,9 @@ function trimInline(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function worldPath(path: string): string {
-  return `/${path}`;
+function relativeLink(fromRelativePath: string, toRelativePath: string): string {
+  const link = relative(dirname(fromRelativePath), toRelativePath).split("\\").join("/");
+  return link || "./";
 }
 
 function defaultDescription(artifact: ArtifactPacket): string {
@@ -80,11 +82,11 @@ function frontmatter(artifact: ArtifactPacket): string {
   return lines.join("\n");
 }
 
-function renderRelated(related: string[] | undefined, relatedLinks: Record<string, string>): string {
+function renderRelated(related: string[] | undefined, context: EmitContext): string {
   if (!related || related.length === 0) return "";
   const lines = [
     "## Related",
-    ...[...related].sort().map((id) => relatedLinks[id] ? `- [${id}](${relatedLinks[id]})` : `- [[${id}]]`),
+    ...[...related].sort().map((id) => context.relatedTargets[id] ? `- [${id}](${relativeLink(context.currentRelativePath, context.relatedTargets[id])})` : `- [[${id}]]`),
   ];
   return `${lines.join("\n")}\n\n`;
 }
@@ -93,15 +95,15 @@ function provenanceLabel(ref: SourceSpanRef): string {
   return `${ref.sourceId}/${ref.unitId}#${ref.startAnchor}-${ref.endAnchor}`;
 }
 
-function sourceAnchorLink(ref: SourceSpanRef, sourceLinks: Record<string, string>): string | undefined {
-  const base = sourceLinks[ref.unitId];
-  return base ? `${base}#${ref.startAnchor}` : undefined;
+function sourceAnchorLink(ref: SourceSpanRef, context: EmitContext): string | undefined {
+  const target = context.sourceTargets[ref.unitId];
+  return target ? `${relativeLink(context.currentRelativePath, target)}#${ref.startAnchor}` : undefined;
 }
 
-function renderProvenance(artifact: ArtifactPacket, sourceLinks: Record<string, string>): string {
+function renderProvenance(artifact: ArtifactPacket, context: EmitContext): string {
   const lines = ["## Provenance"];
   for (const [index, ref] of artifact.provenance.entries()) {
-    const link = sourceAnchorLink(ref, sourceLinks);
+    const link = sourceAnchorLink(ref, context);
     lines.push(link ? `${index + 1}. [\`${provenanceLabel(ref)}\`](${link})` : `${index + 1}. \`${provenanceLabel(ref)}\``);
     lines.push(`   > ${trimInline(ref.quote)}`);
     if (!link) lines.push("   _(degraded: emitted bundle is missing the retained normalized source target for this citation)_");
@@ -109,9 +111,14 @@ function renderProvenance(artifact: ArtifactPacket, sourceLinks: Record<string, 
   return `${lines.join("\n")}\n`;
 }
 
-export function renderArtifactMarkdown(artifact: ArtifactPacket, context: Partial<EmitContext> = {}): string {
+export function renderArtifactMarkdown(artifact: ArtifactPacket, context?: EmitContext): string {
   const sections = withSummaryFallback(artifact).map((section) => `## ${section.heading}\n\n${section.body.trim()}\n\n`).join("");
-  return `${frontmatter(artifact)}\n\n# ${artifact.title}\n\n${sections}${renderRelated(artifact.related, context.relatedLinks ?? {})}${renderProvenance(artifact, context.sourceLinks ?? {})}`;
+  const safeContext = context ?? {
+    relatedTargets: {},
+    sourceTargets: {},
+    currentRelativePath: `${artifact.group}/${slugify(artifact.id || artifact.title)}.md`,
+  };
+  return `${frontmatter(artifact)}\n\n# ${artifact.title}\n\n${sections}${renderRelated(artifact.related, safeContext)}${renderProvenance(artifact, safeContext)}`;
 }
 
 function sourceUnitFrontmatter(unit: NormalizedSourceUnit): string {
@@ -137,23 +144,23 @@ export function renderSourceUnitMarkdown(unit: NormalizedSourceUnit): string {
   return `${sourceUnitFrontmatter(unit)}\n\n# ${unit.title ?? unit.unitId}\n\n${blocks}`;
 }
 
-function renderIndex(title: string, entries: IndexEntry[]): string {
+function renderIndex(title: string, entries: IndexEntry[], currentRelativePath: string): string {
   if (entries.length === 0) return `# ${title}\n\n_No entries._\n`;
-  return `# ${title}\n\n${entries.map((entry) => `- [${entry.title}](${entry.path}) - ${entry.description}`).join("\n")}\n`;
+  return `# ${title}\n\n${entries.map((entry) => `- [${entry.title}](${relativeLink(currentRelativePath, entry.targetPath)}) - ${entry.description}`).join("\n")}\n`;
 }
 
-function renderRootIndex(groupEntries: IndexEntry[], sourceEntry: IndexEntry, coverageEntry: IndexEntry): string {
+function renderRootIndex(groupEntries: IndexEntry[], sourceEntry: IndexEntry, coverageEntry: IndexEntry, currentRelativePath: string): string {
   return [
     "# World Index",
     "",
     "## Groups",
-    ...groupEntries.map((entry) => `- [${entry.title}](${entry.path}) - ${entry.description}`),
+    ...groupEntries.map((entry) => `- [${entry.title}](${relativeLink(currentRelativePath, entry.targetPath)}) - ${entry.description}`),
     "",
     "## Sources",
-    `- [${sourceEntry.title}](${sourceEntry.path}) - ${sourceEntry.description}`,
+    `- [${sourceEntry.title}](${relativeLink(currentRelativePath, sourceEntry.targetPath)}) - ${sourceEntry.description}`,
     "",
     "## Coverage",
-    `- [${coverageEntry.title}](${coverageEntry.path}) - ${coverageEntry.description}`,
+    `- [${coverageEntry.title}](${relativeLink(currentRelativePath, coverageEntry.targetPath)}) - ${coverageEntry.description}`,
     "",
   ].join("\n");
 }
@@ -172,15 +179,15 @@ function renderLog(createdAt: string, artifacts: ArtifactPacket[], sourceCount: 
   ].join("\n");
 }
 
-function renderCoverage(entries: Array<{ unitTitle: string; unitPath: string; artifacts: IndexEntry[] }>): string {
+function renderCoverage(entries: Array<{ unitTitle: string; unitTargetPath: string; artifacts: IndexEntry[] }>, currentRelativePath: string): string {
   if (entries.length === 0) return "# Source Coverage\n\n_No source coverage entries._\n";
   return [
     "# Source Coverage",
     "",
     ...entries.flatMap((entry) => [
-      `## [${entry.unitTitle}](${entry.unitPath})`,
+      `## [${entry.unitTitle}](${relativeLink(currentRelativePath, entry.unitTargetPath)})`,
       "",
-      ...(entry.artifacts.length > 0 ? entry.artifacts.map((artifact) => `- [${artifact.title}](${artifact.path}) - ${artifact.description}`) : ["- No emitted concept pages cite this source unit."]),
+      ...(entry.artifacts.length > 0 ? entry.artifacts.map((artifact) => `- [${artifact.title}](${relativeLink(currentRelativePath, artifact.targetPath)}) - ${artifact.description}`) : ["- No emitted concept pages cite this source unit."]),
       "",
     ]),
   ].join("\n");
@@ -191,10 +198,10 @@ async function loadManifestIfPresent(outputRoot: string): Promise<SourceManifest
   return readManifest(outputRoot);
 }
 
-function planArtifactFiles(outputRoot: string, artifacts: ArtifactPacket[]): { planned: PlannedArtifactFile[]; relatedLinks: Record<string, string> } {
+function planArtifactFiles(outputRoot: string, artifacts: ArtifactPacket[]): { planned: PlannedArtifactFile[]; relatedTargets: Record<string, string> } {
   const worldRoot = join(outputRoot, "world");
   const used = new Map<string, number>();
-  const relatedLinks = new Map<string, string>();
+  const relatedTargets = new Map<string, string>();
   const planned = [...artifacts]
     .sort((a, b) => `${a.group}:${a.title}`.localeCompare(`${b.group}:${b.title}`))
     .map((artifact) => {
@@ -202,10 +209,10 @@ function planArtifactFiles(outputRoot: string, artifacts: ArtifactPacket[]): { p
       const count = used.get(`${artifact.group}/${base}`) ?? 0;
       used.set(`${artifact.group}/${base}`, count + 1);
       const relativePath = `${artifact.group}/${count === 0 ? base : `${base}-${count + 1}`}.md`;
-      relatedLinks.set(artifact.id, worldPath(relativePath));
+      relatedTargets.set(artifact.id, relativePath);
       return { artifact, relativePath, file: join(worldRoot, relativePath) };
     });
-  return { planned, relatedLinks: Object.fromEntries(relatedLinks) };
+  return { planned, relatedTargets: Object.fromEntries(relatedTargets) };
 }
 
 export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
@@ -218,10 +225,10 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
   for (const group of groups) await mkdir(join(worldRoot, group), { recursive: true });
   await mkdir(join(worldRoot, "sources", "units"), { recursive: true });
 
-  const { planned: artifactFiles, relatedLinks } = planArtifactFiles(outputRoot, artifacts);
+  const { planned: artifactFiles, relatedTargets } = planArtifactFiles(outputRoot, artifacts);
   const referencedUnitIds = new Set(artifacts.flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)));
-  const sourceLinks = new Map<string, string>();
-  const sourceEntries: Array<{ unitId: string; title: string; path: string; description: string }> = [];
+  const sourceTargets = new Map<string, string>();
+  const sourceEntries: Array<{ unitId: string; title: string; targetPath: string; description: string }> = [];
   const written: string[] = [];
 
   if (manifest) {
@@ -231,11 +238,11 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
         const relativePath = `sources/units/${entry.unitId}.md`;
         const file = join(worldRoot, relativePath);
         await writeFile(file, renderSourceUnitMarkdown(unit), "utf-8");
-        sourceLinks.set(entry.unitId, worldPath(relativePath));
+        sourceTargets.set(entry.unitId, relativePath);
         sourceEntries.push({
           unitId: entry.unitId,
           title: unit.title ?? unit.unitId,
-          path: worldPath(relativePath),
+          targetPath: relativePath,
           description: `Normalized source text for ${unit.title ?? unit.unitId}.`,
         });
         written.push(file);
@@ -245,18 +252,18 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
     }
   }
 
-  const context: EmitContext = {
-    relatedLinks,
-    sourceLinks: Object.fromEntries(sourceLinks),
+  const baseContext = {
+    relatedTargets,
+    sourceTargets: Object.fromEntries(sourceTargets),
   };
 
   const artifactEntriesByGroup = new Map<WorldImportGroup, IndexEntry[]>();
   for (const entry of artifactFiles) {
-    await writeFile(entry.file, renderArtifactMarkdown(entry.artifact, context), "utf-8");
+    await writeFile(entry.file, renderArtifactMarkdown(entry.artifact, { ...baseContext, currentRelativePath: entry.relativePath }), "utf-8");
     const groupEntries = artifactEntriesByGroup.get(entry.artifact.group) ?? [];
     groupEntries.push({
       title: entry.artifact.title,
-      path: worldPath(entry.relativePath),
+      targetPath: entry.relativePath,
       description: effectiveDescription(entry.artifact),
     });
     artifactEntriesByGroup.set(entry.artifact.group, groupEntries);
@@ -267,47 +274,47 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
   for (const group of groups) {
     const entries = artifactEntriesByGroup.get(group) ?? [];
     const relativePath = `${group}/index.md`;
-    await writeFile(join(worldRoot, relativePath), renderIndex(group[0].toUpperCase() + group.slice(1), entries), "utf-8");
+    await writeFile(join(worldRoot, relativePath), renderIndex(group[0].toUpperCase() + group.slice(1), entries, relativePath), "utf-8");
     written.push(join(worldRoot, relativePath));
     groupIndexEntries.push({
       title: group[0].toUpperCase() + group.slice(1),
-      path: worldPath(relativePath),
+      targetPath: relativePath,
       description: `${entries.length} concept page(s).`,
     });
   }
 
   const sourcesIndexPath = join(worldRoot, "sources", "index.md");
-  await writeFile(sourcesIndexPath, renderIndex("Sources", sourceEntries.map((entry) => ({ title: entry.title, path: entry.path, description: entry.description }))), "utf-8");
+  await writeFile(sourcesIndexPath, renderIndex("Sources", sourceEntries.map((entry) => ({ title: entry.title, targetPath: entry.targetPath, description: entry.description })), "sources/index.md"), "utf-8");
   written.push(sourcesIndexPath);
 
   const coverageEntries = sourceEntries.map((source) => ({
     unitTitle: source.title,
-    unitPath: source.path,
+    unitTargetPath: source.targetPath,
     artifacts: artifactFiles
       .filter((entry) => entry.artifact.provenance.some((ref) => ref.unitId === source.unitId))
       .map((entry) => ({
         title: entry.artifact.title,
-        path: worldPath(entry.relativePath),
+        targetPath: entry.relativePath,
         description: effectiveDescription(entry.artifact),
       })),
   }));
   const coveragePath = join(worldRoot, "coverage.md");
-  await writeFile(coveragePath, renderCoverage(coverageEntries), "utf-8");
+  await writeFile(coveragePath, renderCoverage(coverageEntries, "coverage.md"), "utf-8");
   written.push(coveragePath);
 
   const rootIndexPath = join(worldRoot, "index.md");
   await writeFile(rootIndexPath, renderRootIndex(groupIndexEntries, {
     title: "Sources",
-    path: worldPath("sources/index.md"),
+    targetPath: "sources/index.md",
     description: `${sourceEntries.length} retained source-unit page(s).`,
   }, {
     title: "Source Coverage",
-    path: worldPath("coverage.md"),
+    targetPath: "coverage.md",
     description: "Maps retained source units to emitted concept pages.",
-  }), "utf-8");
+  }, "index.md"), "utf-8");
   written.push(rootIndexPath);
 
-  const degradedCitationCount = artifacts.reduce((count, artifact) => count + artifact.provenance.filter((ref) => !sourceLinks.has(ref.unitId)).length, 0);
+  const degradedCitationCount = artifacts.reduce((count, artifact) => count + artifact.provenance.filter((ref) => !sourceTargets.has(ref.unitId)).length, 0);
   const logPath = join(worldRoot, "log.md");
   await writeFile(logPath, renderLog(manifest?.createdAt ?? new Date().toISOString(), artifacts, sourceEntries.length, degradedCitationCount), "utf-8");
   written.push(logPath);

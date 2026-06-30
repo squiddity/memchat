@@ -62,12 +62,12 @@ test("emits artifact packets into group directories with portable related links"
   assert.ok(written.length >= 8);
   const markdown = await readFile(join(output, "world", "people", "ada-glass-tower.md"), "utf-8");
   assert.match(markdown, /## Related/);
-  assert.match(markdown, /\[glass-tower\]\(\/places\/glass-tower\.md\)/);
+  assert.match(markdown, /\[glass-tower\]\(\.\.\/places\/glass-tower\.md\)/);
   const rootIndex = await readFile(join(output, "world", "index.md"), "utf-8");
   assert.match(rootIndex, /## Groups/);
-  assert.match(rootIndex, /\[People\]\(\/people\/index\.md\)/);
+  assert.match(rootIndex, /\[People\]\(people\/index\.md\)/);
   const peopleIndex = await readFile(join(output, "world", "people", "index.md"), "utf-8");
-  assert.match(peopleIndex, /\[Ada of the Glass Tower\]\(\/people\/ada-glass-tower\.md\)/);
+  assert.match(peopleIndex, /\[Ada of the Glass Tower\]\(ada-glass-tower\.md\)/);
   const log = await readFile(join(output, "world", "log.md"), "utf-8");
   assert.match(log, /# World Update Log/);
 });

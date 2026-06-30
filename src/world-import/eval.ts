@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
@@ -42,7 +42,11 @@ function hasRequiredFrontmatter(content: string): boolean {
 }
 
 function sourceLinkTargets(content: string): string[] {
-  return [...content.matchAll(/\((\/sources\/units\/[^)#]+\.md#b\d{4})\)/g)].map((match) => match[1]);
+  return [...content.matchAll(/\(([^)#]*sources\/units\/[^)#]+\.md#b\d{4})\)/g)].map((match) => match[1]);
+}
+
+function resolveSourceTargetPath(worldRoot: string, conceptFile: string, linkPath: string): string {
+  return linkPath.startsWith("/") ? join(worldRoot, linkPath.replace(/^\//, "")) : join(dirname(conceptFile), linkPath);
 }
 
 function referencedUnitIdsFromArtifacts(artifacts: ArtifactPacket[] | undefined): string[] {
@@ -97,18 +101,18 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
   checks.push({ name: "log exists", passed: existsSync(join(worldRoot, "log.md")) });
 
   if (conceptFiles.length > 0) {
-    const conceptContents = await Promise.all(conceptFiles.map((path) => readFile(path, "utf-8")));
+    const conceptContents = await Promise.all(conceptFiles.map(async (path) => ({ path, content: await readFile(path, "utf-8") })));
     checks.push({
       name: "concept frontmatter includes type and description",
-      passed: conceptContents.every((content) => hasRequiredFrontmatter(content)),
+      passed: conceptContents.every(({ content }) => hasRequiredFrontmatter(content)),
       message: `${conceptFiles.length} concept file(s) checked`,
     });
 
-    const targets = conceptContents.flatMap((content) => sourceLinkTargets(content));
+    const targets = conceptContents.flatMap(({ path, content }) => sourceLinkTargets(content).map((target) => ({ conceptPath: path, target })));
     const unresolved: string[] = [];
-    for (const target of targets) {
+    for (const { conceptPath, target } of targets) {
       const [pathPart, anchor] = target.split("#");
-      const file = join(worldRoot, pathPart.replace(/^\//, ""));
+      const file = resolveSourceTargetPath(worldRoot, conceptPath, pathPart);
       if (!existsSync(file)) {
         unresolved.push(target);
         continue;

@@ -54,11 +54,11 @@ Optional: any ambiguity, disputes, or gaps in knowledge about this entity. This 
 
 ## Related
 
-- [other-artifact-id](/people/other-artifact-id.md)
+- [other-artifact-id](other-artifact-id.md)
 
 ## Provenance
 
-1. [`source-id/unit-id#b0001-b0002`](/sources/units/unit-id.md#b0001)
+1. [`source-id/unit-id#b0001-b0002`](../sources/units/unit-id.md#b0001)
    > Supporting quote.
 ```
 

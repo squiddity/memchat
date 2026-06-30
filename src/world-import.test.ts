@@ -73,13 +73,13 @@ test("helper command flow normalizes, writes generic merge packet, and emits mar
   const markdown = await readFile(join(output, "world", "people", "ada.md"), "utf-8");
   assert.match(markdown, /# Ada/);
   assert.match(markdown, /## Provenance/);
-  assert.match(markdown, /\(\/sources\/units\/.+?#b0001\)/);
+  assert.match(markdown, /\(\.\.\/sources\/units\/.+?#b0001\)/);
   const sourcePage = await readFile(join(output, "world", "sources", "units", `${units[0].unitId}.md`), "utf-8");
   assert.match(sourcePage, /type: "Source Unit"/);
   assert.match(sourcePage, /## b0001/);
   assert.match(sourcePage, /Ada guards the glass tower/);
   const sourceIndex = await readFile(join(output, "world", "sources", "index.md"), "utf-8");
-  assert.match(sourceIndex, /\(\/sources\/units\/.+?\.md\)/);
+  assert.match(sourceIndex, /\(units\/.+?\.md\)/);
   const coverage = await readFile(join(output, "world", "coverage.md"), "utf-8");
-  assert.match(coverage, /\[Ada\]\(\/people\/ada\.md\)/);
+  assert.match(coverage, /\[Ada\]\(people\/ada\.md\)/);
 });
