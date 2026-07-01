@@ -1,14 +1,43 @@
-import type { NormalizedSourceUnit, SourceBlock } from "./types.js";
+import type { NormalizedSourceUnit, SourceBlock, SourceBlockKind } from "./types.js";
+
+export type SourceBlockInput = string | {
+  text: string;
+  kind?: SourceBlockKind;
+  sourceTag?: string;
+  sourceClass?: string;
+};
 
 export function makeAnchor(index: number): string {
   return `b${String(index + 1).padStart(4, "0")}`;
 }
 
-export function makeBlocks(texts: string[]): SourceBlock[] {
-  return texts
-    .map((text) => text.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .map((text, index) => ({ anchor: makeAnchor(index), index, text }));
+export function normalizeSourceBlockText(text: string, preserveLines: boolean): string {
+  if (!preserveLines) return text.replace(/\s+/g, " ").trim();
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[\t ]+/g, " ").trimEnd())
+    .join("\n")
+    .replace(/^\n+|\n+$/g, "")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+export function makeBlocks(inputs: SourceBlockInput[]): SourceBlock[] {
+  return inputs
+    .map((input) => typeof input === "string" ? { text: input } : input)
+    .map((input) => {
+      const preserveLines = input.kind === "pre" || input.kind === "poem";
+      return { ...input, text: normalizeSourceBlockText(input.text, preserveLines) };
+    })
+    .filter((input) => input.text.length > 0)
+    .map((input, index) => ({
+      anchor: makeAnchor(index),
+      index,
+      text: input.text,
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.sourceTag ? { sourceTag: input.sourceTag } : {}),
+      ...(input.sourceClass ? { sourceClass: input.sourceClass } : {}),
+    }));
 }
 
 export function renderUnitContent(blocks: SourceBlock[]): string {

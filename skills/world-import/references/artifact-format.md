@@ -8,8 +8,9 @@ The merge model emits artifact packets. The deterministic emitter renders them w
 - `world/places/`
 - `world/things/`
 - `world/facts/`
+- `world/style/`
 
-The `group` field chooses the directory. The emitter does not decide whether the group is semantically correct. A corpus-level `World Overview` / `Corpus Synopsis` is still a normal model-authored artifact and can live under `world/facts/`.
+The `group` field chooses the directory. The emitter does not decide whether the group is semantically correct. A corpus-level `World Overview` / `Corpus Synopsis` is still a normal model-authored artifact and can live under `world/facts/`. Style pages are also normal model-authored artifacts; TypeScript routes and validates them but does not generate voice/tone analysis.
 
 ## Markdown shape
 
@@ -109,6 +110,18 @@ Recommended sections:
 - **Significance** — how it fits into the broader narrative
 - **Uncertainty**
 
+### Style guides
+
+Recommended sections:
+- **Summary** — what style feature this page captures
+- **Narrative Voice** — narrator stance, address, syntax, rhythm, and recurring rhetorical moves
+- **Tone** — comic, ominous, formal, absurd, lyrical, satirical, etc., with evidence
+- **Aphorisms & Formulae** — recurring phrases, maxims, rules, nonsense logic, or verbal formulas
+- **Poems & Parodies** — catalog poems, songs, parody mechanics, typography, lineation, and source spans
+- **Character Voice Notes** — character-specific diction, rhythm, catchphrases, and dialogue examples
+- **Source Examples** — quoted source spans with concise explanation
+- **Uncertainty**
+
 ### World overview / corpus synopsis
 
 Recommended sections:
@@ -135,6 +148,6 @@ Recommended sections:
 
 Every artifact needs at least one provenance ref. Prefer short quotes that establish the claim. When an artifact combines multiple sources, include multiple refs. Quote accuracy matters for the provenance dimension of evaluation.
 
-The emitted bundle retains normalized source-unit pages under `world/sources/units/`. In v1, provenance links should resolve to those retained normalized source pages when available. Treat those as the canonical emitted citation target, while preserving original-source metadata separately.
+The emitted bundle retains normalized source-unit pages under `world/sources/units/`. In v1, provenance links should resolve to those retained normalized source pages when available. Treat those as the canonical emitted citation target, while preserving original-source metadata separately. Prefer paragraph/poem/pre anchors over whole-chapter citations when normalization exposes them.
 
 For maintained worlds, overview artifacts and revised entity/event pages should preserve older provenance where it still matters and make continuity changes explicit rather than silently rewriting history.

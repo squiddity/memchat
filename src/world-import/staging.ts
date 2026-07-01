@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { ArtifactPacket, ManifestDiagnostic, NormalizedSourceUnit, SourceManifest, SourceSpanRef, StageEnvelope } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type WorldImportGroup } from "./types.js";
+
+const validGroups = [...WORLD_IMPORT_GROUPS];
 
 export function sourcesDir(outputRoot: string): string {
   return join(outputRoot, "sources");
@@ -118,7 +120,7 @@ function validateProvenance(value: unknown, label: string): asserts value is Sou
 function validateArtifactPacket(value: unknown, label: string): asserts value is ArtifactPacket {
   assertRecord(value, label);
   assertString(value.id, `${label}.id`);
-  if (!["people", "places", "things", "facts"].includes(String(value.group))) throw new Error(`${label}.group must be people, places, things, or facts`);
+  if (!validGroups.includes(String(value.group) as WorldImportGroup)) throw new Error(`${label}.group must be one of ${validGroups.join(", ")}`);
   assertOptionalString(value.type, `${label}.type`);
   assertString(value.title, `${label}.title`);
   assertOptionalString(value.description, `${label}.description`);
@@ -139,9 +141,23 @@ function validateArtifactPacket(value: unknown, label: string): asserts value is
 function validateCandidateEnvelope(value: unknown, label: string): void {
   assertRecord(value, label);
   assertString(value.id, `${label}.id`);
-  if (!["people", "places", "things", "facts"].includes(String(value.group))) throw new Error(`${label}.group must be people, places, things, or facts`);
+  if (!validGroups.includes(String(value.group) as WorldImportGroup)) throw new Error(`${label}.group must be one of ${validGroups.join(", ")}`);
   assertString(value.title, `${label}.title`);
   validateProvenance(value.provenance, label);
+  if (value.metadata !== undefined) assertRecord(value.metadata, `${label}.metadata`);
+}
+
+function validateCandidateDispositions(value: unknown): asserts value is CandidateDisposition[] {
+  if (!Array.isArray(value)) throw new Error("stage.candidateDispositions must be an array");
+  for (const [index, disposition] of value.entries()) {
+    assertRecord(disposition, `stage.candidateDispositions[${index}]`);
+    assertString(disposition.candidateId, `stage.candidateDispositions[${index}].candidateId`);
+    if (disposition.unitId !== undefined) assertString(disposition.unitId, `stage.candidateDispositions[${index}].unitId`);
+    if (!["represented", "merged", "deferred", "dropped"].includes(String(disposition.disposition))) throw new Error(`stage.candidateDispositions[${index}].disposition is invalid`);
+    if (disposition.artifactId !== undefined) assertString(disposition.artifactId, `stage.candidateDispositions[${index}].artifactId`);
+    if ((disposition.disposition === "dropped" || disposition.disposition === "deferred") && typeof disposition.reason !== "string") throw new Error(`stage.candidateDispositions[${index}].reason must explain dropped/deferred candidates`);
+    if (disposition.reason !== undefined) assertString(disposition.reason, `stage.candidateDispositions[${index}].reason`);
+  }
 }
 
 export function validateStageEnvelope(stage: StageEnvelope, options: { requireCandidates?: boolean; requireArtifacts?: boolean } = {}): void {
@@ -153,8 +169,14 @@ export function validateStageEnvelope(stage: StageEnvelope, options: { requireCa
   if (options.requireCandidates && !Array.isArray(stage.candidates)) throw new Error("stage.candidates must be an array");
   if (stage.candidates !== undefined) {
     if (!Array.isArray(stage.candidates)) throw new Error("stage.candidates must be an array");
-    stage.candidates.forEach((candidate, index) => validateCandidateEnvelope(candidate, `stage.candidates[${index}]`));
+    const seenCandidates = new Set<string>();
+    stage.candidates.forEach((candidate, index) => {
+      validateCandidateEnvelope(candidate, `stage.candidates[${index}]`);
+      if (seenCandidates.has(candidate.id)) throw new Error(`duplicate candidate id ${candidate.id}`);
+      seenCandidates.add(candidate.id);
+    });
   }
+  if (stage.candidateDispositions !== undefined) validateCandidateDispositions(stage.candidateDispositions);
   if (options.requireArtifacts && !Array.isArray(stage.artifacts)) throw new Error("stage.artifacts must be an array");
   if (stage.artifacts !== undefined) {
     if (!Array.isArray(stage.artifacts)) throw new Error("stage.artifacts must be an array");

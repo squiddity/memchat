@@ -174,9 +174,9 @@ mkdir -p /tmp/memchat-world-src
 cat > /tmp/memchat-world-src/chapter1.html <<'HTML'
 <html><head><title>Chapter One</title></head><body><p>Ada guards the glass tower.</p><p>The tower overlooks Moon Bay.</p></body></html>
 HTML
-npm run world-import-helper -- normalize --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke
-npm run world-import-helper -- list-units --output /tmp/memchat-world-smoke
-UNIT_JSON=$(npm run world-import-helper -- list-units --output /tmp/memchat-world-smoke)
+npm --silent run world-import-helper -- normalize --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- list-units --output /tmp/memchat-world-smoke
+UNIT_JSON=$(npm --silent run world-import-helper -- list-units --output /tmp/memchat-world-smoke)
 SOURCE_ID=$(node -e 'const units = JSON.parse(process.argv[1]); console.log(units[0].sourceId)' "$UNIT_JSON")
 UNIT_ID=$(node -e 'const units = JSON.parse(process.argv[1]); console.log(units[0].unitId)' "$UNIT_JSON")
 cat > /tmp/memchat-world-merge.json <<JSON
@@ -196,11 +196,13 @@ cat > /tmp/memchat-world-merge.json <<JSON
   ]
 }
 JSON
-npm run world-import-helper -- write-merge --output /tmp/memchat-world-smoke < /tmp/memchat-world-merge.json
-npm run world-import-helper -- emit --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- write-merge --output /tmp/memchat-world-smoke < /tmp/memchat-world-merge.json
+npm --silent run world-import-helper -- emit --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- lint --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- eval --output /tmp/memchat-world-smoke
 ```
 
-Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001` are present, `world/index.md` exists, and every emitted provenance link resolves to a retained source-unit page under `world/sources/units/` for the cited unit(s).
+Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001`/`b0002` are present at paragraph granularity, `world/index.md` exists, lint passes with no unresolved concept links, candidate-accounting, coverage, or source-anchor diagnostics, and every emitted provenance link resolves to a retained source-unit page under `world/sources/units/` for the cited unit(s).
 
 For model-backed world import, use a configured model and a scratch output dir:
 
@@ -208,7 +210,7 @@ For model-backed world import, use a configured model and a scratch output dir:
 npm run world-import -- --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --dry-run
 ```
 
-Expected: the skill loads and reports normalization/listing results without doing semantic extraction in dry-run mode.
+Expected: the skill loads and reports normalization/listing results without doing semantic extraction in dry-run mode. For full model-backed world-import regressions, use a fresh output directory, a stronger model when behavior is uncertain, `--debug`, and `--show-tool-updates`; for Alice-style runs, additionally inspect unresolved links, candidate dispositions, body-unit coverage, retained poem/pre formatting, and style-guide output.
 
 ## Notes
 

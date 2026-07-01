@@ -31,3 +31,4 @@ dist/
 .zprofile
 .zshrc
 world-output/
+samples/

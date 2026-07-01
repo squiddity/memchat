@@ -158,15 +158,26 @@ A healthy wiki bundle should normally include:
 - `world/index.md` plus group/source indexes
 - `world/log.md` and `world/coverage.md`
 - retained source-unit pages under `world/sources/units/` for provenance inspection
+- optional model-authored style guides under `world/style/`
 - for substantive corpora, a model-authored `World Overview` / `Corpus Synopsis` artifact that links to the detailed pages it summarizes
 
-## Evaluating output
+## Linting and evaluating output
+
+Run deterministic lint immediately after emission:
+
+```bash
+npm run world-import-helper -- lint --output /tmp/world-out
+```
+
+Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps. Repair the merge packet or explicitly account for intentional omissions before declaring the import healthy.
+
+Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model:
 
 ```bash
 npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model openrouter/google/gemma-4-31b-it:free
 ```
 
-Omit `--reviewer-model` to run deterministic checks only (no model scoring).
+Omit `--reviewer-model` to run deterministic checks only (no model scoring). Reviewer prompts include source reconstruction, dropped-candidate risk, and style/tone usefulness checks.
 
 ## Helper cheat sheet
 
@@ -178,6 +189,7 @@ npm run world-import-helper -- read-slice --output <dir> --unit <unit-id> --star
 npm run world-import-helper -- write-extraction --output <dir> --unit <unit-id> < stage.json
 npm run world-import-helper -- write-merge --output <dir> < merged-stage.json
 npm run world-import-helper -- emit --output <dir>
+npm run world-import-helper -- lint --output <dir>
 npm run world-import-helper -- eval --output <dir> [--reviewer-model <model>]
 npm run world-import-helper -- validate-stage --kind extraction --file stage.json
 npm run world-import-helper -- validate-stage --kind merge --file stage.json
@@ -206,10 +218,30 @@ npm run world-import-helper -- validate-stage --kind merge --file stage.json
       index.md
     facts/
       index.md
+    style/
+      index.md
     sources/
       index.md
       units/                    # retained normalized source-unit pages for provenance links
 ```
+
+## Alice manual regression fixture
+
+For Alice-style literary regressions, place a public-domain Gutenberg EPUB at `samples/pg11-images-3.epub` (or use `~/Downloads/pg11-images-3.epub`) and run with a fresh output directory, a stronger model when uncertain, `--debug`, and `--show-tool-updates`:
+
+```bash
+rm -rf /tmp/alice-world
+npm run world-import -- \
+  --input samples/pg11-images-3.epub \
+  --output /tmp/alice-world \
+  --model openrouter/deepseek/deepseek-v4-pro \
+  --reviewer-model openrouter/deepseek/deepseek-v4-pro \
+  --show-tool-updates
+npm run world-import-helper -- lint --output /tmp/alice-world
+npm run world-import-helper -- eval --output /tmp/alice-world --reviewer-model openrouter/deepseek/deepseek-v4-pro
+```
+
+Inspect whether lint catches unresolved links such as omitted event pages, whether candidate dispositions explain dropped Chapter III/Chapter X material, whether source pages show paragraph/poem/pre granularity instead of chapter-sized anchors, and whether reviewer output can reconstruct the Caucus-Race, White Rabbit's house, Caterpillar conversation, Mad Tea-Party, croquet game, Mock Turtle story, Lobster Quadrille, trial, dream frame, and style/tone guidance.
 
 ## Related docs
 

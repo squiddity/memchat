@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { argv, exit, stdin, stdout, stderr } from "node:process";
 import { emitWorldLibrary } from "./emit.js";
-import { runReviewerModelEvaluation } from "./eval.js";
+import { lintWorldImport, runReviewerModelEvaluation } from "./eval.js";
 import { normalizeSources } from "./normalize.js";
 import { readSlice } from "./spans.js";
 import { readManifest, readNormalizedUnit, validateStageEnvelope, writeExtractionStage, writeMergeStage } from "./staging.js";
@@ -19,6 +19,7 @@ function usage(): string {
     `  write-merge --output <dir> < merged-stage.json\n` +
     `  validate-stage --kind extraction|merge --file <stage.json>\n` +
     `  emit --output <dir>\n` +
+    `  lint --output <dir>\n` +
     `  eval --output <dir> [--reviewer-model <provider/model>]\n`;
 }
 
@@ -109,6 +110,13 @@ async function main(): Promise<void> {
   if (command === "emit") {
     const written = await emitWorldLibrary(requireString(options, "output"));
     stdout.write(`${JSON.stringify({ written }, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "lint") {
+    const result = await lintWorldImport(requireString(options, "output"));
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.passed) exit(1);
     return;
   }
 

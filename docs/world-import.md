@@ -5,10 +5,11 @@ World import is a package-first pipeline for turning HTML/XHTML source collectio
 The architecture deliberately keeps semantics in skills and model prompts. TypeScript helper code handles deterministic operations only:
 
 - normalize source files and archives;
-- create stable source/unit ids and block anchors;
+- create portable source/unit ids and paragraph/poem/pre block anchors;
 - list units and read bounded source slices;
-- persist generic stage envelopes;
-- emit model-authored artifact packets as markdown concept pages, indexes, logs, coverage views, and retained source-unit citation targets.
+- persist generic stage envelopes and structural candidate dispositions;
+- emit model-authored artifact packets as markdown concept pages, indexes, logs, coverage views, style guides, and retained source-unit citation targets;
+- lint emitted bundles for structural link, provenance, coverage, and candidate-accounting diagnostics.
 
 It does **not** decide entity identity, aliases, relationships, conflicts, fact semantics, or synopsis/update quality.
 
@@ -62,6 +63,7 @@ npm run world-import-helper -- read-slice --output /tmp/world-import --unit <uni
 npm run world-import-helper -- write-extraction --output /tmp/world-import --unit <unit-id> < extraction.json
 npm run world-import-helper -- write-merge --output /tmp/world-import < merge.json
 npm run world-import-helper -- emit --output /tmp/world-import
+npm run world-import-helper -- lint --output /tmp/world-import
 npm run world-import-helper -- eval --output /tmp/world-import --reviewer-model anthropic/claude-opus-4-5
 ```
 
@@ -87,6 +89,8 @@ npm run world-import-helper -- eval --output /tmp/world-import --reviewer-model 
       index.md
     facts/
       index.md
+    style/
+      index.md
     sources/
       index.md
       units/
@@ -94,7 +98,9 @@ npm run world-import-helper -- eval --output /tmp/world-import --reviewer-model 
 
 ## Stage contract boundary
 
-Extraction candidates are model-authored and opaque to helper code except for optional routing/provenance envelope fields. Emission now produces both concept pages and bundle-local source-unit pages so provenance links can resolve within the emitted wiki bundle. Merged artifacts use a generic packet. Helpers may validate structure, emit browseable files, and report integrity, but synopsis text, continuity decisions, conflict handling, and existing-world update judgment remain model-owned:
+Extraction candidates are model-authored and opaque to helper code except for routing/provenance envelope fields and candidate ids. Merge output should account for every extraction candidate by listing represented candidate ids on artifacts or stage-level dispositions (`represented`, `merged`, `deferred`, `dropped`); dropped/deferred candidates require a model-authored reason. Helpers check accounting completeness only, not whether the semantic decision was good.
+
+Emission now produces concept pages, optional model-authored style-guide pages under `world/style/`, and bundle-local source-unit pages so provenance links can resolve within the emitted wiki bundle. Merged artifacts use a generic packet. Helpers may validate structure, emit browseable files, and report integrity, but synopsis text, continuity decisions, conflict handling, style/tone analysis, and existing-world update judgment remain model-owned:
 
 ```json
 {
@@ -114,9 +120,15 @@ Extraction candidates are model-authored and opaque to helper code except for op
 
 ## Provenance and citations
 
-`SourceSpanRef` remains the canonical evidence model. In the emitted wiki bundle, provenance links should resolve to retained normalized source-unit markdown pages under `world/sources/units/` when those targets are available. This makes the emitted bundle self-contained for provenance inspection even when the original EPUB/HTML source is not present.
+`SourceSpanRef` remains the canonical evidence model. Normalization preserves paragraph-level prose blocks and line-preserving poem/preformatted blocks where possible, with block metadata such as role, source entry path, block kind, and hashes in the manifest. EPUB inputs use OPF spine/nav/package metadata when available; run-local absolute paths are diagnostics, while archive-entry source identities are based on archive content plus archive-relative entry paths.
+
+In the emitted wiki bundle, provenance links should resolve to retained normalized source-unit markdown pages under `world/sources/units/` when those targets are available. This makes the emitted bundle self-contained for provenance inspection even when the original EPUB/HTML source is not present.
 
 Those emitted source-unit pages are a v1 citation target. They preserve original path metadata where available, but they are still normalized representations rather than perfect original-format selectors such as EPUB CFIs, DOM selectors, page numbers, or byte offsets.
+
+## Deterministic lint and eval
+
+Run `npm run world-import-helper -- lint --output <output>` after `emit` to get machine-readable diagnostics for unresolved `related` ids, unresolved `[[wikilinks]]`, missing markdown/source anchors, required frontmatter, duplicate artifact ids, body source coverage gaps, and candidate-disposition accounting. `eval` embeds the same lint result in `stages/review.json` before any reviewer-model scoring. Treat lint as structural evidence for a repair pass: create the missing artifact, fix/remove the link, add candidate disposition metadata, or explicitly preserve an acceptable omission with model-authored reasoning.
 
 For a concise shell-oriented quick-start covering build, API key setup, run flags, helper commands, and output inspection, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
 

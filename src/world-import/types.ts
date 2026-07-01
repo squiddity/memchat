@@ -1,11 +1,20 @@
-export type WorldImportGroup = "people" | "places" | "things" | "facts";
+export const WORLD_IMPORT_GROUPS = ["people", "places", "things", "facts", "style"] as const;
+
+export type WorldImportGroup = typeof WORLD_IMPORT_GROUPS[number];
 
 export type SourceKind = "html" | "xhtml" | "archive-entry";
+
+export type SourceRole = "body" | "frontmatter" | "toc" | "backmatter" | "cover" | "unknown";
+
+export type SourceBlockKind = "heading" | "paragraph" | "list-item" | "quote" | "pre" | "poem" | "block";
 
 export type SourceBlock = {
   anchor: string;
   index: number;
   text: string;
+  kind?: SourceBlockKind;
+  sourceTag?: string;
+  sourceClass?: string;
 };
 
 export type NormalizedSourceUnit = {
@@ -13,14 +22,19 @@ export type NormalizedSourceUnit = {
   unitId: string;
   title?: string;
   kind: SourceKind;
+  role?: SourceRole;
   inputPath: string;
   archivePath?: string;
+  sourceEntryPath?: string;
+  portableSourceKey?: string;
+  archiveContentHash?: string;
   order: number;
   sourceHash: string;
   contentHash: string;
-  normalizerVersion: 1;
+  normalizerVersion: 2;
   content: string;
   blocks: SourceBlock[];
+  metadata?: Record<string, unknown>;
 };
 
 export type SourceManifestEntry = {
@@ -28,15 +42,21 @@ export type SourceManifestEntry = {
   unitId: string;
   title?: string;
   kind: SourceKind;
+  role?: SourceRole;
   inputPath: string;
   archivePath?: string;
+  sourceEntryPath?: string;
+  portableSourceKey?: string;
+  archiveContentHash?: string;
   order: number;
   blockCount: number;
   anchors: string[];
+  blockKinds?: SourceBlockKind[];
   normalizedPath: string;
   sourceHash: string;
   contentHash: string;
-  normalizerVersion: 1;
+  normalizerVersion: 2;
+  metadata?: Record<string, unknown>;
 };
 
 export type ManifestDiagnostic = {
@@ -52,6 +72,7 @@ export type SourceManifest = {
   outputRoot: string;
   units: SourceManifestEntry[];
   diagnostics: ManifestDiagnostic[];
+  metadata?: Record<string, unknown>;
 };
 
 export type SourceSpanRef = {
@@ -62,13 +83,33 @@ export type SourceSpanRef = {
   quote: string;
 };
 
+export type ExtractionCandidate = {
+  id: string;
+  group: WorldImportGroup;
+  title: string;
+  provenance: SourceSpanRef[];
+  payload?: unknown;
+  metadata?: Record<string, unknown>;
+};
+
+export type CandidateDispositionStatus = "represented" | "merged" | "deferred" | "dropped";
+
+export type CandidateDisposition = {
+  unitId?: string;
+  candidateId: string;
+  disposition: CandidateDispositionStatus;
+  artifactId?: string;
+  reason?: string;
+};
+
 export type StageEnvelope = {
   version: 1;
   kind: "extraction" | "merge" | "review";
   unitId?: string;
   sourceId?: string;
-  candidates?: unknown[];
+  candidates?: ExtractionCandidate[];
   artifacts?: ArtifactPacket[];
+  candidateDispositions?: CandidateDisposition[];
   diagnostics?: ManifestDiagnostic[];
   metadata?: Record<string, unknown>;
 };
@@ -114,13 +155,29 @@ export type ReviewerDimensionScore = {
   justification: string;
 };
 
+export type LintDiagnostic = {
+  code: string;
+  level: "error" | "warning";
+  message: string;
+  path?: string;
+  artifactId?: string;
+  unitId?: string;
+  candidateId?: string;
+};
+
+export type WorldImportLintResult = {
+  passed: boolean;
+  diagnostics: LintDiagnostic[];
+};
+
 export type EvaluationResult = {
   version: 1;
   createdAt: string;
   outputRoot: string;
   deterministic: {
     passed: boolean;
-    checks: Array<{ name: string; passed: boolean; message?: string }>;
+    checks: Array<{ name: string; passed: boolean; message?: string; diagnostics?: LintDiagnostic[] }>;
+    lint?: WorldImportLintResult;
   };
   reviewer?: {
     model?: string;

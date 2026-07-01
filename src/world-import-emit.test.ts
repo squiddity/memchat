@@ -84,6 +84,31 @@ test("adds a summary fallback from description when short sections are missing",
   assert.match(markdown, /## Summary\n\nHarbor town below the tower\./);
 });
 
+test("emits model-authored style artifacts under style group", async () => {
+  const output = await tempDir();
+  await writeMergeStage(output, {
+    version: 1,
+    kind: "merge",
+    artifacts: [{
+      id: "narrative-voice",
+      group: "style",
+      title: "Narrative Voice",
+      description: "Playful narrative voice guide grounded in source quotes.",
+      sections: [{ heading: "Summary", body: "The narrator uses playful reversals and direct address." }],
+      related: ["ada-glass-tower"],
+      provenance: [{ sourceId: "chapter-1", unitId: "chapter-1-u001", startAnchor: "b0001", endAnchor: "b0001", quote: "A playful line." }],
+    }, artifact],
+  });
+  await emitWorldLibrary(output);
+  const style = await readFile(join(output, "world", "style", "narrative-voice.md"), "utf-8");
+  assert.match(style, /group: style/);
+  assert.match(style, /type: "Style Guide"/);
+  const styleIndex = await readFile(join(output, "world", "style", "index.md"), "utf-8");
+  assert.match(styleIndex, /Narrative Voice/);
+  const rootIndex = await readFile(join(output, "world", "index.md"), "utf-8");
+  assert.match(rootIndex, /\[Style\]\(style\/index\.md\)/);
+});
+
 test("invalid merged packet fails before half-written semantic output", async () => {
   const output = await tempDir();
   await assert.rejects(

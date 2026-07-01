@@ -10,9 +10,11 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { manifestPath, mergedCandidatesPath, readManifest, readMergeStage, readNormalizedUnit, writeJson } from "./staging.js";
+import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson } from "./staging.js";
 import { requireResolvedModel } from "../model-selection.js";
-import type { ArtifactPacket, EvaluationResult, ReviewBundle, ReviewerDimensionScore } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type WorldImportLintResult } from "./types.js";
+
+const groups = [...WORLD_IMPORT_GROUPS];
 
 const MAX_SOURCE_CHARS = 60_000; // total source text budget for the review bundle
 const MAX_UNIT_CHARS = 12_000;   // per-unit cap so no single unit dominates
@@ -53,8 +55,156 @@ function referencedUnitIdsFromArtifacts(artifacts: ArtifactPacket[] | undefined)
   return [...new Set((artifacts ?? []).flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)))].sort((a, b) => a.localeCompare(b));
 }
 
+function representedCandidateKeys(artifact: ArtifactPacket): string[] {
+  const raw = artifact.metadata?.representedCandidateIds ?? artifact.metadata?.candidateIds;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === "string");
+}
+
+function candidateKey(unitId: string | undefined, candidateId: string): string {
+  return `${unitId ?? ""}:${candidateId}`;
+}
+
+function wikilinkTargets(content: string): string[] {
+  return [...content.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map((match) => match[1].trim()).filter(Boolean);
+}
+
+function markdownInternalTargets(content: string): string[] {
+  return [...content.matchAll(/\[[^\]]+\]\((?!https?:|mailto:|#)([^)]+\.md(?:#[^)]+)?)\)/gi)].map((match) => match[1]);
+}
+
+function checkExists(diagnostics: LintDiagnostic[], code: string, path: string, message: string): void {
+  if (!existsSync(path)) diagnostics.push({ code, level: "error", path, message });
+}
+
+function hasMarkdownHeadingAnchor(content: string, anchor: string): boolean {
+  return new RegExp(`^##\\s+${anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m").test(content);
+}
+
 async function readMarkdownSnippet(path: string, maxChars = MAX_MARKDOWN_FILE_CHARS): Promise<string> {
   return (await readFile(path, "utf-8")).slice(0, maxChars);
+}
+
+export async function lintWorldImport(outputRoot: string): Promise<WorldImportLintResult> {
+  const diagnostics: LintDiagnostic[] = [];
+  const worldRoot = join(outputRoot, "world");
+  let manifest;
+  let merge;
+  try { manifest = await readManifest(outputRoot); } catch { manifest = undefined; }
+  try { merge = await readMergeStage(outputRoot); } catch { merge = undefined; }
+
+  checkExists(diagnostics, "missing-index", join(worldRoot, "index.md"), "World root index is missing");
+  checkExists(diagnostics, "missing-sources-index", join(worldRoot, "sources", "index.md"), "Sources index is missing");
+  checkExists(diagnostics, "missing-coverage", join(worldRoot, "coverage.md"), "Coverage view is missing");
+
+  const artifactIds = new Set<string>();
+  for (const artifact of merge?.artifacts ?? []) {
+    if (artifactIds.has(artifact.id)) diagnostics.push({ code: "duplicate-artifact-id", level: "error", artifactId: artifact.id, message: `Duplicate artifact id ${artifact.id}` });
+    artifactIds.add(artifact.id);
+    for (const related of artifact.related ?? []) {
+      if (!artifactIds.has(related) && !(merge?.artifacts ?? []).some((item) => item.id === related)) {
+        diagnostics.push({ code: "unresolved-related", level: "error", artifactId: artifact.id, message: `Artifact ${artifact.id} has unresolved related id ${related}` });
+      }
+    }
+    if (!artifact.description && !artifact.sections.some((section) => /^(summary|capsule)$/i.test(section.heading))) {
+      diagnostics.push({ code: "missing-description", level: "warning", artifactId: artifact.id, message: `Artifact ${artifact.id} lacks description or summary/capsule fallback` });
+    }
+    if (artifact.provenance.length === 0) diagnostics.push({ code: "missing-provenance", level: "error", artifactId: artifact.id, message: `Artifact ${artifact.id} has no provenance` });
+  }
+
+  const conceptFiles: string[] = [];
+  for (const group of groups) {
+    const groupDir = join(worldRoot, group);
+    if (!existsSync(groupDir)) continue;
+    const groupFiles = (await readdir(groupDir)).filter((name) => name.endsWith(".md") && name !== "index.md").map((name) => join(groupDir, name));
+    conceptFiles.push(...groupFiles);
+    if (groupFiles.length > 0) checkExists(diagnostics, "missing-group-index", join(groupDir, "index.md"), `${group} index is missing`);
+  }
+
+  const markdownCache = new Map<string, string>();
+  const readMarkdownCached = async (file: string): Promise<string> => {
+    const cached = markdownCache.get(file);
+    if (cached !== undefined) return cached;
+    const content = await readFile(file, "utf-8");
+    markdownCache.set(file, content);
+    return content;
+  };
+
+  for (const file of conceptFiles) {
+    const content = await readMarkdownCached(file);
+    if (!hasRequiredFrontmatter(content)) diagnostics.push({ code: "missing-frontmatter", level: "error", path: file, message: "Concept frontmatter must include type and description" });
+    for (const target of wikilinkTargets(content)) {
+      if (!artifactIds.has(target)) diagnostics.push({ code: "unresolved-wikilink", level: "error", path: file, message: `Unresolved wikilink [[${target}]]` });
+    }
+    for (const target of markdownInternalTargets(content)) {
+      const [pathPart, anchor] = target.split("#");
+      const targetPath = resolveSourceTargetPath(worldRoot, file, pathPart);
+      if (!existsSync(targetPath)) diagnostics.push({ code: "unresolved-markdown-link", level: "error", path: file, message: `Missing markdown link target ${target}` });
+      else if (anchor) {
+        const linked = await readMarkdownCached(targetPath);
+        if (!hasMarkdownHeadingAnchor(linked, anchor)) diagnostics.push({ code: "unresolved-anchor", level: "error", path: file, message: `Missing markdown anchor ${target}` });
+      }
+    }
+  }
+
+  const units = manifest?.units ?? [];
+  const extractionStages = await readExtractionStages(outputRoot);
+  const extractionByUnit = new Map(extractionStages.map((stage) => [stage.unitId, stage]));
+  const hasExtractionData = extractionStages.length > 0;
+  if (hasExtractionData) {
+    for (const unit of units.filter((entry) => (entry.role ?? "body") === "body")) {
+      if (!extractionByUnit.has(unit.unitId)) diagnostics.push({ code: "body-unit-missing-extraction", level: "error", unitId: unit.unitId, path: extractionStagePath(outputRoot, unit.unitId), message: `Body source unit ${unit.unitId} has no extraction stage` });
+    }
+  }
+
+  const allCandidateKeys = new Set<string>();
+  const keysByCandidateId = new Map<string, string[]>();
+  const addCandidateKey = (key: string, id: string): void => {
+    allCandidateKeys.add(key);
+    keysByCandidateId.set(id, [...(keysByCandidateId.get(id) ?? []), key]);
+  };
+  for (const stage of extractionStages) {
+    const seen = new Set<string>();
+    for (const candidate of stage.candidates ?? []) {
+      const key = candidateKey(stage.unitId, candidate.id);
+      if (seen.has(candidate.id)) diagnostics.push({ code: "duplicate-candidate-id", level: "error", unitId: stage.unitId, candidateId: candidate.id, message: `Duplicate candidate id ${candidate.id} in ${stage.unitId}` });
+      seen.add(candidate.id);
+      addCandidateKey(key, candidate.id);
+    }
+  }
+  if (allCandidateKeys.size > 0) {
+    const accounted = new Set<string>();
+    for (const artifact of merge?.artifacts ?? []) {
+      for (const rawKey of representedCandidateKeys(artifact)) {
+        const key = rawKey.includes(":") ? rawKey : candidateKey(undefined, rawKey);
+        accounted.add(key);
+        if (rawKey.includes(":") === false) for (const candidate of keysByCandidateId.get(rawKey) ?? []) accounted.add(candidate);
+      }
+    }
+    for (const disposition of merge?.candidateDispositions ?? []) {
+      const key = candidateKey(disposition.unitId, disposition.candidateId);
+      accounted.add(key);
+      if (!disposition.unitId) for (const candidate of keysByCandidateId.get(disposition.candidateId) ?? []) accounted.add(candidate);
+      if ((disposition.disposition === "dropped" || disposition.disposition === "deferred") && !disposition.reason) {
+        diagnostics.push({ code: "candidate-disposition-missing-reason", level: "error", unitId: disposition.unitId, candidateId: disposition.candidateId, message: `Candidate ${disposition.candidateId} is ${disposition.disposition} without a model-authored reason` });
+      }
+    }
+    for (const key of allCandidateKeys) {
+      if (!accounted.has(key)) {
+        const [unitId, candidateId] = key.split(":");
+        diagnostics.push({ code: "unaccounted-candidate", level: "error", unitId, candidateId, message: `Extraction candidate ${candidateId} from ${unitId} is not represented, merged, deferred, or dropped` });
+      }
+    }
+  }
+
+  const citedUnits = new Set((merge?.artifacts ?? []).flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)));
+  for (const unit of units.filter((entry) => (entry.role ?? "body") === "body")) {
+    if (hasExtractionData && extractionByUnit.has(unit.unitId) && !citedUnits.has(unit.unitId)) {
+      diagnostics.push({ code: "body-unit-no-emitted-coverage", level: "error", unitId: unit.unitId, message: `Body source unit ${unit.unitId} has extraction data but no emitted artifact provenance` });
+    }
+  }
+
+  return { passed: diagnostics.every((item) => item.level !== "error"), diagnostics };
 }
 
 export async function deterministicWorldImportChecks(outputRoot: string): Promise<EvaluationResult["deterministic"]> {
@@ -87,7 +237,7 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
   checks.push({ name: "world markdown emitted", passed: markdownCount > 0, message: `${markdownCount} markdown file(s)` });
 
   const conceptFiles: string[] = [];
-  for (const group of ["people", "places", "things", "facts"]) {
+  for (const group of groups) {
     const groupDir = join(worldRoot, group);
     if (!existsSync(groupDir)) continue;
     const groupFiles = (await readdir(groupDir)).filter((name) => name.endsWith(".md") && name !== "index.md").map((name) => join(groupDir, name));
@@ -118,7 +268,7 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
         continue;
       }
       const content = await readFile(file, "utf-8");
-      if (!content.includes(`## ${anchor}`)) unresolved.push(target);
+      if (!hasMarkdownHeadingAnchor(content, anchor)) unresolved.push(target);
     }
     checks.push({
       name: "provenance source-target resolvability",
@@ -137,7 +287,15 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
   }
   if (artifactCount > 0) checks.push({ name: "concept pages emitted", passed: conceptFiles.length > 0, message: `${conceptFiles.length} concept page(s)` });
 
-  return { passed: checks.every((check) => check.passed), checks };
+  const lint = await lintWorldImport(outputRoot);
+  checks.push({
+    name: "world wiki lint",
+    passed: lint.passed,
+    message: lint.diagnostics.length === 0 ? "no diagnostics" : `${lint.diagnostics.filter((item) => item.level === "error").length} error(s), ${lint.diagnostics.filter((item) => item.level === "warning").length} warning(s)`,
+    diagnostics: lint.diagnostics,
+  });
+
+  return { passed: checks.every((check) => check.passed), checks, lint };
 }
 
 /**
@@ -181,7 +339,7 @@ export async function buildReviewBundle(outputRoot: string): Promise<ReviewBundl
     await addMarkdown("log.md");
     await addMarkdown("sources/index.md");
 
-    for (const group of ["people", "places", "things", "facts"]) {
+    for (const group of groups) {
       const groupDir = join(worldRoot, group);
       if (!existsSync(groupDir)) continue;
       for (const file of (await readdir(groupDir)).filter((name) => name.endsWith(".md")).slice(0, 20)) {
@@ -336,6 +494,10 @@ Score the world library 1-5 (5 = best) on each dimension:
 8. **progressiveDisclosure** — Do artifacts balance concise top-level summaries with richer detail below?
 9. **duplicateNarrativeControl** — Do entity/place artifacts summarize linked events instead of repeating full event narratives unnecessarily?
 10. **citationReconstructability** — Can a reader follow emitted provenance links to retained source-unit pages inside the bundle?
+11. **droppedCandidateRisk** — Do candidate dispositions and coverage diagnostics make omissions visible, especially major set-pieces that may be missing from the final wiki?
+12. **styleToneCoverage** — When useful for the corpus, do style artifacts capture narrative voice, tone, formulae, parody/poem mechanics, and character voices with source evidence?
+
+For Alice-like fiction, specifically note whether the artifacts support reconstructing major set-pieces such as the Caucus-Race, White Rabbit's house, Caterpillar conversation, Mad Tea-Party, croquet game, Mock Turtle story, Lobster Quadrille, trial, and dream frame.
 
 Provide evidence from the artifacts and source text for each score.
 
@@ -358,7 +520,9 @@ Return your results as a JSON object at the very end of your response with this 
     {"dimension": "navigability", "score": <1-5>, "justification": "..."},
     {"dimension": "progressiveDisclosure", "score": <1-5>, "justification": "..."},
     {"dimension": "duplicateNarrativeControl", "score": <1-5>, "justification": "..."},
-    {"dimension": "citationReconstructability", "score": <1-5>, "justification": "..."}
+    {"dimension": "citationReconstructability", "score": <1-5>, "justification": "..."},
+    {"dimension": "droppedCandidateRisk", "score": <1-5>, "justification": "..."},
+    {"dimension": "styleToneCoverage", "score": <1-5>, "justification": "..."}
   ],
   "qaResults": [
     {"question": "...", "answerable": true, "answer": "...", "confidence": "high|medium|low"}

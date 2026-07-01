@@ -44,7 +44,7 @@ This way the full narrative lives once under `facts/` rather than being duplicat
 When merging candidates about the same entity, combine all useful detail from every source rather than condensing into a bare summary. Multiple provenance refs are a feature, not a bug.
 
 ### Provenance target for v1
-The emitted bundle retains normalized source-unit markdown pages under `world/sources/units/`. Treat those retained normalized source pages as the canonical v1 citation target for emitted provenance links. Original EPUB/HTML layout fidelity may be partial; preserve original-path metadata, but do not assume page numbers or byte offsets exist.
+The emitted bundle retains normalized source-unit markdown pages under `world/sources/units/`. Treat those retained normalized source pages as the canonical v1 citation target for emitted provenance links. Normalized anchors are paragraph/poem/pre source blocks when structure is available; preserve those fine-grained spans instead of citing whole chapters. Original EPUB/HTML layout fidelity may be partial; preserve original-path diagnostics, but portable source ids should not depend on local absolute paths.
 
 ### New world vs maintained world
 Treat a fresh import and an update to an existing world as different postures:
@@ -95,6 +95,8 @@ Extract for each important fact or event:
 - **Causes and consequences** — what led to it, what resulted
 - **Narrative significance** — how it fits into the broader story
 
+Major chapter set-pieces usually deserve durable `facts` artifacts when needed for source reconstruction. Use `related` links from characters/places to avoid duplicated full narration, but do not silently leave a major scene recoverable only from a broad overview.
+
 ## Inputs
 
 The user should provide JSON or text containing:
@@ -127,6 +129,7 @@ npm run world-import-helper -- read-slice --output <output> --unit <unit-id> --s
 npm run world-import-helper -- write-extraction --output <output> --unit <unit-id> < stage.json
 npm run world-import-helper -- write-merge --output <output> < merged-stage.json
 npm run world-import-helper -- emit --output <output>
+npm run world-import-helper -- lint --output <output>
 npm run world-import-helper -- eval --output <output> --reviewer-model <provider/model>
 ```
 
@@ -138,9 +141,10 @@ Installed-package users may call `memchat-world-import-helper` with the same arg
 2. For each normalized unit, read bounded text and produce an extraction stage envelope. **Extract rich, detailed candidates — not chapter summaries.** Preserve provenance spans for every candidate. Follow the entity-type guidance above.
 3. If the output already contains an emitted world bundle and this is not a dry run, inspect the existing world indexes, affected artifacts, coverage, log, and any existing `World Overview` / `Corpus Synopsis` artifact before merging new material.
 4. Merge from staged candidates, not whole raw files. **Combine and preserve all useful detail from each candidate** rather than distilling to minimal summaries. Use `read-slice` only when candidate evidence is ambiguous or conflicting and only for the minimum anchor range needed. For maintained worlds, enrich existing artifacts when evidence supports continuity, preserve older provenance unless it is superseded or contested, and keep retcons/conflicts visible rather than silently flattening them.
-5. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. For substantive imports, include or update a corpus-level `World Overview` artifact as a normal model-authored packet rather than relying on the emitter to summarize the world.
+5. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. Include candidate disposition accounting: every extraction candidate should be represented by artifact metadata, merged into a broader artifact, deferred, or dropped with a model-authored reason. For substantive imports, include or update a corpus-level `World Overview` artifact as a normal model-authored packet rather than relying on the emitter to summarize the world. Add model-authored `style` artifacts when narrative voice, tone, aphorisms/formulae, parody/poems, or character voice notes are useful for reuse.
 6. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
-7. If a reviewer model is configured, run the eval helper after emission; otherwise report that reviewer-model scoring was skipped.
-8. Summarize outputs, diagnostics, and any uncertainty/disputes preserved in metadata or sections.
+7. Run deterministic `lint`. Treat diagnostics as evidence for repair, not ontology: create missing artifacts, fix/remove unresolved links, add candidate dispositions, improve source coverage, or explicitly justify acceptable omissions in metadata/sections. Re-emit and re-lint after repairs.
+8. If a reviewer model is configured, run the eval helper after emission/lint; otherwise report that reviewer-model scoring was skipped.
+9. Summarize outputs, lint diagnostics, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
 
 When `dryRun` is true, stop after normalization/listing and report whether the helper surface is available.

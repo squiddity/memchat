@@ -23,7 +23,7 @@ Make multi-session chat feel consistent over time: if the agent invents or learn
 
 ## Design principle
 
-Memchat favors small deterministic helpers plus model-owned semantic workflows. For memory and world-import features, TypeScript should make state, provenance, links, and validation inspectable; skills, prompts, and evals should own interpretation, synopsis quality, identity matching, continuity, conflicts, and narrative judgment.
+Memchat favors small deterministic helpers plus model-owned semantic workflows. For memory and world-import features, TypeScript should make state, provenance, links, candidate accounting, source coverage, and validation inspectable; skills, prompts, and evals should own interpretation, style/tone analysis, synopsis quality, identity matching, continuity, conflicts, and narrative judgment.
 
 ## Quick start
 

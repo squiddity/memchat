@@ -36,7 +36,7 @@ test("world import model runner renders structured skill invocation", () => {
 test("extraction stage rejects candidates without operational provenance envelope", async () => {
   const output = await tempDir();
   await assert.rejects(
-    writeExtractionStage(output, { version: 1, kind: "extraction", unitId: "u", candidates: [{}] }),
+    writeExtractionStage(output, { version: 1, kind: "extraction", unitId: "u", candidates: [{} as never] }),
     /id must be a non-empty string/,
   );
 });
@@ -76,7 +76,8 @@ test("helper command flow normalizes, writes generic merge packet, and emits mar
   assert.match(markdown, /\(\.\.\/sources\/units\/.+?#b0001\)/);
   const sourcePage = await readFile(join(output, "world", "sources", "units", `${units[0].unitId}.md`), "utf-8");
   assert.match(sourcePage, /type: "Source Unit"/);
-  assert.match(sourcePage, /## b0001/);
+  assert.match(sourcePage, /^## b0001$/m);
+  assert.doesNotMatch(sourcePage, /^## b0001 \(/m);
   assert.match(sourcePage, /Ada guards the glass tower/);
   const sourceIndex = await readFile(join(output, "world", "sources", "index.md"), "utf-8");
   assert.match(sourceIndex, /\(units\/.+?\.md\)/);

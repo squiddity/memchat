@@ -3,8 +3,8 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
-import { writeManifest, writeMergeStage } from "./world-import/staging.js";
+import { buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, lintWorldImport, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
+import { writeExtractionStage, writeManifest, writeMergeStage } from "./world-import/staging.js";
 
 async function createReviewableWorldOutput(options: { includeSourcePage?: boolean } = {}): Promise<string> {
   const output = await mkdtemp(join(tmpdir(), "memchat-world-eval-"));
@@ -13,7 +13,7 @@ async function createReviewableWorldOutput(options: { includeSourcePage?: boolea
     createdAt: "2026-06-24T00:00:00.000Z",
     inputRoot: "/tmp/source",
     outputRoot: output,
-    units: [{ sourceId: "s", unitId: "u", kind: "html", inputPath: "chapter.html", order: 0, blockCount: 1, anchors: ["b0001"], normalizedPath: "sources/normalized/u.json", sourceHash: "0123456789abcdef", contentHash: "fedcba9876543210", normalizerVersion: 1 }],
+    units: [{ sourceId: "s", unitId: "u", kind: "html", inputPath: "chapter.html", order: 0, blockCount: 1, anchors: ["b0001"], normalizedPath: "sources/normalized/u.json", sourceHash: "0123456789abcdef", contentHash: "fedcba9876543210", normalizerVersion: 2 }],
     diagnostics: [],
   });
   await writeMergeStage(output, {
@@ -59,7 +59,7 @@ unit_id: "u"
 input_path: "chapter.html"
 source_hash: "0123456789abcdef"
 content_hash: "fedcba9876543210"
-normalizer_version: 1
+normalizer_version: 2
 ---
 
 # u
@@ -121,9 +121,86 @@ test("reviewer prompt JSON example includes all scored dimensions", async () => 
     "progressiveDisclosure",
     "duplicateNarrativeControl",
     "citationReconstructability",
+    "droppedCandidateRisk",
+    "styleToneCoverage",
   ]) {
     assert.match(prompt, new RegExp(`"dimension": "${dimension}"`));
   }
+});
+
+test("lint reports unresolved related ids and wikilinks", async () => {
+  const output = await createReviewableWorldOutput();
+  await writeMergeStage(output, {
+    version: 1,
+    kind: "merge",
+    artifacts: [{
+      id: "alice",
+      group: "people",
+      title: "Alice",
+      sections: [{ heading: "Summary", body: "Alice remembers [[lobster-quadrille]]." }],
+      related: ["caucus-race"],
+      provenance: [{ sourceId: "s", unitId: "u", startAnchor: "b0001", endAnchor: "b0001", quote: "A tower." }],
+    }],
+  });
+  await mkdir(join(output, "world", "people"), { recursive: true });
+  await writeFile(join(output, "world", "people", "alice.md"), `---
+id: "alice"
+group: people
+type: "Character"
+title: "Alice"
+description: "Alice."
+related: ["caucus-race"]
+---
+
+# Alice
+
+## Summary
+
+Alice remembers [[lobster-quadrille]].
+
+## Provenance
+
+1. [\`s/u#b0001-b0001\`](../sources/units/u.md#b0001)
+   > A tower.
+`, "utf-8");
+
+  const lint = await lintWorldImport(output);
+  assert.equal(lint.passed, false);
+  assert.ok(lint.diagnostics.some((item) => item.code === "unresolved-related" && item.message.includes("caucus-race")));
+  assert.ok(lint.diagnostics.some((item) => item.code === "unresolved-wikilink" && item.message.includes("lobster-quadrille")));
+});
+
+test("lint accounts extraction candidates through represented and dropped dispositions", async () => {
+  const output = await createReviewableWorldOutput();
+  await writeExtractionStage(output, {
+    version: 1,
+    kind: "extraction",
+    unitId: "u",
+    sourceId: "s",
+    candidates: [
+      { id: "alice", group: "people", title: "Alice", provenance: [{ sourceId: "s", unitId: "u", startAnchor: "b0001", endAnchor: "b0001", quote: "A tower." }] },
+      { id: "minor-door", group: "things", title: "Minor Door", provenance: [{ sourceId: "s", unitId: "u", startAnchor: "b0001", endAnchor: "b0001", quote: "A tower." }] },
+    ],
+  });
+  let lint = await lintWorldImport(output);
+  assert.equal(lint.passed, false);
+  assert.ok(lint.diagnostics.some((item) => item.code === "unaccounted-candidate" && item.candidateId === "alice"));
+
+  await writeMergeStage(output, {
+    version: 1,
+    kind: "merge",
+    candidateDispositions: [{ unitId: "u", candidateId: "minor-door", disposition: "dropped", reason: "Mention is incidental and not useful as a durable artifact." }],
+    artifacts: [{
+      id: "glass-tower",
+      group: "places",
+      title: "Glass Tower",
+      sections: [{ heading: "Summary", body: "A tower." }],
+      provenance: [{ sourceId: "s", unitId: "u", startAnchor: "b0001", endAnchor: "b0001", quote: "A tower." }],
+      metadata: { representedCandidateIds: ["u:alice"] },
+    }],
+  });
+  lint = await lintWorldImport(output);
+  assert.equal(lint.passed, true, JSON.stringify(lint.diagnostics));
 });
 
 test("evaluation bundle records deterministic pass and skipped reviewer state", async () => {

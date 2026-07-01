@@ -1,15 +1,16 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import type { ArtifactPacket, MarkdownSection, NormalizedSourceUnit, SourceManifest, SourceSpanRef, WorldImportGroup } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type MarkdownSection, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type WorldImportGroup } from "./types.js";
 import { readManifest, readMergeStage, readNormalizedUnit, validateStageEnvelope } from "./staging.js";
 
-const groups: WorldImportGroup[] = ["people", "places", "things", "facts"];
+const groups = [...WORLD_IMPORT_GROUPS];
 const defaultTypes: Record<WorldImportGroup, string> = {
   people: "Character",
   places: "Location",
   things: "Object",
   facts: "Event",
+  style: "Style Guide",
 };
 
 type EmitContext = {
@@ -134,13 +135,20 @@ function sourceUnitFrontmatter(unit: NormalizedSourceUnit): string {
     `content_hash: ${yamlString(unit.contentHash)}`,
     `normalizer_version: ${unit.normalizerVersion}`,
   ];
-  if (unit.archivePath) lines.push(`archive_path: ${yamlString(unit.archivePath)}`);
+  if (unit.role) lines.push(`role: ${yamlString(unit.role)}`);
+  if (unit.sourceEntryPath) lines.push(`source_entry_path: ${yamlString(unit.sourceEntryPath)}`);
+  if (unit.portableSourceKey) lines.push(`portable_source_key: ${yamlString(unit.portableSourceKey)}`);
+  if (unit.archiveContentHash) lines.push(`archive_content_hash: ${yamlString(unit.archiveContentHash)}`);
+  if (unit.archivePath) lines.push(`archive_path_diagnostic: ${yamlString(unit.archivePath)}`);
   lines.push("---");
   return lines.join("\n");
 }
 
 export function renderSourceUnitMarkdown(unit: NormalizedSourceUnit): string {
-  const blocks = unit.blocks.map((block) => `## ${block.anchor}\n\n${block.text}\n`).join("\n");
+  const blocks = unit.blocks.map((block) => {
+    const meta = [block.kind ? `kind=${block.kind}` : undefined, block.sourceTag ? `tag=${block.sourceTag}` : undefined, block.sourceClass ? `class=${block.sourceClass}` : undefined].filter(Boolean).join(", ");
+    return `## ${block.anchor}\n\n${meta ? `_${meta}_\n\n` : ""}${block.text}\n`;
+  }).join("\n");
   return `${sourceUnitFrontmatter(unit)}\n\n# ${unit.title ?? unit.unitId}\n\n${blocks}`;
 }
 

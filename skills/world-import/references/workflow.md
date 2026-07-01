@@ -112,5 +112,25 @@ Example good extraction (rich) vs poor extraction (too brief):
 - For maintained worlds, enrich existing artifacts when identity continuity is supported instead of cloning near-duplicates. If identity is uncertain, keep the ambiguity visible rather than forcing a merge.
 - For maintained worlds, preserve prior provenance and make retcons/conflicts explicit in sections or metadata. Do not silently drop older evidence just because newer material exists.
 - For substantive imports, include or update a `World Overview` / `Corpus Synopsis` artifact as a normal `facts` artifact. Revise it from prior overview + affected artifacts + new evidence, not from new input alone.
+- Account for every extraction candidate through merge: list represented candidate ids on artifacts, or add a merge-level disposition of `represented`, `merged`, `deferred`, or `dropped`. Deferred/dropped candidates need a model-authored reason so omissions remain auditable.
+- Add model-authored `style` artifacts when voice, tone, aphorisms/formulae, parody/poem mechanics, or character voice guidance would help future reuse. Cite source spans for style claims like any other artifact.
+- Before finalizing, check whether every major source set-piece needed for reconstruction has a durable fact/event artifact or an explicit, reviewable omission reason.
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.
+
+## 3. Coverage repair loop
+
+After writing and emitting the merge packet, run deterministic lint:
+
+```bash
+npm run world-import-helper -- lint --output <output>
+```
+
+For each diagnostic, repair semantically rather than obeying blindly:
+
+- unresolved `related` ids or `[[wikilinks]]`: create the intended artifact, rename the link to the emitted id, remove the link, or explain why the unresolved reference should remain visible;
+- provenance/source-anchor failures: fix the cited span or rerun normalization/emission if retained source pages are stale;
+- unaccounted candidates: represent them, merge them into a broader artifact, defer them, or drop them with a reason;
+- body coverage gaps: inspect the source unit and extraction stage, then add missing artifacts or record why no durable artifact is warranted.
+
+Re-emit and re-run lint after repairs. Lint diagnoses structural/accounting facts; it does not decide ontology, canon importance, prose quality, or whether a drop reason is semantically persuasive.

@@ -29,7 +29,7 @@ Persist one envelope per normalized unit:
   "candidates": [
     {
       "id": "model-chosen-local-id",
-      "group": "people|places|things|facts",
+      "group": "people|places|things|facts|style",
       "title": "Name or concise claim title",
       "provenance": [{ "sourceId": "...", "unitId": "...", "startAnchor": "b0001", "endAnchor": "b0001", "quote": "..." }],
       "payload": {
@@ -66,7 +66,7 @@ Persist a single merge stage:
   "artifacts": [
     {
       "id": "stable-human-readable-id",
-      "group": "people|places|things|facts",
+      "group": "people|places|things|facts|style",
       "type": "Character|Location|Object|Event|...",
       "title": "Artifact title",
       "description": "One-line capsule used for indexes and previews.",
@@ -87,9 +87,19 @@ Persist a single merge stage:
       }
     }
   ],
+  "candidateDispositions": [
+    {
+      "unitId": "chapter-1-abc12345-u001",
+      "candidateId": "minor-door",
+      "disposition": "dropped",
+      "reason": "Brief incidental object mention; no durable reuse value after merge review."
+    }
+  ],
   "diagnostics": []
 }
 ```
+
+Candidate dispositions are model-authored audit metadata. Every extraction candidate id should be represented by an artifact (`metadata.representedCandidateIds`, e.g. `["unit-id:candidate-id"]`), merged into a broader artifact, deferred, or dropped with a reason. Helper lint checks completeness only; it does not judge whether the disposition is semantically wise.
 
 The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes. `type`, `description`, `tags`, `resource`, and `timestamp` are optional interoperability fields for emitted OKF-style concept pages; helpers should validate their structure but must not infer their values.
 
@@ -123,6 +133,7 @@ Recommended sections for richer artifacts:
 | places | Summary, Description, Atmosphere, Notable Events, Visitors & Inhabitants, Significance, Uncertainty |
 | things | Summary, Description, Significance, Possessor & Use, Narrative Context, Uncertainty |
 | facts | Summary, What Happened, Participants, Cause & Effect, Setting, Significance, Uncertainty |
+| style | Summary, Narrative Voice, Tone, Aphorisms & Formulae, Poems & Parodies, Character Voice Notes, Source Examples, Uncertainty |
 | world overview / corpus synopsis | Current Synopsis, Major Characters, Major Places, Timeline / Story So Far, Open Questions and Conflicts, Provenance Notes |
 
 The model may choose different headings as appropriate. The goal is **rich, standalone detail** balanced with **cross-references for deduplication**:
@@ -140,5 +151,7 @@ The model may choose different headings as appropriate. The goal is **rich, stan
 - Preserve multiple provenance refs after merge.
 - For maintained worlds, revise existing artifacts and the `world-overview` artifact from prior emitted state plus new evidence rather than treating each run as a fresh isolated summary.
 - Preserve prior provenance and keep weak aliases, contradictions, and retcons visible in sections/metadata instead of flattening them.
+- Account for every extraction candidate through artifact `metadata.representedCandidateIds` or `candidateDispositions`; dropped/deferred candidates need reasons.
+- Use `style` artifacts for model-authored voice/tone/parody/poem/character-voice analysis when useful, with provenance and related links like other artifacts.
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.
