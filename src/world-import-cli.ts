@@ -3,6 +3,7 @@
 import { argv, exit, stderr, stdout } from "node:process";
 import { resolve } from "node:path";
 import { envToggle, loadLocalEnv } from "./local-env.js";
+import { resolveShowThinking, styleThinkingText } from "./world-import-cli-format.js";
 import { validThinkingLevels, type ThinkingLevel } from "./model-selection.js";
 import { runWorldImportSkill } from "./world-import/model-runner.js";
 
@@ -30,14 +31,18 @@ function usage(): string {
     `  --dry-run                         Ask the skill to validate setup without importing\n` +
     `  --debug                           Print startup, model, prompt, and tool-call diagnostics to stderr (default: on)\n` +
     `  --show-thinking                   Print model thinking deltas when the provider exposes them (default: on)\n` +
+    `  --no-show-thinking                Suppress printed model thinking deltas\n` +
     `  --show-tool-updates               Print verbose tool update payloads, not only start/end (default: off)\n` +
     `  --help                            Show this help\n`;
 }
 
 function parseArgs(args: string[]): CliOptions {
+  const envShowThinking = envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true);
+  let explicitShowThinking = false;
+  let explicitHideThinking = false;
   const options: CliOptions = {
     debug: envToggle("MEMCHAT_WORLD_IMPORT_DEBUG", true),
-    showThinking: envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true),
+    showThinking: envShowThinking,
     showToolUpdates: envToggle("MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES", false),
   };
   for (let i = 0; i < args.length; i++) {
@@ -48,7 +53,11 @@ function parseArgs(args: string[]): CliOptions {
     else if (arg === "--debug" || arg === "--verbose") options.debug = true;
     else if (arg === "--show-thinking") {
       options.debug = true;
-      options.showThinking = true;
+      explicitShowThinking = true;
+      explicitHideThinking = false;
+    } else if (arg === "--no-show-thinking") {
+      explicitHideThinking = true;
+      explicitShowThinking = false;
     } else if (arg === "--show-tool-updates") {
       options.debug = true;
       options.showToolUpdates = true;
@@ -64,6 +73,7 @@ function parseArgs(args: string[]): CliOptions {
   }
   options.model ??= process.env.MEMCHAT_WORLD_IMPORT_MODEL ?? process.env.MEMCHAT_MODEL;
   options.reviewerModel ??= process.env.MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL;
+  options.showThinking = resolveShowThinking({ explicitShow: explicitShowThinking, explicitHide: explicitHideThinking, envDefault: envShowThinking });
   return options;
 }
 
@@ -85,7 +95,7 @@ async function main(): Promise<void> {
     debug: { enabled: options.debug, showThinking: options.showThinking, showToolUpdates: options.showToolUpdates },
     onText: (text) => stdout.write(text),
     onStatus: (text) => stderr.write(text),
-    onThinking: (text) => stderr.write(text),
+    onThinking: (text) => stderr.write(styleThinkingText(text, stderr.isTTY)),
     onToolEvent: (text) => stderr.write(text),
   });
   if (result.responseText && !result.responseText.endsWith("\n")) stdout.write("\n");

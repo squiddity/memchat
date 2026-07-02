@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { defaultPackageRoot, renderWorldImportSkillInvocation, worldImportSkill } from "./world-import/model-runner.js";
+import { defaultPackageRoot, finalizeAssistantMessageForCli, renderWorldImportSkillInvocation, worldImportSkill } from "./world-import/model-runner.js";
 import { writeExtractionStage } from "./world-import/staging.js";
 
 async function tempDir(): Promise<string> {
@@ -31,6 +31,12 @@ test("world import model runner renders structured skill invocation", () => {
   assert.match(prompt, /^\/skill:world-import /);
   assert.match(prompt, /"input":"\/in"/);
   assert.match(prompt, /"dryRun":true/);
+});
+
+test("world import model runner separates assistant messages for shell readability", () => {
+  assert.equal(finalizeAssistantMessageForCli("Good. Chapter I extraction saved.", true), "Good. Chapter I extraction saved.\n");
+  assert.equal(finalizeAssistantMessageForCli("Already newline\n", true), "Already newline\n");
+  assert.equal(finalizeAssistantMessageForCli("", false), "");
 });
 
 test("extraction stage rejects candidates without operational provenance envelope", async () => {

@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { argv, exit, stdin, stdout, stderr } from "node:process";
 import { envToggle, loadLocalEnv } from "../local-env.js";
+import { resolveShowThinking, styleThinkingText } from "../world-import-cli-format.js";
 import { emitWorldLibrary } from "./emit.js";
 import { lintWorldImport, runReviewerModelEvaluation } from "./eval.js";
 import { normalizeSources } from "./normalize.js";
@@ -21,7 +22,7 @@ function usage(): string {
     `  validate-stage --kind extraction|merge --file <stage.json>\n` +
     `  emit --output <dir>\n` +
     `  lint --output <dir>\n` +
-    `  eval --output <dir> [--reviewer-model <provider/model>] [--debug] [--show-thinking] [--show-tool-updates]\n`;
+    `  eval --output <dir> [--reviewer-model <provider/model>] [--debug] [--show-thinking] [--no-show-thinking] [--show-tool-updates]\n`;
 }
 
 function parseArgs(args: string[]): { command?: string; options: Record<string, string | true> } {
@@ -57,9 +58,10 @@ type HelperDebugOptions = {
 };
 
 function debugOptions(options: Record<string, string | true>): HelperDebugOptions {
+  const envShowThinking = envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true);
   return {
     enabled: options.debug === true || options.verbose === true || envToggle("MEMCHAT_WORLD_IMPORT_DEBUG", true),
-    showThinking: options["show-thinking"] === true || envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true),
+    showThinking: resolveShowThinking({ explicitShow: options["show-thinking"] === true, explicitHide: options["no-show-thinking"] === true, envDefault: envShowThinking }),
     showToolUpdates: options["show-tool-updates"] === true || envToggle("MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES", false),
   };
 }
@@ -144,7 +146,7 @@ async function main(): Promise<void> {
       reviewerModel,
       debug,
       onStatus: (text) => stderr.write(text),
-      onThinking: (text) => stderr.write(text),
+      onThinking: (text) => stderr.write(styleThinkingText(text, stderr.isTTY)),
       onToolEvent: (text) => stderr.write(text),
     });
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);

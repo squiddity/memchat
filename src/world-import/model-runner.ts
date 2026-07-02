@@ -79,6 +79,10 @@ export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOpt
   })}`;
 }
 
+export function finalizeAssistantMessageForCli(text: string, currentMessageHadText: boolean): string {
+  return currentMessageHadText && text.length > 0 && !text.endsWith("\n") ? `${text}\n` : text;
+}
+
 function status(options: WorldImportRunOptions, text: string): void {
   if (options.debug?.enabled) options.onStatus?.(`[world-import] ${text}\n`);
 }
@@ -182,11 +186,14 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
 
     let responseText = "";
     let thinkingStarted = false;
+    let currentAssistantMessageHadText = false;
     const debugTools = options.debug?.enabled;
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_start" && event.message.role === "assistant") currentAssistantMessageHadText = false;
       if (event.type === "message_update") {
         const messageEvent = event.assistantMessageEvent;
         if (messageEvent.type === "text_delta") {
+          currentAssistantMessageHadText = true;
           responseText += messageEvent.delta;
           options.onText?.(messageEvent.delta);
         } else if (messageEvent.type === "thinking_delta" && options.debug?.showThinking) {
@@ -196,6 +203,14 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
           }
           options.onThinking?.(messageEvent.delta);
         }
+      }
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        const finalized = finalizeAssistantMessageForCli(responseText, currentAssistantMessageHadText);
+        if (finalized !== responseText) {
+          responseText = finalized;
+          options.onText?.("\n");
+        }
+        currentAssistantMessageHadText = false;
       }
       if (debugTools && event.type === "tool_execution_start") {
         options.onToolEvent?.(`\n[world-import tool/start] ${event.toolName} ${stringifyForLog(event.args)}\n`);
