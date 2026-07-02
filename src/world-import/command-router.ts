@@ -2,6 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { argv, exit, stdin, stdout, stderr } from "node:process";
+import { envToggle, loadLocalEnv } from "../local-env.js";
 import { emitWorldLibrary } from "./emit.js";
 import { lintWorldImport, runReviewerModelEvaluation } from "./eval.js";
 import { normalizeSources } from "./normalize.js";
@@ -20,7 +21,7 @@ function usage(): string {
     `  validate-stage --kind extraction|merge --file <stage.json>\n` +
     `  emit --output <dir>\n` +
     `  lint --output <dir>\n` +
-    `  eval --output <dir> [--reviewer-model <provider/model>]\n`;
+    `  eval --output <dir> [--reviewer-model <provider/model>] [--debug] [--show-thinking] [--show-tool-updates]\n`;
 }
 
 function parseArgs(args: string[]): { command?: string; options: Record<string, string | true> } {
@@ -49,7 +50,22 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+type HelperDebugOptions = {
+  enabled: boolean;
+  showThinking: boolean;
+  showToolUpdates: boolean;
+};
+
+function debugOptions(options: Record<string, string | true>): HelperDebugOptions {
+  return {
+    enabled: options.debug === true || options.verbose === true || envToggle("MEMCHAT_WORLD_IMPORT_DEBUG", true),
+    showThinking: options["show-thinking"] === true || envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true),
+    showToolUpdates: options["show-tool-updates"] === true || envToggle("MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES", false),
+  };
+}
+
 async function main(): Promise<void> {
+  loadLocalEnv();
   const { command, options } = parseArgs(argv.slice(2));
   if (!command || command === "help" || options.help) {
     stdout.write(usage());
@@ -122,7 +138,15 @@ async function main(): Promise<void> {
 
   if (command === "eval") {
     const reviewerModel = typeof options["reviewer-model"] === "string" ? options["reviewer-model"] : undefined;
-    const result = await runReviewerModelEvaluation({ outputRoot: requireString(options, "output"), reviewerModel });
+    const debug = debugOptions(options);
+    const result = await runReviewerModelEvaluation({
+      outputRoot: requireString(options, "output"),
+      reviewerModel,
+      debug,
+      onStatus: (text) => stderr.write(text),
+      onThinking: (text) => stderr.write(text),
+      onToolEvent: (text) => stderr.write(text),
+    });
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync } from "node:fs";
 import { argv, exit, stderr, stdout } from "node:process";
 import { resolve } from "node:path";
+import { envToggle, loadLocalEnv } from "./local-env.js";
 import { validThinkingLevels, type ThinkingLevel } from "./model-selection.js";
 import { runWorldImportSkill } from "./world-import/model-runner.js";
 
@@ -32,32 +32,6 @@ function usage(): string {
     `  --show-thinking                   Print model thinking deltas when the provider exposes them (default: on)\n` +
     `  --show-tool-updates               Print verbose tool update payloads, not only start/end (default: off)\n` +
     `  --help                            Show this help\n`;
-}
-
-function loadLocalEnv(): void {
-  const envPath = resolve(process.cwd(), ".env");
-  if (!existsSync(envPath)) return;
-  for (const rawLine of readFileSync(envPath, "utf-8").split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const equalsIndex = line.indexOf("=");
-    if (equalsIndex === -1) continue;
-    const key = line.slice(0, equalsIndex).trim();
-    let value = line.slice(equalsIndex + 1).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    process.env[key] = value;
-  }
-}
-
-function truthyEnv(value: string | undefined): boolean {
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-/** Respect an explicit env-var toggle; fall back to a given default when unset. */
-function envToggle(key: string, defaultValue: boolean): boolean {
-  const raw = process.env[key];
-  return raw !== undefined ? truthyEnv(raw) : defaultValue;
 }
 
 function parseArgs(args: string[]): CliOptions {

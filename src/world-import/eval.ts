@@ -11,7 +11,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson } from "./staging.js";
-import { requireResolvedModel } from "../model-selection.js";
+import { providerAuthEnvKeys, reviewerProvider } from "../local-env.js";
+import { isUsableModel, modelLabel, requireResolvedModel } from "../model-selection.js";
 import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type WorldImportLintResult } from "./types.js";
 
 const groups = [...WORLD_IMPORT_GROUPS];
@@ -21,6 +22,40 @@ const MAX_UNIT_CHARS = 12_000;   // per-unit cap so no single unit dominates
 const MAX_MARKDOWN_FILE_CHARS = 8_000;
 const MAX_SOURCE_PAGE_COUNT = 6;
 const QA_QUESTION_COUNT = 5;     // number of QA questions to generate/answer
+
+export type ReviewerEvalDebugOptions = {
+  enabled?: boolean;
+  showThinking?: boolean;
+  showToolUpdates?: boolean;
+};
+
+type ReviewerEvalRunOptions = {
+  outputRoot: string;
+  reviewerModel?: string;
+  cwd?: string;
+  debug?: ReviewerEvalDebugOptions;
+  onStatus?: (text: string) => void;
+  onThinking?: (text: string) => void;
+  onToolEvent?: (text: string) => void;
+};
+
+function reviewerStatus(options: ReviewerEvalRunOptions, text: string): void {
+  if (options.debug?.enabled) options.onStatus?.(`[world-import eval] ${text}\n`);
+}
+
+function stringifyForLog(value: unknown, maxLength = 4000): string {
+  let rendered: string;
+  try {
+    rendered = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  } catch {
+    rendered = String(value);
+  }
+  return rendered.length > maxLength ? `${rendered.slice(0, maxLength)}…` : rendered;
+}
+
+function eventRecord(event: unknown): Record<string, unknown> {
+  return event && typeof event === "object" ? event as Record<string, unknown> : {};
+}
 
 async function listMarkdownFiles(dir: string): Promise<string[]> {
   if (!existsSync(dir)) return [];
@@ -572,19 +607,34 @@ function generateQaQuestions(sources: ReviewBundle["sources"]): string[] {
   return questions.slice(0, QA_QUESTION_COUNT);
 }
 
-export async function runReviewerModelEvaluation(options: { outputRoot: string; reviewerModel?: string; cwd?: string }): Promise<EvaluationResult> {
+export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions): Promise<EvaluationResult> {
+  reviewerStatus(options, `output=${resolve(options.outputRoot)}`);
+  reviewerStatus(options, `reviewerModel=${options.reviewerModel ?? "none"}`);
   const deterministic = await deterministicWorldImportChecks(options.outputRoot);
+  reviewerStatus(options, `deterministic=${deterministic.passed ? "passed" : "failed"}`);
   if (!options.reviewerModel) return writeEvaluationResult(options.outputRoot, { skipped: true, reason: "no reviewer model configured" });
   if (!deterministic.passed) return writeEvaluationResult(options.outputRoot, { model: options.reviewerModel, skipped: true, reason: "deterministic checks failed" });
 
   const cwd = resolve(options.cwd ?? process.cwd());
   const agentDir = getAgentDir();
-  const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
+  const authPath = resolve(agentDir, "auth.json");
+  const modelsPath = resolve(agentDir, "models.json");
+  reviewerStatus(options, `cwd=${cwd}`);
+  reviewerStatus(options, `agentDir=${agentDir}`);
+  reviewerStatus(options, `authPath=${authPath} (${existsSync(authPath) ? "exists" : "missing"})`);
+  reviewerStatus(options, `modelsPath=${modelsPath} (${existsSync(modelsPath) ? "exists" : "missing"})`);
+  const provider = reviewerProvider(options.reviewerModel);
+  const envKeys = providerAuthEnvKeys(provider);
+  if (provider) reviewerStatus(options, `provider=${provider}`);
+  if (envKeys.length > 0) reviewerStatus(options, `providerAuthEnv=${envKeys.map((key) => `${key}=${process.env[key] ? "set" : "missing"}`).join(", ")}`);
+
+  const authStorage = AuthStorage.create(authPath);
+  const modelRegistry = ModelRegistry.create(authStorage, modelsPath);
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } });
 
   // Build the rich review bundle BEFORE creating the session (I/O first)
   const bundle = await buildReviewBundle(options.outputRoot);
+  reviewerStatus(options, `bundle=${bundle.sources.length} source unit(s), ${bundle.merge.artifacts?.length ?? 0} artifact(s), ${Object.keys(bundle.markdown).length} markdown file(s)`);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
@@ -594,6 +644,7 @@ export async function runReviewerModelEvaluation(options: { outputRoot: string; 
     systemPrompt: "You are a world-import reviewer. Score semantic output quality against source/provenance evidence. Return structured JSON with dimension scores, QA results, and a reconstruction summary.",
   });
   await resourceLoader.reload();
+  reviewerStatus(options, "resource loader ready; creating reviewer session");
   const { session } = await createAgentSession({
     cwd,
     agentDir,
@@ -606,19 +657,48 @@ export async function runReviewerModelEvaluation(options: { outputRoot: string; 
     thinkingLevel: "off",
   });
   let notes = "";
+  let thinkingStarted = false;
   try {
+    reviewerStatus(options, `session created; initial model=${isUsableModel(session.model) ? modelLabel(session.model) : "none"}; thinking=${session.thinkingLevel}`);
+    reviewerStatus(options, `resolving requested reviewer model=${options.reviewerModel}`);
     await session.setModel(requireResolvedModel(options.reviewerModel, session.modelRegistry));
+    if (isUsableModel(session.model)) reviewerStatus(options, `active reviewer model=${modelLabel(session.model)}; thinking=${session.thinkingLevel}`);
     const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") notes += event.assistantMessageEvent.delta;
+      if (event.type === "message_update") {
+        const messageEvent = event.assistantMessageEvent;
+        if (messageEvent.type === "text_delta") notes += messageEvent.delta;
+        else if (messageEvent.type === "thinking_delta" && options.debug?.showThinking) {
+          if (!thinkingStarted) {
+            thinkingStarted = true;
+            options.onThinking?.("\n[world-import eval thinking]\n");
+          }
+          options.onThinking?.(messageEvent.delta);
+        }
+      }
+      if (options.debug?.enabled && event.type === "tool_execution_start") {
+        options.onToolEvent?.(`\n[world-import eval tool/start] ${event.toolName} ${stringifyForLog(event.args)}\n`);
+      }
+      if (options.debug?.enabled && options.debug?.showToolUpdates && event.type === "tool_execution_update") {
+        options.onToolEvent?.(`\n[world-import eval tool/update] ${stringifyForLog(eventRecord(event))}\n`);
+      }
+      if (options.debug?.enabled && event.type === "tool_execution_end") {
+        const record = eventRecord(event);
+        options.onToolEvent?.(`\n[world-import eval tool/end] ${event.toolName} ${event.isError ? "error" : "ok"} ${stringifyForLog(record.details ?? record.result ?? record, 8000)}\n`);
+      }
     });
     try {
+      reviewerStatus(options, "invoking reviewer model");
       await session.prompt(buildReviewerPrompt(bundle));
+      reviewerStatus(options, `reviewer model completed; responseChars=${notes.length}`);
     } finally {
       unsubscribe();
     }
   } catch (error) {
-    return writeEvaluationResult(options.outputRoot, { model: options.reviewerModel, skipped: true, reason: error instanceof Error ? error.message : String(error) });
+    const reason = error instanceof Error ? error.message : String(error);
+    reviewerStatus(options, `reviewer skipped: ${reason}`);
+    return writeEvaluationResult(options.outputRoot, { model: options.reviewerModel, skipped: true, reason });
   } finally {
+    reviewerStatus(options, "disposing reviewer session");
     session.dispose();
   }
 
@@ -627,6 +707,7 @@ export async function runReviewerModelEvaluation(options: { outputRoot: string; 
   const qaResults = parseQAResults(notes);
   const reconstructionSummary = parseReconstructionSummary(notes);
   const score = parseReviewerScore(notes);
+  reviewerStatus(options, `parsed review result: score=${score ?? "none"}, dimensions=${dimensionScores?.length ?? 0}, qaResults=${qaResults?.length ?? 0}`);
 
   return writeEvaluationResult(options.outputRoot, {
     model: options.reviewerModel,
