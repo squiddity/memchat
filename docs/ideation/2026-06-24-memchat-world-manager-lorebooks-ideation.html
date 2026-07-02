@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ideation: memchat world manager &amp; lorebooks</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a30;
+      --panel-2: #17223d;
+      --text: #e8eefc;
+      --muted: #aab6d3;
+      --accent: #7dd3fc;
+      --accent-soft: rgba(125, 211, 252, 0.12);
+      --good: #86efac;
+      --good-soft: rgba(134, 239, 172, 0.12);
+      --warn: #fbbf24;
+      --warn-soft: rgba(251, 191, 36, 0.12);
+      --border: rgba(255,255,255,0.12);
+      --shadow: 0 20px 40px rgba(0,0,0,0.22);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: linear-gradient(180deg, #0a0f1d 0%, #0e1527 100%); color: var(--text); font: 15px/1.6 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { font: 0.92em/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #d7e8ff; background: rgba(255,255,255,0.06); padding: 0.12rem 0.35rem; border-radius: 0.45rem; }
+    .page { max-width: 980px; margin: 0 auto; padding: 40px 24px 72px; }
+    .hero, section, footer { background: rgba(18, 26, 48, 0.82); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); backdrop-filter: blur(10px); }
+    .hero { padding: 28px 30px; margin-bottom: 24px; }
+    .eyebrow { display: inline-block; margin-bottom: 10px; padding: 0.22rem 0.58rem; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; }
+    h1, h2, h3 { line-height: 1.18; margin: 0 0 12px; }
+    h1 { font-size: 2.15rem; }
+    h2 { font-size: 1.35rem; }
+    h3 { font-size: 1.05rem; }
+    p { margin: 0 0 12px; max-width: 72ch; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 18px; }
+    .meta-card { padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+    .meta-card dt { margin: 0 0 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; }
+    .meta-card dd { margin: 0; font-weight: 600; }
+    section { padding: 24px 26px; margin-bottom: 18px; }
+    ul, ol { margin: 0; padding-left: 1.2rem; }
+    li + li { margin-top: 8px; }
+    .idea-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 16px 0 22px; padding: 0; list-style: none; }
+    .idea-index a { display: block; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+    .idea { padding: 18px 18px 16px; border-radius: 16px; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08); }
+    .idea + .idea { margin-top: 14px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+    .chip { display: inline-flex; align-items: center; padding: 0.28rem 0.68rem; border-radius: 999px; font-size: 0.83rem; font-weight: 700; border: 1px solid transparent; }
+    .chip-rank { background: var(--accent-soft); color: var(--accent); }
+    .chip-axis { background: rgba(255,255,255,0.06); color: var(--text); border-color: rgba(255,255,255,0.08); }
+    .chip-confidence { background: var(--good-soft); color: var(--good); }
+    .chip-complexity { background: var(--warn-soft); color: var(--warn); }
+    .field-label { display: inline; color: var(--muted); font-weight: 700; }
+    .field { margin: 8px 0 0; max-width: 74ch; }
+    .axes { columns: 2; column-gap: 28px; }
+    .axes li { break-inside: avoid; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    th { color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    tr:last-child td { border-bottom: 0; }
+    .muted { color: var(--muted); }
+    footer { padding: 16px 20px; color: var(--muted); font-size: 0.92rem; }
+    @media (max-width: 720px) {
+      .page { padding: 20px 14px 56px; }
+      .hero, section { padding: 20px 18px; }
+      h1 { font-size: 1.7rem; }
+      .axes { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="eyebrow">Ideation</div>
+      <h1>Ideation: memchat world manager &amp; lorebooks</h1>
+      <p>Ranked directions for turning memchat from a memory backend experiment into a traceable world manager that can ingest source material, maintain canon, surface conflicts, and assemble the right lore for long-running chats.</p>
+      <dl class="meta">
+        <div class="meta-card"><dt>Date</dt><dd><time datetime="2026-06-24">2026-06-24</time></dd></div>
+        <div class="meta-card"><dt>Topic</dt><dd>memchat-world-manager-lorebooks</dd></div>
+        <div class="meta-card"><dt>Focus</dt><dd>Agent-guided archive creation from transcripts and source materials; agent-assisted integration of new ideas and remembered state into durable world memory.</dd></div>
+        <div class="meta-card"><dt>Mode</dt><dd>repo-grounded</dd></div>
+      </dl>
+    </header>
+
+    <section>
+      <h2>Grounding Context</h2>
+      <p><strong>Codebase context.</strong> Memchat already has the right conceptual substrate for a world manager: append-only transcript audit logs, qmd-compatible markdown memory, explicit fact/state/conflict separation, current-session precedence, grouped conflict rendering, ignore/tombstone behavior, and flush/compaction boundaries. The repo is still small enough that a world-memory layer can become a first-class domain abstraction instead of disappearing into more conditionals inside <code>memory.ts</code>.</p>
+      <p><strong>External context.</strong> Prior art converges on layered memory, not one universal store. SillyTavern shows the value of scoped lorebooks, activation rules, recursion, and budget-aware prompt injection. Cloudflare Sessions, MongoDB/LangGraph, Redis, and AdaMem all reinforce the split between raw history, compact working memory, searchable episodic memory, and curated long-term knowledge. The opportunity gap is clear: lorebook systems are weak on provenance and canon governance, while generic agent-memory stacks are weak on narrative canon, reveal timing, and retcons.</p>
+      <p><strong>Qualification standard.</strong> Surviving ideas were favored when they built directly on memchat’s existing traceability goals, had a concrete meeting-test, and improved the product’s identity as a world manager rather than just a better recall backend.</p>
+    </section>
+
+    <section>
+      <h2>Topic Axes</h2>
+      <ol class="axes">
+        <li>Source material ingestion and archive creation</li>
+        <li>Lore/state data model and storage layers</li>
+        <li>Update governance, conflicts, and retcons</li>
+        <li>Retrieval and prompt-context injection</li>
+        <li>Agent workflows, commands, and background processing</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Ranked Ideas</h2>
+      <ul class="idea-index">
+        <li><a href="#idea-1">1. Provenance-Preserving World Library</a></li>
+        <li><a href="#idea-2">2. Conflict / Retcon Ledger with Addenda and Auto-Closure</a></li>
+        <li><a href="#idea-3">3. Worldboard + Codex Layered Memory</a></li>
+        <li><a href="#idea-4">4. Context Compiler with Dry-Run Budget Trace</a></li>
+        <li><a href="#idea-5">5. Non-Canon Ledger with Auto-Quarantine</a></li>
+        <li><a href="#idea-6">6. Live Scene Compiler with Scope and Reveal Control</a></li>
+        <li><a href="#idea-7">7. World Operations Workbench and <code>/world</code> Command Surface</a></li>
+      </ul>
+
+      <article class="idea" id="idea-1">
+        <h3>Provenance-Preserving World Library</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#1</span>
+          <span class="chip chip-axis">Source material ingestion and archive creation</span>
+          <span class="chip chip-confidence">Confidence 82%</span>
+          <span class="chip chip-complexity">Complexity High</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Treat memchat as both a searchable library of full source artifacts and a curated canon editor. Imported setting guides, transcripts, campaign notes, and reference docs remain loadable whole, while the system also derives smaller lore packets, state candidates, and source-linked canon snippets from them.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>external:</strong> Strong prior art supports keeping whole source artifacts distinct from distilled reusable memory, and memchat already values exact-source fallback and provenance-preserving separation.</p>
+        <p class="field"><span class="field-label">Rationale:</span> This is the biggest product-identity shift in the set. It gives memchat a durable answer to “what is the world made of?” and makes exact-source verification a feature, not a recovery path.</p>
+        <p class="field"><span class="field-label">Downsides:</span> Requires import pipelines, source indexing, and a disciplined distinction between archival artifacts and prompt-ready canon; otherwise it becomes an expensive filing cabinet.</p>
+      </article>
+
+      <article class="idea" id="idea-2">
+        <h3>Conflict / Retcon Ledger with Addenda and Auto-Closure</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#2</span>
+          <span class="chip chip-axis">Update governance, conflicts, and retcons</span>
+          <span class="chip chip-confidence">Confidence 89%</span>
+          <span class="chip chip-complexity">Complexity Medium</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Promote contradictions into first-class ledger entries with competing claims, timestamps, sources, statuses, and amendment history. Straightforward cases can auto-close when newer evidence converges; ambiguous ones remain visible until reviewed.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>direct:</strong> The repo already detects retcon cues, groups conflicts separately in injected context, preserves provenance, and explicitly points toward durable conflict events as a next step.</p>
+        <p class="field"><span class="field-label">Rationale:</span> This is the strongest direct extension of memchat’s current behavior. It upgrades “possible conflicts or retcons” from prompt-time presentation into durable world governance infrastructure.</p>
+        <p class="field"><span class="field-label">Downsides:</span> Over-triggering would create noise; it needs clear resolution states and a lightweight operator workflow to avoid turning every inconsistency into paperwork.</p>
+      </article>
+
+      <article class="idea" id="idea-3">
+        <h3>Worldboard + Codex Layered Memory</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#3</span>
+          <span class="chip chip-axis">Lore/state data model and storage layers</span>
+          <span class="chip chip-confidence">Confidence 84%</span>
+          <span class="chip chip-complexity">Complexity Medium</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Split durable memory into a compact mutable Worldboard for “what is true right now” and a broader Codex for stable background lore. Raw transcripts and imported sources remain separate provenance layers underneath both.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>direct:</strong> Memchat already separates stable facts from current state; formalizing that into two first-class layers is a grounded next abstraction.</p>
+        <p class="field"><span class="field-label">Rationale:</span> This makes the archive legible to both humans and agents. It also reduces retrieval noise by making live continuity and deep lore different things on purpose.</p>
+        <p class="field"><span class="field-label">Downsides:</span> Boundary mistakes will confuse both users and retrieval logic; the system needs disciplined definitions for when something belongs in the board, the codex, or both.</p>
+      </article>
+
+      <article class="idea" id="idea-4">
+        <h3>Context Compiler with Dry-Run Budget Trace</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#4</span>
+          <span class="chip chip-axis">Retrieval and prompt-context injection</span>
+          <span class="chip chip-confidence">Confidence 80%</span>
+          <span class="chip chip-complexity">Complexity High</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Replace opaque “top hits” retrieval with a compiler that assembles prompt context from explicit lanes such as current state, stable lore, branch deltas, conflict packets, and exact-source evidence, while exposing a dry-run trace of why each block activated and what it cost.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>direct:</strong> Retrieval is already multi-stage and debug-visible in memchat, so a compiler-like assembly model extends existing mechanics rather than inventing a new subsystem from nowhere.</p>
+        <p class="field"><span class="field-label">Rationale:</span> If world memory gets richer, trust depends on inspectable assembly. This idea turns retrieval tuning from folklore into something observable and improvable.</p>
+        <p class="field"><span class="field-label">Downsides:</span> More instrumentation and routing logic means more surface area to maintain; poor trace design could overwhelm users instead of helping them.</p>
+      </article>
+
+      <article class="idea" id="idea-5">
+        <h3>Non-Canon Ledger with Auto-Quarantine</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#5</span>
+          <span class="chip chip-axis">Update governance, conflicts, and retcons</span>
+          <span class="chip chip-confidence">Confidence 86%</span>
+          <span class="chip chip-complexity">Complexity Medium</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Preserve mistaken turns, rejected extractions, abandoned canon, and obvious accidental input in a first-class anti-canon layer that retrieval and synthesis consult to avoid resurrecting them. Mistake handling becomes durable memory governance instead of a one-off cleanup command.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>direct:</strong> Ignore annotations, retrieval filtering, and mistake heuristics already exist, so formal anti-canon memory is directly supported by repo behavior.</p>
+        <p class="field"><span class="field-label">Rationale:</span> Durable memory needs durable rejection, not just durable acceptance. This idea turns bad claims into reusable guardrails.</p>
+        <p class="field"><span class="field-label">Downsides:</span> Too-aggressive quarantine could hide useful but awkward information; restore and audit flows need to stay simple.</p>
+      </article>
+
+      <article class="idea" id="idea-6">
+        <h3>Live Scene Compiler with Scope and Reveal Control</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#6</span>
+          <span class="chip chip-axis">Retrieval and prompt-context injection</span>
+          <span class="chip chip-confidence">Confidence 74%</span>
+          <span class="chip chip-complexity">Complexity High</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Build prompt context as a scene-specific packet that respects scope, POV, and reveal state. Canon can be true in the archive without always being injectable into the current scene.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>external:</strong> Scoped lorebooks, reveal gates, and layered prompt assembly are proven elsewhere and map cleanly onto memchat’s state-vs-lore split.</p>
+        <p class="field"><span class="field-label">Rationale:</span> This is the strongest narrative-facing idea in the set. It solves the real storytelling problem: not just knowing the truth, but deciding which truth belongs in the current moment.</p>
+        <p class="field"><span class="field-label">Downsides:</span> Scope and reveal rules can become complex quickly; bad gating logic would create invisible bugs where the system “knows” something but surfaces the wrong slice.</p>
+      </article>
+
+      <article class="idea" id="idea-7">
+        <h3>World Operations Workbench and <code>/world</code> Command Surface</h3>
+        <div class="chips">
+          <span class="chip chip-rank">#7</span>
+          <span class="chip chip-axis">Agent workflows, commands, and background processing</span>
+          <span class="chip chip-confidence">Confidence 68%</span>
+          <span class="chip chip-complexity">Complexity Medium</span>
+        </div>
+        <p class="field"><span class="field-label">Description:</span> Expose the world-manager layer through a first-class operational surface — commands such as <code>/world import</code>, <code>/world inbox</code>, <code>/world merge</code>, <code>/world conflicts</code>, and <code>/world inspect</code> — plus a workbench view for queue health, pending patches, and source drilldown.</p>
+        <p class="field"><span class="field-label">Basis:</span> <strong>reasoned:</strong> Memchat already has <code>/memory</code> commands, work-status data, and debug surfaces; a world-manager product needs an operator-facing surface built on that substrate.</p>
+        <p class="field"><span class="field-label">Rationale:</span> A world manager that only exists as hidden plumbing will be hard to trust, debug, and iterate. This idea makes the archive feel like a product capability instead of internal machinery.</p>
+        <p class="field"><span class="field-label">Downsides:</span> It adds user-facing surface area before the deeper data model is settled, so the command design must stay simple enough to survive iteration.</p>
+      </article>
+    </section>
+
+    <section>
+      <h2>Rejection Summary</h2>
+      <table>
+        <thead>
+          <tr><th>#</th><th>Idea</th><th>Reason Rejected</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>Claim Inbox / Archive Packets as the Intake Layer</td><td>Strong direction, but the review-inbox mechanism is less grounded than the kept Provenance-Preserving World Library and overlaps with it heavily.</td></tr>
+          <tr><td>2</td><td>Whole-Document Shadow Archive with Distilled Source Packs</td><td>Absorbed into Provenance-Preserving World Library, which keeps the same strength with a fuller product framing.</td></tr>
+          <tr><td>3</td><td>Novelty-Only World Diff Ingestion</td><td>Useful policy, but better as an ingestion rule inside the archive system than as a standalone headline direction.</td></tr>
+          <tr><td>4</td><td>Typed Canon Objects / World Packets, Markdown as Rendered Output</td><td>Promising, but basis is weaker and it outruns the repo’s current markdown-as-source-of-truth posture.</td></tr>
+          <tr><td>5</td><td>Event-Sourced Canon with Derived State</td><td>Interesting infrastructure path, but too mechanism-heavy relative to current evidence and likely near-term value.</td></tr>
+          <tr><td>6</td><td>Scoped Overlay Channels for Lore</td><td>Strong idea, but edged out by survivor-set breadth; best revisited while brainstorming scene compilation or Worldboard/Codex design.</td></tr>
+          <tr><td>7</td><td>Claim Dependency / SBOM Graph for Canon</td><td>Clever, but currently more analogy-driven than evidence-driven.</td></tr>
+          <tr><td>8</td><td>Sessions as Branches / Branchable Worldlines</td><td>Valuable for advanced story labs, but basis is still a stretch from today’s session mechanics.</td></tr>
+          <tr><td>9</td><td>Reveal-Gated Canon / Embargoed Truth</td><td>Good and grounded, but largely absorbed by Live Scene Compiler with Scope and Reveal Control.</td></tr>
+          <tr><td>10</td><td>Layered Briefing / Scene Pack Retrieval</td><td>Overlaps strongly with Live Scene Compiler, which is the sharper survivor.</td></tr>
+          <tr><td>11</td><td>Query Router with Missingness Triggers</td><td>Strong retrieval idea, but secondary to the broader Context Compiler and Live Scene Compiler pair.</td></tr>
+          <tr><td>12</td><td>Conflict-First Retrieval</td><td>Already close to existing behavior; not distinct enough from the kept Conflict Ledger + Context Compiler combination.</td></tr>
+          <tr><td>13</td><td>Archive Gardener / Overnight Curator with Review Inbox</td><td>Attractive, but the curator/review-inbox workflow outruns today’s grounding and is better as a later brainstorm variant.</td></tr>
+          <tr><td>14</td><td>Checkpoint-First Publish Pipeline / Canon Release Trains</td><td>Insightful operational framing, but too dependent on future publish semantics that the current repo does not yet evidence.</td></tr>
+          <tr><td>15</td><td>World CI/CD Pipeline</td><td>Compelling synthesis, but it inherits too many weaker component ideas at once.</td></tr>
+          <tr><td>16</td><td>Branch-and-Merge Story Lab</td><td>Depends on multiple under-grounded branch/dependency ideas and is better treated as a later extension.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer class="composition-signal">Composed 2026-06-24T18:35Z by ce-ideate from <code>/home/alan/ai-projects/memchat</code> with grounding artifacts in <code>/tmp/compound-engineering/ce-ideate/13bd7db2/</code>.</footer>
+  </div>
+</body>
+</html>

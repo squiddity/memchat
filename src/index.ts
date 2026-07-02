@@ -18,16 +18,13 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, type ConversationTurn, type MemoryBackend, type MemoryCompaction, type MemoryDebugEvent, type MemoryFileSnapshot, type MemoryMode, type MemoryModeId, type MemorySynthesis, type MemorySynthesisProvider } from "./memory.js";
+import { isThinkingLevel, isUsableModel, modelLabel, resolveModel, validThinkingLevels, type PiModel, type ThinkingLevel } from "./model-selection.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 
 const cwd = process.cwd();
 const agentDir = getAgentDir();
 const requireFromHere = createRequire(import.meta.url);
-
-const validThinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-type ThinkingLevel = (typeof validThinkingLevels)[number];
-type PiModel = ReturnType<ModelRegistry["getAll"]>[number];
 
 type CliOptions = {
   provider?: string;
@@ -38,13 +35,6 @@ type CliOptions = {
   memoryDir?: string;
   memoryDebug: boolean;
   summarizerModel?: string;
-};
-
-type ModelResolution = {
-  model?: PiModel;
-  thinking?: ThinkingLevel;
-  error?: string;
-  matches?: PiModel[];
 };
 
 class InlineSpinner {
@@ -202,10 +192,6 @@ function loadLocalEnv() {
   }
 }
 
-function isThinkingLevel(value: string): value is ThinkingLevel {
-  return validThinkingLevels.includes(value as ThinkingLevel);
-}
-
 function truthyEnv(value: string | undefined): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
@@ -257,55 +243,6 @@ function parseCliOptions(args: string[]): CliOptions {
   options.summarizerModel ??= process.env.MEMCHAT_SUMMARIZER_MODEL;
   options.memoryDebug ??= truthyEnv(process.env.MEMCHAT_MEMORY_DEBUG);
   return options as CliOptions;
-}
-
-function modelLabel(model: PiModel): string {
-  return `${model.provider}/${model.id}`;
-}
-
-function isUsableModel(model: PiModel | undefined): model is PiModel {
-  return Boolean(model && model.provider !== "unknown" && model.id !== "unknown");
-}
-
-function splitThinkingSuffix(specifier: string): { pattern: string; thinking?: ThinkingLevel } {
-  const colonIndex = specifier.lastIndexOf(":");
-  if (colonIndex === -1) return { pattern: specifier };
-
-  const suffix = specifier.slice(colonIndex + 1);
-  if (!isThinkingLevel(suffix)) return { pattern: specifier };
-  return { pattern: specifier.slice(0, colonIndex), thinking: suffix };
-}
-
-function resolveModel(specifier: string, modelRegistry: ModelRegistry, provider?: string): ModelResolution {
-  const { pattern, thinking } = splitThinkingSuffix(specifier.trim());
-  const providerSeparator = pattern.indexOf("/");
-  const explicitProvider = providerSeparator === -1 ? provider : pattern.slice(0, providerSeparator);
-  const modelPattern = providerSeparator === -1 ? pattern : pattern.slice(providerSeparator + 1);
-  const normalizedPattern = modelPattern.toLowerCase();
-
-  const allModels = modelRegistry.getAll();
-  const providerCandidates = explicitProvider ? allModels.filter((model) => model.provider === explicitProvider) : allModels;
-  if (providerCandidates.length === 0) {
-    return { error: explicitProvider ? `No configured models for provider "${explicitProvider}".` : "No configured models found." };
-  }
-
-  const exactMatches = providerCandidates.filter(
-    (model) => model.id.toLowerCase() === normalizedPattern || modelLabel(model).toLowerCase() === pattern.toLowerCase(),
-  );
-  const partialMatches = exactMatches.length > 0 ? exactMatches : providerCandidates.filter((model) => {
-    const name = typeof model.name === "string" ? model.name.toLowerCase() : "";
-    return model.id.toLowerCase().includes(normalizedPattern) || modelLabel(model).toLowerCase().includes(pattern.toLowerCase()) || name.includes(normalizedPattern);
-  });
-
-  if (partialMatches.length === 0) return { error: `No model matched "${specifier}".` };
-
-  const available = modelRegistry.getAvailable();
-  const availableKeys = new Set(available.map(modelLabel));
-  const sorted = [...partialMatches].sort((a, b) => Number(availableKeys.has(modelLabel(b))) - Number(availableKeys.has(modelLabel(a))));
-  if (sorted.length > 1 && !explicitProvider && exactMatches.length > 1) {
-    return { error: `Ambiguous model "${specifier}". Use provider/model.`, matches: sorted };
-  }
-  return { model: sorted[0], thinking, matches: sorted };
 }
 
 function printModelList(modelRegistry: ModelRegistry, search?: string) {

@@ -1,6 +1,6 @@
 # Smoke tests
 
-Run these after changes that affect CLI startup, model selection, providers/extensions, or chat behavior.
+Run these after changes that affect CLI startup, model selection, providers/extensions, chat behavior, or world-import helpers.
 
 ## 1. Build
 
@@ -163,6 +163,54 @@ Expected:
 - The process remains interactive until `/exit`.
 
 If using a different configured model, replace `lemonade/Qwen3.6-35B-A3B-MTP-GGUF` with that provider/model. If the command prints `Command aborted` without an assistant response, retry once after checking the local model server; this can indicate a transient Lemonade/server-side failure rather than a memchat CLI failure.
+
+## 9. World import helper smoke test
+
+For deterministic world-import helper changes:
+
+```bash
+rm -rf /tmp/memchat-world-smoke /tmp/memchat-world-src
+mkdir -p /tmp/memchat-world-src
+cat > /tmp/memchat-world-src/chapter1.html <<'HTML'
+<html><head><title>Chapter One</title></head><body><p>Ada guards the glass tower.</p><p>The tower overlooks Moon Bay.</p></body></html>
+HTML
+npm --silent run world-import-helper -- normalize --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- list-units --output /tmp/memchat-world-smoke
+UNIT_JSON=$(npm --silent run world-import-helper -- list-units --output /tmp/memchat-world-smoke)
+SOURCE_ID=$(node -e 'const units = JSON.parse(process.argv[1]); console.log(units[0].sourceId)' "$UNIT_JSON")
+UNIT_ID=$(node -e 'const units = JSON.parse(process.argv[1]); console.log(units[0].unitId)' "$UNIT_JSON")
+cat > /tmp/memchat-world-merge.json <<JSON
+{
+  "version": 1,
+  "kind": "merge",
+  "artifacts": [
+    {
+      "id": "ada",
+      "group": "people",
+      "type": "Character",
+      "title": "Ada",
+      "description": "Tower guardian overlooking Moon Bay.",
+      "sections": [{ "heading": "Summary", "body": "Ada guards the glass tower." }],
+      "provenance": [{ "sourceId": "$SOURCE_ID", "unitId": "$UNIT_ID", "startAnchor": "b0001", "endAnchor": "b0001", "quote": "Ada guards the glass tower." }]
+    }
+  ]
+}
+JSON
+npm --silent run world-import-helper -- write-merge --output /tmp/memchat-world-smoke < /tmp/memchat-world-merge.json
+npm --silent run world-import-helper -- emit --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- lint --output /tmp/memchat-world-smoke
+npm --silent run world-import-helper -- eval --output /tmp/memchat-world-smoke
+```
+
+Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001`/`b0002` are present at paragraph granularity, `world/index.md` exists, lint passes with no unresolved concept links, candidate-accounting, coverage, or source-anchor diagnostics, and every emitted provenance link resolves to a retained source-unit page under `world/sources/units/` for the cited unit(s).
+
+For model-backed world import, use a configured model and a scratch output dir:
+
+```bash
+npm run world-import -- --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --dry-run
+```
+
+Expected: the skill loads and reports normalization/listing results without doing semantic extraction in dry-run mode. For full model-backed world-import regressions, use a fresh output directory, a stronger model when behavior is uncertain, `--debug`, and `--show-tool-updates`; for Alice-style runs, additionally inspect unresolved links, candidate dispositions, body-unit coverage, retained poem/pre formatting, and style-guide output.
 
 ## Notes
 

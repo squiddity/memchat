@@ -99,6 +99,18 @@ MEMCHAT_LEMONADE_API_KEY=...
 
 If either value is missing, the Lemonade provider is skipped.
 
+## World import CLI
+
+World import is a skill-first importer for HTML/XHTML directories, ZIPs, and EPUB-like archives. The CLI is a thin pi SDK wrapper that loads the `world-import` skill and passes paths/model settings through to it.
+
+```bash
+npm run world-import -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5
+npm run world-import -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5 --debug --show-tool-updates
+npm run world-import-helper -- normalize --input ./sources --output /tmp/memchat-world
+```
+
+See [`docs/world-import.md`](./world-import.md) for the helper contract and output layout.
+
 ## Local pi packages
 
 Memchat can resolve npm-installed local pi packages from `package.json`:
@@ -123,4 +135,5 @@ Inside the CLI, use `/plugins` to see the resolved local package paths.
 
 - backend strategy and storage layout: [`docs/memory-backends.md`](./memory-backends.md)
 - interactive shell testing flow: [`docs/playtesting.md`](./playtesting.md)
+- world import package/skill surface: [`docs/world-import.md`](./world-import.md)
 - validation commands: [`docs/smoke-tests.md`](./smoke-tests.md)
