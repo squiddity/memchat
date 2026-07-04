@@ -21,6 +21,12 @@ The repo has a gitignored `world-output/` directory for persistent extractions. 
 npm run world-import -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
 ```
 
+For TTY-safe terminal or herdr-pane runs with ANSI-styled thinking output preserved, prefer the wrapper:
+
+```bash
+npm run world-import-run -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
+```
+
 For quick disposable test runs, use `/tmp/`:
 
 ```bash
@@ -44,7 +50,7 @@ Options:
 - `--input` — HTML/XHTML directory, `.zip`, or `.epub`-style archive.
 - `--output` — output root.
 - `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` — model used by the skill.
-- `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` — optional stronger reviewer model.
+- `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` — optional stronger reviewer model. If omitted, the main CLI defaults reviewer scoring to the active import model.
 - `--thinking` — pi thinking level (default: low; pass `off` to disable).
 - `--dry-run` — validate setup and normalization without doing semantic extraction.
 - `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` — print startup, paths, model selection, prompt, and tool call diagnostics to stderr (default: on; set env to `0` to silence).
@@ -130,7 +136,7 @@ Those emitted source-unit pages are a v1 citation target. They preserve original
 
 Run `npm run world-import-helper -- lint --output <output>` after `emit` to get machine-readable diagnostics for unresolved `related` ids, unresolved `[[wikilinks]]`, missing markdown/source anchors, required frontmatter, duplicate artifact ids, body source coverage gaps, and candidate-disposition accounting. `eval` embeds the same lint result in `stages/review.json` before any reviewer-model scoring. Treat lint as structural evidence for a repair pass: create the missing artifact, fix/remove the link, add candidate disposition metadata, or explicitly preserve an acceptable omission with model-authored reasoning.
 
-For a concise shell-oriented quick-start covering build, API key setup, run flags, helper commands, and output inspection, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
+For a concise shell-oriented quick-start covering build, API key setup, run flags, the TTY-safe wrapper, helper commands, and output inspection, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
 
 See `skills/world-import/references/contracts.md` for model-facing details.
 
@@ -148,4 +154,6 @@ Use debug mode when checking whether a model is following the skill workflow. Fo
 npm run world-import -- --input ~/Downloads/pg11-images-3.epub --output /tmp/pg11-world --model openrouter/deepseek/deepseek-v4-pro --debug --show-tool-updates
 ```
 
-The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, and a final output summary. A successful model turn with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly. In that case, rerun with a stronger model and keep `--show-tool-updates` enabled so tool-level failures are visible.
+The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, model thinking deltas, and a final output summary. Thinking deltas are ANSI-styled only when stderr is attached to a TTY, so if you want italic/cyan live thinking blocks in a terminal or herdr pane, run the command directly instead of piping it through `tee`, `2>&1`, or similar shell pipelines. If you need a saved transcript without losing TTY behavior, prefer a pseudo-terminal capture tool such as `script` or rely on terminal/herdr scrollback.
+
+A successful model turn with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly. In that case, rerun with a stronger model and keep `--show-tool-updates` enabled so tool-level failures are visible.

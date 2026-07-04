@@ -2,6 +2,12 @@
 
 Quick reference for running `memchat-world-import` from the shell.
 
+Preferred wrapper for live terminal/herdr runs:
+
+```bash
+npm run world-import-run -- --input <path> --output <dir> --model <provider/model>
+```
+
 ## Build
 
 ```bash
@@ -93,15 +99,59 @@ npm run world-import-helper -- read-slice --output /tmp/world-normalize --unit <
 
 ## Full model-backed import
 
-For normal or recovery runs, prefer a stronger model and keep debug output enabled:
+For normal or recovery runs, prefer a stronger model and keep debug output enabled. If you want TTY-safe thinking output, prefer the wrapper:
 
 ```bash
 rm -rf /tmp/world-out 2>/dev/null
-npm run world-import -- \
+npm run world-import-run -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-out \
   --model openrouter/deepseek/deepseek-v4-pro \
   --show-tool-updates
+```
+
+The wrapper runs `npm run world-import -- ...` directly, avoids the common non-TTY logging pitfall, and supports `--transcript <path>` when you want a saved terminal capture without losing ANSI-styled thinking output.
+
+## TTY-safe live output in a terminal or herdr pane
+
+Thinking deltas are ANSI-styled by the CLI only when stderr is attached to a TTY. If you want italic/cyan thinking blocks in a terminal or herdr pane, prefer the wrapper or otherwise run the importer directly.
+
+Use this pattern:
+
+```bash
+npm run world-import-run -- \
+  --input samples/pg120-images-3.epub \
+  --output world-output/pg120-images-3-$(date +%Y%m%d-%H%M%S) \
+  --model openrouter/deepseek/deepseek-v4-pro \
+  --show-tool-updates
+```
+
+Avoid this when you care about styled live output:
+
+```bash
+npm run world-import -- ... 2>&1 | tee world-output/run.log
+```
+
+`tee`, `2>&1`, process substitution, and similar pipelines make stderr non-TTY, so the CLI falls back to plain text thinking output.
+
+If you need both live styled output and a saved transcript, prefer one of these:
+
+- run directly in the herdr pane and use pane scrollback/history for review;
+- or use the wrapper with `--transcript`:
+
+```bash
+npm run world-import-run -- \
+  --transcript world-output/pg120-run.typescript \
+  --input samples/pg120-images-3.epub \
+  --output world-output/pg120-images-3-tty \
+  --model openrouter/deepseek/deepseek-v4-pro \
+  --show-tool-updates
+```
+
+- or use `script` yourself, which keeps a pseudo-terminal attached:
+
+```bash
+script -qef world-output/pg120-run.typescript -c 'npm run world-import -- --input samples/pg120-images-3.epub --output world-output/pg120-images-3-tty --model openrouter/deepseek/deepseek-v4-pro --show-tool-updates'
 ```
 
 To silence debug/thinking output:
@@ -126,7 +176,7 @@ npm run world-import -- \
 
 ## Verbose tool update output
 
-Debug and thinking are on by default. When a run is exploratory, recovering from a failed/no-output attempt, or using a less-trusted model, treat `--show-tool-updates` as the default so you can inspect tool-level failures and partial workflow progress:
+Debug and thinking are on by default. When a run is exploratory, recovering from a failed/no-output attempt, or using a less-trusted model, treat `--show-tool-updates` as the default so you can inspect tool-level failures and partial workflow progress. To preserve ANSI-styled thinking blocks, keep this as a direct TTY-attached run rather than piping through `tee`:
 
 ```bash
 npm run world-import -- \
@@ -171,7 +221,7 @@ npm run world-import-helper -- lint --output /tmp/world-out
 
 Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps. Repair the merge packet or explicitly account for intentional omissions before declaring the import healthy.
 
-Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model:
+Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model. The main `world-import` CLI now defaults the reviewer model to the active import model when `--reviewer-model` is omitted, but manual helper runs still let you override it explicitly:
 
 ```bash
 npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model openrouter/google/gemma-4-31b-it:free
@@ -231,11 +281,10 @@ For Alice-style literary regressions, place a public-domain Gutenberg EPUB at `s
 
 ```bash
 rm -rf /tmp/alice-world
-npm run world-import -- \
+npm run world-import-run -- \
   --input samples/pg11-images-3.epub \
   --output /tmp/alice-world \
   --model openrouter/deepseek/deepseek-v4-pro \
-  --reviewer-model openrouter/deepseek/deepseek-v4-pro \
   --show-tool-updates
 npm run world-import-helper -- lint --output /tmp/alice-world
 npm run world-import-helper -- eval --output /tmp/alice-world --reviewer-model openrouter/deepseek/deepseek-v4-pro

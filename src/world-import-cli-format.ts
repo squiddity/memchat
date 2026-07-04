@@ -8,3 +8,7 @@ export function resolveShowThinking(options: { explicitShow: boolean; explicitHi
   if (options.explicitShow) return true;
   return options.envDefault;
 }
+
+export function resolveReviewerModel(options: { explicitReviewerModel?: string; importModel?: string }): string | undefined {
+  return options.explicitReviewerModel ?? options.importModel;
+}

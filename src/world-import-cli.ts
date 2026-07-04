@@ -3,7 +3,7 @@
 import { argv, exit, stderr, stdout } from "node:process";
 import { resolve } from "node:path";
 import { envToggle, loadLocalEnv } from "./local-env.js";
-import { resolveShowThinking, styleThinkingText } from "./world-import-cli-format.js";
+import { resolveReviewerModel, resolveShowThinking, styleThinkingText } from "./world-import-cli-format.js";
 import { validThinkingLevels, type ThinkingLevel } from "./model-selection.js";
 import { runWorldImportSkill } from "./world-import/model-runner.js";
 
@@ -26,7 +26,7 @@ function usage(): string {
   return `Usage: memchat-world-import --input <html-dir-or-archive> --output <output-dir> [options]\n\n` +
     `Options:\n` +
     `  --model <provider/model>          Extraction and merge model for the world-import skill\n` +
-    `  --reviewer-model <provider/model> Reviewer model passed through to the skill/eval workflow\n` +
+    `  --reviewer-model <provider/model> Reviewer model passed through to the skill/eval workflow (defaults to --model)\n` +
     `  --thinking <level>                off|minimal|low|medium|high|xhigh (default: low)\n` +
     `  --dry-run                         Ask the skill to validate setup without importing\n` +
     `  --debug                           Print startup, model, prompt, and tool-call diagnostics to stderr (default: on)\n` +
@@ -72,7 +72,10 @@ function parseArgs(args: string[]): CliOptions {
     } else throw new Error(`Unknown or incomplete option: ${arg}`);
   }
   options.model ??= process.env.MEMCHAT_WORLD_IMPORT_MODEL ?? process.env.MEMCHAT_MODEL;
-  options.reviewerModel ??= process.env.MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL;
+  options.reviewerModel = resolveReviewerModel({
+    explicitReviewerModel: options.reviewerModel ?? process.env.MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL,
+    importModel: options.model,
+  });
   options.showThinking = resolveShowThinking({ explicitShow: explicitShowThinking, explicitHide: explicitHideThinking, envDefault: envShowThinking });
   return options;
 }

@@ -39,6 +39,7 @@ npm run dev -- --list-models
 npm run dev -- --memory qmd-hybrid --memory-debug
 npm run dev -- --memory qmd-hybrid --memory-dir /tmp/memchat-demo
 npm run world-import -- --input ./sources --output /tmp/memchat-world --dry-run
+npm run world-import-run -- --input samples/pg120-images-3.epub --output /tmp/memchat-world --model openrouter/deepseek/deepseek-v4-pro
 ```
 
 ## Docs
@@ -48,7 +49,7 @@ npm run world-import -- --input ./sources --output /tmp/memchat-world --dry-run
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
 - [`docs/world-import.md`](docs/world-import.md) — skill-first world import package, helper commands, emitted wiki bundle shape, and artifact format
-- [`docs/world-import-run-guide.md`](docs/world-import-run-guide.md) — shell-oriented quick-start for running imports and helpers
+- [`docs/world-import-run-guide.md`](docs/world-import-run-guide.md) — shell-oriented quick-start for running imports and helpers, including the TTY-safe wrapper
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 
 ## Status

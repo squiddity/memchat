@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { argv, exit, stdin, stdout, stderr } from "node:process";
 import { envToggle, loadLocalEnv } from "../local-env.js";
-import { resolveShowThinking, styleThinkingText } from "../world-import-cli-format.js";
+import { resolveReviewerModel, resolveShowThinking, styleThinkingText } from "../world-import-cli-format.js";
 import { emitWorldLibrary } from "./emit.js";
 import { lintWorldImport, runReviewerModelEvaluation } from "./eval.js";
 import { normalizeSources } from "./normalize.js";
@@ -22,7 +22,7 @@ function usage(): string {
     `  validate-stage --kind extraction|merge --file <stage.json>\n` +
     `  emit --output <dir>\n` +
     `  lint --output <dir>\n` +
-    `  eval --output <dir> [--reviewer-model <provider/model>] [--debug] [--show-thinking] [--no-show-thinking] [--show-tool-updates]\n`;
+    `  eval --output <dir> [--reviewer-model <provider/model>] [--debug] [--show-thinking] [--no-show-thinking] [--show-tool-updates]  # reviewer model defaults to MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL, then MEMCHAT_WORLD_IMPORT_MODEL, then MEMCHAT_MODEL\n`;
 }
 
 function parseArgs(args: string[]): { command?: string; options: Record<string, string | true> } {
@@ -139,7 +139,12 @@ async function main(): Promise<void> {
   }
 
   if (command === "eval") {
-    const reviewerModel = typeof options["reviewer-model"] === "string" ? options["reviewer-model"] : undefined;
+    const reviewerModel = resolveReviewerModel({
+      explicitReviewerModel: typeof options["reviewer-model"] === "string"
+        ? options["reviewer-model"]
+        : process.env.MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL,
+      importModel: process.env.MEMCHAT_WORLD_IMPORT_MODEL ?? process.env.MEMCHAT_MODEL,
+    });
     const debug = debugOptions(options);
     const result = await runReviewerModelEvaluation({
       outputRoot: requireString(options, "output"),
