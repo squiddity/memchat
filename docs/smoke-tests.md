@@ -2,6 +2,8 @@
 
 Run these after changes that affect CLI startup, model selection, providers/extensions, chat behavior, or world-import helpers.
 
+For longer-running smoke jobs in herdr, prefer a dedicated pane **below** the current pane and monitor that pane instead of opening a side pane. For world-import runs you are watching live, prefer `npm run world-import-run -- ...` over `npm run world-import -- ...`, including dry runs.
+
 ## 1. Build
 
 ```bash
@@ -204,13 +206,13 @@ npm --silent run world-import-helper -- eval --output /tmp/memchat-world-smoke
 
 Expected: `manifest.json` is written, at least one normalized unit appears, anchors such as `b0001`/`b0002` are present at paragraph granularity, `world/index.md` exists, lint passes with no unresolved concept links, candidate-accounting, coverage, or source-anchor diagnostics, and every emitted provenance link resolves to a retained source-unit page under `world/sources/units/` for the cited unit(s).
 
-For model-backed world import, use a configured model and a scratch output dir:
+For model-backed world import, use a configured model and a scratch output dir. If you are monitoring the run live, do it in the lower herdr job pane and prefer the wrapper even for dry-run:
 
 ```bash
-npm run world-import -- --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --dry-run
+npm run world-import-run -- --input /tmp/memchat-world-src --output /tmp/memchat-world-smoke --model lemonade/Qwen3.6-35B-A3B-MTP-GGUF --dry-run
 ```
 
-Expected: the skill loads and reports normalization/listing results without doing semantic extraction in dry-run mode. For full model-backed world-import regressions, use a fresh output directory, a stronger model when behavior is uncertain, `--debug`, and `--show-tool-updates`; for Alice-style runs, additionally inspect unresolved links, candidate dispositions, body-unit coverage, retained poem/pre formatting, and style-guide output.
+Expected: the skill loads and reports normalization/listing results without doing semantic extraction in dry-run mode. In staged mode, dry-run still stops after the extract-stage setup path. For full model-backed world-import regressions, use a fresh output directory, a stronger model when behavior is uncertain, `--debug`, and `--show-tool-updates`; for Alice-style runs, additionally inspect unresolved links, candidate dispositions, body-unit coverage, retained poem/pre formatting, and style-guide output.
 
 ## Notes
 

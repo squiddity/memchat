@@ -2,6 +2,8 @@
 
 Use this when a human wants to try memchat in a real shell or when the agent needs to supervise a live CLI session.
 
+For herdr-managed shell jobs, prefer a dedicated pane **below** the current pane for the live session you are monitoring. Avoid side panes for routine playtest/import job supervision.
+
 ## Agent defaults
 
 Unless the user asks otherwise:

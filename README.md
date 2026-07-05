@@ -38,9 +38,11 @@ Useful variants:
 npm run dev -- --list-models
 npm run dev -- --memory qmd-hybrid --memory-debug
 npm run dev -- --memory qmd-hybrid --memory-dir /tmp/memchat-demo
-npm run world-import -- --input ./sources --output /tmp/memchat-world --dry-run
+npm run world-import-run -- --input ./sources --output /tmp/memchat-world --dry-run
 npm run world-import-run -- --input samples/pg120-images-3.epub --output /tmp/memchat-world --model openrouter/deepseek/deepseek-v4-pro
 ```
+
+For imports, tests, evals, and other longer-running shell jobs, prefer a dedicated herdr pane **below** the current one so you can keep monitoring output without crowding the main conversation pane. Avoid side panes for routine job supervision.
 
 ## Docs
 

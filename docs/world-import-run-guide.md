@@ -2,7 +2,9 @@
 
 Quick reference for running `memchat-world-import` from the shell.
 
-Preferred wrapper for live terminal/herdr runs:
+When running imports, evals, or other longer-lived shell jobs from herdr, use a dedicated pane **below** the current pane and monitor it there. Avoid side panes for routine job supervision.
+
+Preferred wrapper for live terminal/herdr runs, including dry runs:
 
 ```bash
 npm run world-import-run -- --input <path> --output <dir> --model <provider/model>
@@ -44,7 +46,7 @@ Use a distinct subdirectory per run to avoid collisions:
 
 ```bash
 # Name by source material and date
-npm run world-import -- \
+npm run world-import-run -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output world-output/alice-2026-06-26 \
   --model openrouter/deepseek/deepseek-v4-pro
@@ -53,7 +55,7 @@ npm run world-import -- \
 For quick test runs, use `/tmp/` instead:
 
 ```bash
-npm run world-import -- \
+npm run world-import-run -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-test \
   --model openrouter/deepseek/deepseek-v4-pro
@@ -157,7 +159,7 @@ script -qef world-output/pg120-run.typescript -c 'npm run world-import -- --inpu
 To silence debug/thinking output:
 
 ```bash
-npm run world-import -- \
+npm run world-import-run -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-out \
   --model openrouter/google/gemma-4-31b-it:free \
@@ -166,20 +168,24 @@ npm run world-import -- \
 
 ## Dry-run (validate setup without model extraction)
 
+Use the wrapper for observed dry runs too so ANSI output and job supervision stay consistent with full imports:
+
 ```bash
-npm run world-import -- \
+npm run world-import-run -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-dry \
   --model openrouter/google/gemma-4-31b-it:free \
   --dry-run
 ```
 
+Dry-run stops after setup/normalization and helper-surface validation. If you also pass `--session-strategy staged`, dry-run still stops after the extract-stage setup path rather than continuing to merge or review.
+
 ## Verbose tool update output
 
 Debug and thinking are on by default. When a run is exploratory, recovering from a failed/no-output attempt, or using a less-trusted model, treat `--show-tool-updates` as the default so you can inspect tool-level failures and partial workflow progress. To preserve ANSI-styled thinking blocks, keep this as a direct TTY-attached run rather than piping through `tee`:
 
 ```bash
-npm run world-import -- \
+npm run world-import-run -- \
   --input ~/Downloads/pg11-images-3.epub \
   --output /tmp/world-debug \
   --model openrouter/deepseek/deepseek-v4-pro \
@@ -221,7 +227,7 @@ npm run world-import-helper -- lint --output /tmp/world-out
 
 Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps. Repair the merge packet or explicitly account for intentional omissions before declaring the import healthy.
 
-Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model. The main `world-import` CLI now defaults the reviewer model to the active import model when `--reviewer-model` is omitted, but manual helper runs still let you override it explicitly:
+Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model. Run that eval in the same lower herdr job pane pattern. The main `world-import` CLI now defaults the reviewer model to the active import model when `--reviewer-model` is omitted, but manual helper runs still let you override it explicitly:
 
 ```bash
 npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model openrouter/google/gemma-4-31b-it:free
@@ -277,7 +283,7 @@ npm run world-import-helper -- validate-stage --kind merge --file stage.json
 
 ## Alice manual regression fixture
 
-For Alice-style literary regressions, place a public-domain Gutenberg EPUB at `samples/pg11-images-3.epub` (or use `~/Downloads/pg11-images-3.epub`) and run with a fresh output directory, a stronger model when uncertain, `--debug`, and `--show-tool-updates`:
+For Alice-style literary regressions, place a public-domain Gutenberg EPUB at `samples/pg11-images-3.epub` (or use `~/Downloads/pg11-images-3.epub`) and run with a fresh output directory, a stronger model when uncertain, `--debug`, and `--show-tool-updates`. Prefer a dedicated lower herdr pane for the import and keep monitoring that pane through lint/eval:
 
 ```bash
 rm -rf /tmp/alice-world

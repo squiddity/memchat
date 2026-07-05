@@ -18,19 +18,31 @@ It does **not** decide entity identity, aliases, relationships, conflicts, fact 
 The repo has a gitignored `world-output/` directory for persistent extractions. Use a distinct subdirectory per run:
 
 ```bash
-npm run world-import -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
+npm run world-import-run -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
 ```
 
-For TTY-safe terminal or herdr-pane runs with ANSI-styled thinking output preserved, prefer the wrapper:
+For TTY-safe terminal or herdr-pane runs with ANSI-styled thinking output preserved, prefer the wrapper. In herdr, run imports in a dedicated pane **below** the current pane, not beside it:
 
 ```bash
 npm run world-import-run -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
 ```
 
+To opt into staged orchestration across separate extract, merge, and review sessions:
+
+```bash
+npm run world-import-run -- --session-strategy staged --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
+```
+
 For quick disposable test runs, use `/tmp/`:
 
 ```bash
-npm run world-import -- --input ./sources --output /tmp/world-test --model anthropic/claude-sonnet-4-5
+npm run world-import-run -- --input ./sources --output /tmp/world-test --model anthropic/claude-sonnet-4-5
+```
+
+Use the wrapper for observed dry runs too, not just full imports:
+
+```bash
+npm run world-import-run -- --input ./sources --output /tmp/world-test --dry-run
 ```
 
 ### Equivalent installed binary
@@ -50,9 +62,10 @@ Options:
 - `--input` — HTML/XHTML directory, `.zip`, or `.epub`-style archive.
 - `--output` — output root.
 - `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` — model used by the skill.
-- `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` — optional stronger reviewer model. If omitted, the main CLI defaults reviewer scoring to the active import model.
+- `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` — optional stronger reviewer model. If omitted, the main CLI defaults reviewer scoring to the active import model. Pass `--reviewer-model off` or `--no-reviewer` to disable review explicitly.
+- `--session-strategy single|staged` — single full-session runner or staged extract/merge/review orchestration (default: `single` for now).
 - `--thinking` — pi thinking level (default: low; pass `off` to disable).
-- `--dry-run` — validate setup and normalization without doing semantic extraction.
+- `--dry-run` — validate setup and normalization without doing semantic extraction. In staged mode, dry-run stops after the extract-stage setup/normalization path rather than continuing to merge or review.
 - `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` — print startup, paths, model selection, prompt, and tool call diagnostics to stderr (default: on; set env to `0` to silence).
 - `--show-thinking` / `MEMCHAT_WORLD_IMPORT_SHOW_THINKING=1` — print model thinking deltas when the provider exposes them (default: on; set env to `0` to silence).
 - `--show-tool-updates` / `MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES=1` — print verbose tool update payloads, not only start/end lines (default: off).
@@ -151,9 +164,9 @@ When importing additional source material into an existing output root, treat th
 Use debug mode when checking whether a model is following the skill workflow. For exploratory runs or retries after a no-output run, prefer a stronger model and include verbose tool updates by default:
 
 ```bash
-npm run world-import -- --input ~/Downloads/pg11-images-3.epub --output /tmp/pg11-world --model openrouter/deepseek/deepseek-v4-pro --debug --show-tool-updates
+npm run world-import-run -- --input ~/Downloads/pg11-images-3.epub --output /tmp/pg11-world --model openrouter/deepseek/deepseek-v4-pro --debug --show-tool-updates
 ```
 
-The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, model thinking deltas, and a final output summary. Thinking deltas are ANSI-styled only when stderr is attached to a TTY, so if you want italic/cyan live thinking blocks in a terminal or herdr pane, run the command directly instead of piping it through `tee`, `2>&1`, or similar shell pipelines. If you need a saved transcript without losing TTY behavior, prefer a pseudo-terminal capture tool such as `script` or rely on terminal/herdr scrollback.
+The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, model thinking deltas, session-strategy/stage summaries, and a final output summary. In staged mode it also reports extract/merge/review session boundaries explicitly. Thinking deltas are ANSI-styled only when stderr is attached to a TTY, so if you want italic/cyan live thinking blocks in a terminal or herdr pane, run the command directly instead of piping it through `tee`, `2>&1`, or similar shell pipelines. If you need a saved transcript without losing TTY behavior, prefer a pseudo-terminal capture tool such as `script` or rely on terminal/herdr scrollback.
 
 A successful model turn with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly. In that case, rerun with a stronger model and keep `--show-tool-updates` enabled so tool-level failures are visible.

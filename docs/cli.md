@@ -103,13 +103,15 @@ If either value is missing, the Lemonade provider is skipped.
 
 World import is a skill-first importer for HTML/XHTML directories, ZIPs, and EPUB-like archives. The CLI is a thin pi SDK wrapper that loads the `world-import` skill and passes paths/model settings through to it.
 
+When running imports, evals, builds, or other longer shell jobs from herdr, prefer a dedicated pane **below** the current pane and monitor that pane while keeping this conversation pane clear. Avoid side panes for routine job supervision.
+
 ```bash
 npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5
-npm run world-import -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5 --debug --show-tool-updates
+npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5 --debug --show-tool-updates
 npm run world-import-helper -- normalize --input ./sources --output /tmp/memchat-world
 ```
 
-Prefer `npm run world-import-run -- ...` for terminal/herdr runs where you want ANSI-styled thinking output preserved. The main CLI also defaults reviewer scoring to the active import model unless `--reviewer-model` is supplied.
+Prefer `npm run world-import-run -- ...` for terminal/herdr runs, including `--dry-run`, when you want ANSI-styled thinking output preserved. The main CLI also defaults reviewer scoring to the active import model unless `--reviewer-model` is supplied, supports `--session-strategy single|staged`, and lets you disable review explicitly with `--no-reviewer` or `--reviewer-model off`.
 
 See [`docs/world-import.md`](./world-import.md) for the helper contract and output layout.
 
