@@ -16,5 +16,8 @@ test("resolveShowThinking honors explicit CLI overrides over env defaults", () =
 test("resolveReviewerModel falls back to the import model when reviewer model is omitted", () => {
   assert.equal(resolveReviewerModel({ explicitReviewerModel: "openai/gpt-4o", importModel: "openrouter/deepseek/deepseek-v4-pro" }), "openai/gpt-4o");
   assert.equal(resolveReviewerModel({ importModel: "openrouter/deepseek/deepseek-v4-pro" }), "openrouter/deepseek/deepseek-v4-pro");
+  assert.equal(resolveReviewerModel({ explicitReviewerModel: "off", importModel: "openrouter/deepseek/deepseek-v4-pro" }), undefined);
+  assert.equal(resolveReviewerModel({ explicitReviewerModel: "none", importModel: "openrouter/deepseek/deepseek-v4-pro" }), undefined);
+  assert.equal(resolveReviewerModel({ importModel: "openrouter/deepseek/deepseek-v4-pro", disabled: true }), undefined);
   assert.equal(resolveReviewerModel({}), undefined);
 });

@@ -14,6 +14,8 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import { isUsableModel, modelLabel, requireResolvedModel, type ThinkingLevel } from "../model-selection.js";
+import { runReviewerModelEvaluation } from "./eval.js";
+import type { EvaluationResult } from "./types.js";
 
 export type WorldImportDebugOptions = {
   enabled?: boolean;
@@ -29,6 +31,10 @@ export type WorldImportOutputSummary = {
   worldMarkdownFiles: number;
 };
 
+export type WorldImportSkillStage = "full" | "extract" | "merge";
+export type WorldImportSessionStrategy = "single" | "staged";
+export type WorldImportStageName = WorldImportSkillStage | "review";
+
 export type WorldImportRunOptions = {
   cwd?: string;
   packageRoot?: string;
@@ -38,6 +44,7 @@ export type WorldImportRunOptions = {
   reviewerModel?: string;
   thinking?: ThinkingLevel;
   dryRun?: boolean;
+  sessionStrategy?: WorldImportSessionStrategy;
   debug?: WorldImportDebugOptions;
   onText?: (text: string) => void;
   onStatus?: (text: string) => void;
@@ -45,11 +52,38 @@ export type WorldImportRunOptions = {
   onToolEvent?: (text: string) => void;
 };
 
+export type WorldImportStageResult = {
+  stage: WorldImportStageName;
+  model?: string;
+  responseText?: string;
+  outputSummary?: WorldImportOutputSummary;
+  reviewer?: EvaluationResult["reviewer"];
+  deterministicPassed?: boolean;
+};
+
 export type WorldImportRunResult = {
   responseText: string;
   model?: string;
   outputRoot: string;
   outputSummary: WorldImportOutputSummary;
+  sessionStrategy: WorldImportSessionStrategy;
+  stages: WorldImportStageResult[];
+};
+
+type WorldImportModelPromptOptions = WorldImportRunOptions & {
+  stage?: WorldImportSkillStage;
+};
+
+type WorldImportModelPromptResult = Pick<WorldImportRunResult, "responseText" | "model" | "outputRoot" | "outputSummary">;
+
+type WorldImportRunnerDeps = {
+  runModelPrompt: (options: WorldImportModelPromptOptions) => Promise<WorldImportModelPromptResult>;
+  runReviewerEvaluation: (options: Pick<WorldImportRunOptions, "cwd" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent">) => Promise<EvaluationResult>;
+};
+
+const defaultRunnerDeps: WorldImportRunnerDeps = {
+  runModelPrompt: runWorldImportModelPrompt,
+  runReviewerEvaluation: runReviewerModelEvaluation,
 };
 
 export function defaultPackageRoot(): string {
@@ -69,13 +103,14 @@ export function worldImportSkill(packageRoot = defaultPackageRoot()): Skill {
   return skill;
 }
 
-export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOptions, "input" | "outputRoot" | "reviewerModel" | "dryRun"> & { helperCommand?: string }): string {
+export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOptions, "input" | "outputRoot" | "reviewerModel" | "dryRun"> & { helperCommand?: string; stage?: WorldImportSkillStage }): string {
   return `/skill:world-import ${JSON.stringify({
     input: options.input,
     output: options.outputRoot,
     helperCommand: options.helperCommand,
     reviewerModel: options.reviewerModel,
     dryRun: options.dryRun ?? false,
+    ...(options.stage && options.stage !== "full" ? { stage: options.stage } : {}),
   })}`;
 }
 
@@ -132,10 +167,25 @@ export async function inspectWorldImportOutput(outputRoot: string): Promise<Worl
   };
 }
 
-export async function runWorldImportSkill(options: WorldImportRunOptions): Promise<WorldImportRunResult> {
+function helperCommandFor(cwd: string, packageRoot: string): string {
+  return cwd === packageRoot ? "npm run world-import-helper --" : "memchat-world-import-helper";
+}
+
+function stageLabel(stage: WorldImportStageName): string {
+  return stage === "full" ? "full" : `stage ${stage}`;
+}
+
+function summarizeReviewResult(result: EvaluationResult): string {
+  const reviewer = result.reviewer;
+  if (!reviewer) return `deterministicPassed=${result.deterministic.passed}`;
+  if (reviewer.skipped) return `deterministicPassed=${result.deterministic.passed}; reviewerSkipped=true; reason=${reviewer.reason ?? "unknown"}`;
+  return `deterministicPassed=${result.deterministic.passed}; reviewerSkipped=false; score=${reviewer.score ?? "none"}`;
+}
+
+export async function runWorldImportModelPrompt(options: WorldImportModelPromptOptions): Promise<WorldImportModelPromptResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const packageRoot = resolve(options.packageRoot ?? defaultPackageRoot());
-  const helperCommand = cwd === packageRoot ? "npm run world-import-helper --" : "memchat-world-import-helper";
+  const helperCommand = helperCommandFor(cwd, packageRoot);
   const agentDir = getAgentDir();
   status(options, `cwd=${cwd}`);
   status(options, `packageRoot=${packageRoot}`);
@@ -161,7 +211,7 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
     skillsOverride: (current) => ({ skills: [...current.skills, skill], diagnostics: current.diagnostics }),
   });
   await resourceLoader.reload();
-  status(options, "resource loader ready; creating agent session");
+  status(options, `resource loader ready; creating ${stageLabel(options.stage ?? "full")} session`);
 
   const { session } = await createAgentSession({
     cwd,
@@ -224,11 +274,11 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
       }
     });
     try {
-      const prompt = renderWorldImportSkillInvocation({ ...options, helperCommand });
+      const prompt = renderWorldImportSkillInvocation({ ...options, helperCommand, stage: options.stage ?? "full" });
       status(options, `prompt=${prompt}`);
-      status(options, "invoking model/skill");
+      status(options, `invoking ${stageLabel(options.stage ?? "full")} model/skill`);
       await session.prompt(prompt);
-      status(options, "model/skill run completed");
+      status(options, `${stageLabel(options.stage ?? "full")} model/skill run completed`);
     } finally {
       unsubscribe();
     }
@@ -236,7 +286,68 @@ export async function runWorldImportSkill(options: WorldImportRunOptions): Promi
     status(options, `output summary=${JSON.stringify(outputSummary)}`);
     return { responseText, model: modelLabel(session.model), outputRoot: options.outputRoot, outputSummary };
   } finally {
-    status(options, "disposing session");
+    status(options, `disposing ${stageLabel(options.stage ?? "full")} session`);
     session.dispose();
   }
+}
+
+export async function runWorldImportSkillWithRunners(options: WorldImportRunOptions, deps: WorldImportRunnerDeps = defaultRunnerDeps): Promise<WorldImportRunResult> {
+  const sessionStrategy = options.sessionStrategy ?? "single";
+  const stages: WorldImportStageResult[] = [];
+
+  if (sessionStrategy === "single") {
+    status(options, "starting full session");
+    const full = await deps.runModelPrompt({ ...options, stage: "full" });
+    stages.push({ stage: "full", model: full.model, responseText: full.responseText, outputSummary: full.outputSummary });
+    status(options, `full session completed; worldMarkdownFiles=${full.outputSummary.worldMarkdownFiles}`);
+    return { ...full, sessionStrategy, stages };
+  }
+
+  status(options, "starting stage extract session");
+  const extract = await deps.runModelPrompt({ ...options, stage: "extract" });
+  stages.push({ stage: "extract", model: extract.model, responseText: extract.responseText, outputSummary: extract.outputSummary });
+  status(options, `extract session completed; extractionStages=${extract.outputSummary.extractionStages}; normalizedUnits=${extract.outputSummary.normalizedUnits}`);
+
+  if (options.dryRun) {
+    status(options, "dry-run requested; stopping after extract stage");
+    return { ...extract, sessionStrategy, stages };
+  }
+
+  if (extract.outputSummary.extractionStages === 0) {
+    throw new Error("extract session completed but produced no extraction stage files");
+  }
+
+  status(options, "starting stage merge session");
+  const merge = await deps.runModelPrompt({ ...options, stage: "merge" });
+  stages.push({ stage: "merge", model: merge.model, responseText: merge.responseText, outputSummary: merge.outputSummary });
+  status(options, `merge session completed; worldMarkdownFiles=${merge.outputSummary.worldMarkdownFiles}; mergeStageExists=${merge.outputSummary.mergeStageExists}`);
+
+  if (merge.outputSummary.worldMarkdownFiles === 0) {
+    status(options, "merge session emitted no world markdown files; skipping review stage");
+    return { ...merge, sessionStrategy, stages };
+  }
+
+  if (!options.reviewerModel) {
+    status(options, "review stage skipped; reviewer model disabled");
+    return { ...merge, sessionStrategy, stages };
+  }
+
+  status(options, "starting stage review session");
+  const review = await deps.runReviewerEvaluation({
+    cwd: options.cwd,
+    outputRoot: options.outputRoot,
+    reviewerModel: options.reviewerModel,
+    debug: options.debug,
+    onStatus: options.onStatus,
+    onThinking: options.onThinking,
+    onToolEvent: options.onToolEvent,
+  });
+  stages.push({ stage: "review", reviewer: review.reviewer, deterministicPassed: review.deterministic.passed });
+  status(options, `review session completed; ${summarizeReviewResult(review)}`);
+
+  return { ...merge, sessionStrategy, stages };
+}
+
+export async function runWorldImportSkill(options: WorldImportRunOptions): Promise<WorldImportRunResult> {
+  return runWorldImportSkillWithRunners(options, defaultRunnerDeps);
 }

@@ -2,6 +2,13 @@
 
 The workflow is model-owned for semantic steps and helper-owned for deterministic operations.
 
+Optional stage hints set stopping points without moving semantic ownership into helper code:
+
+- `full` or omitted — run the whole workflow in one session.
+- `extract` — complete normalization and extraction stage writing, then stop.
+- `merge` — inspect normalized sources, extraction stages, and existing world state; merge, emit, lint, repair, then stop.
+- `review` — inspect the emitted bundle, run/coordinate eval, and summarize findings.
+
 ## 0. Determine whether this is a new world or a maintained world
 
 Before merging any new source material, inspect whether `<output>` already contains an emitted world bundle.

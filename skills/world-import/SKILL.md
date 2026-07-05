@@ -105,6 +105,7 @@ The user should provide JSON or text containing:
 - `output`: output root for normalized sources, stages, and `world/` markdown.
 - `reviewerModel` optional: stronger model to recommend for review/eval.
 - `dryRun` optional: validate setup without doing model extraction.
+- `stage` optional: orchestration hint for `extract`, `merge`, `review`, or `full`. If omitted, run the full workflow. Treat stages as stopping points, not as deterministic semantic ownership by helper code.
 - `helperCommand` optional: exact helper command prefix to use, such as `npm run world-import-helper --` or `memchat-world-import-helper`.
 
 If either `input` or `output` is missing, ask one focused question for the missing path.
@@ -136,6 +137,13 @@ npm run world-import-helper -- eval --output <output> --reviewer-model <provider
 Installed-package users may call `memchat-world-import-helper` with the same arguments. If invocation arguments include `helperCommand`, use that exact prefix for all helper calls.
 
 ## Workflow summary
+
+Stage hints are optional orchestration boundaries:
+
+- `full` or omitted — run the whole workflow below in one session.
+- `extract` — complete steps 1-2, write extraction stages, then stop before merge.
+- `merge` — inspect normalized sources, extraction stages, and any existing world bundle; complete steps 3-7, then stop before review/eval.
+- `review` — inspect the emitted bundle, run/coordinate eval, and summarize findings.
 
 1. Normalize the input. Inspect manifest diagnostics before continuing.
 2. For each normalized unit, read bounded text and produce an extraction stage envelope. **Extract rich, detailed candidates — not chapter summaries.** Preserve provenance spans for every candidate. Follow the entity-type guidance above.

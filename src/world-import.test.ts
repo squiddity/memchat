@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { defaultPackageRoot, finalizeAssistantMessageForCli, renderWorldImportSkillInvocation, worldImportSkill } from "./world-import/model-runner.js";
+import { defaultPackageRoot, finalizeAssistantMessageForCli, renderWorldImportSkillInvocation, runWorldImportSkillWithRunners, worldImportSkill } from "./world-import/model-runner.js";
 import { writeExtractionStage } from "./world-import/staging.js";
+import type { EvaluationResult } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "memchat-world-router-"));
@@ -31,6 +32,12 @@ test("world import model runner renders structured skill invocation", () => {
   assert.match(prompt, /^\/skill:world-import /);
   assert.match(prompt, /"input":"\/in"/);
   assert.match(prompt, /"dryRun":true/);
+  assert.doesNotMatch(prompt, /"stage":/);
+});
+
+test("world import model runner includes stage for staged prompts", () => {
+  const prompt = renderWorldImportSkillInvocation({ input: "/in", outputRoot: "/out", stage: "extract" });
+  assert.match(prompt, /"stage":"extract"/);
 });
 
 test("world import model runner separates assistant messages for shell readability", () => {
@@ -45,6 +52,76 @@ test("extraction stage rejects candidates without operational provenance envelop
     writeExtractionStage(output, { version: 1, kind: "extraction", unitId: "u", candidates: [{} as never] }),
     /id must be a non-empty string/,
   );
+});
+
+test("staged world import orchestration runs extract, merge, then review", async () => {
+  const calls: string[] = [];
+  const reviewResult: EvaluationResult = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    outputRoot: "/out",
+    deterministic: { passed: true, checks: [] },
+    reviewer: { model: "openai/gpt-4o", score: 4 },
+  };
+  const result = await runWorldImportSkillWithRunners({
+    input: "/in",
+    outputRoot: "/out",
+    sessionStrategy: "staged",
+    reviewerModel: "openai/gpt-4o",
+  }, {
+    runModelPrompt: async (options) => {
+      calls.push(options.stage ?? "full");
+      if (options.stage === "extract") return { responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: false, worldMarkdownFiles: 0 } };
+      return { responseText: "merge ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: true, worldMarkdownFiles: 3 } };
+    },
+    runReviewerEvaluation: async () => {
+      calls.push("review");
+      return reviewResult;
+    },
+  });
+  assert.deepEqual(calls, ["extract", "merge", "review"]);
+  assert.equal(result.sessionStrategy, "staged");
+  assert.deepEqual(result.stages.map((stage) => stage.stage), ["extract", "merge", "review"]);
+});
+
+test("staged dry-run stops after extract", async () => {
+  const calls: string[] = [];
+  const result = await runWorldImportSkillWithRunners({ input: "/in", outputRoot: "/out", sessionStrategy: "staged", dryRun: true }, {
+    runModelPrompt: async (options) => {
+      calls.push(options.stage ?? "full");
+      return { responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 0, mergeStageExists: false, worldMarkdownFiles: 0 } };
+    },
+    runReviewerEvaluation: async () => {
+      calls.push("review");
+      throw new Error("review should not run");
+    },
+  });
+  assert.deepEqual(calls, ["extract"]);
+  assert.deepEqual(result.stages.map((stage) => stage.stage), ["extract"]);
+});
+
+test("staged orchestration fails fast when extract writes no stages", async () => {
+  await assert.rejects(() => runWorldImportSkillWithRunners({ input: "/in", outputRoot: "/out", sessionStrategy: "staged" }, {
+    runModelPrompt: async () => ({ responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 0, mergeStageExists: false, worldMarkdownFiles: 0 } }),
+    runReviewerEvaluation: async () => ({ version: 1, createdAt: new Date().toISOString(), outputRoot: "/out", deterministic: { passed: true, checks: [] } }),
+  }), /produced no extraction stage files/);
+});
+
+test("staged orchestration skips review when merge emits no markdown", async () => {
+  const calls: string[] = [];
+  const result = await runWorldImportSkillWithRunners({ input: "/in", outputRoot: "/out", sessionStrategy: "staged", reviewerModel: "openai/gpt-4o" }, {
+    runModelPrompt: async (options) => {
+      calls.push(options.stage ?? "full");
+      if (options.stage === "extract") return { responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: false, worldMarkdownFiles: 0 } };
+      return { responseText: "merge ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: true, worldMarkdownFiles: 0 } };
+    },
+    runReviewerEvaluation: async () => {
+      calls.push("review");
+      throw new Error("review should not run");
+    },
+  });
+  assert.deepEqual(calls, ["extract", "merge"]);
+  assert.deepEqual(result.stages.map((stage) => stage.stage), ["extract", "merge"]);
 });
 
 test("helper command flow normalizes, writes generic merge packet, and emits markdown", async () => {

@@ -2,14 +2,16 @@
 
 import { argv, exit, stderr, stdout } from "node:process";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { envToggle, loadLocalEnv } from "./local-env.js";
 import { resolveReviewerModel, resolveShowThinking, styleThinkingText } from "./world-import-cli-format.js";
 import { validThinkingLevels, type ThinkingLevel } from "./model-selection.js";
-import { runWorldImportSkill } from "./world-import/model-runner.js";
+import { runWorldImportSkill, type WorldImportSessionStrategy } from "./world-import/model-runner.js";
 
 const thinkingLevels = new Set<string>(validThinkingLevels);
+const sessionStrategies = new Set<WorldImportSessionStrategy>(["single", "staged"]);
 
-type CliOptions = {
+export type CliOptions = {
   input?: string;
   output?: string;
   model?: string;
@@ -19,14 +21,18 @@ type CliOptions = {
   debug: boolean;
   showThinking: boolean;
   showToolUpdates: boolean;
+  sessionStrategy: WorldImportSessionStrategy;
+  reviewerDisabled: boolean;
   help?: boolean;
 };
 
-function usage(): string {
+export function usage(): string {
   return `Usage: memchat-world-import --input <html-dir-or-archive> --output <output-dir> [options]\n\n` +
     `Options:\n` +
     `  --model <provider/model>          Extraction and merge model for the world-import skill\n` +
     `  --reviewer-model <provider/model> Reviewer model passed through to the skill/eval workflow (defaults to --model)\n` +
+    `  --no-reviewer                     Disable reviewer-model scoring explicitly\n` +
+    `  --session-strategy <single|staged> Run one full session or staged extract/merge/review sessions (default: single)\n` +
     `  --thinking <level>                off|minimal|low|medium|high|xhigh (default: low)\n` +
     `  --dry-run                         Ask the skill to validate setup without importing\n` +
     `  --debug                           Print startup, model, prompt, and tool-call diagnostics to stderr (default: on)\n` +
@@ -36,7 +42,7 @@ function usage(): string {
     `  --help                            Show this help\n`;
 }
 
-function parseArgs(args: string[]): CliOptions {
+export function parseArgs(args: string[]): CliOptions {
   const envShowThinking = envToggle("MEMCHAT_WORLD_IMPORT_SHOW_THINKING", true);
   let explicitShowThinking = false;
   let explicitHideThinking = false;
@@ -44,6 +50,8 @@ function parseArgs(args: string[]): CliOptions {
     debug: envToggle("MEMCHAT_WORLD_IMPORT_DEBUG", true),
     showThinking: envShowThinking,
     showToolUpdates: envToggle("MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES", false),
+    sessionStrategy: "single",
+    reviewerDisabled: false,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -61,11 +69,17 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--show-tool-updates") {
       options.debug = true;
       options.showToolUpdates = true;
+    } else if (arg === "--no-reviewer") {
+      options.reviewerDisabled = true;
     } else if (arg === "--input" && next) options.input = args[++i];
     else if (arg === "--output" && next) options.output = args[++i];
     else if (arg === "--model" && next) options.model = args[++i];
     else if (arg === "--reviewer-model" && next) options.reviewerModel = args[++i];
-    else if (arg === "--thinking" && next) {
+    else if (arg === "--session-strategy" && next) {
+      const value = args[++i] as WorldImportSessionStrategy;
+      if (!sessionStrategies.has(value)) throw new Error(`Invalid --session-strategy value "${value}".`);
+      options.sessionStrategy = value;
+    } else if (arg === "--thinking" && next) {
       const value = args[++i];
       if (!thinkingLevels.has(value)) throw new Error(`Invalid --thinking value "${value}".`);
       options.thinking = value as ThinkingLevel;
@@ -75,14 +89,15 @@ function parseArgs(args: string[]): CliOptions {
   options.reviewerModel = resolveReviewerModel({
     explicitReviewerModel: options.reviewerModel ?? process.env.MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL,
     importModel: options.model,
+    disabled: options.reviewerDisabled,
   });
   options.showThinking = resolveShowThinking({ explicitShow: explicitShowThinking, explicitHide: explicitHideThinking, envDefault: envShowThinking });
   return options;
 }
 
-async function main(): Promise<void> {
+export async function main(args = argv.slice(2)): Promise<void> {
   loadLocalEnv();
-  const options = parseArgs(argv.slice(2));
+  const options = parseArgs(args);
   if (options.help) {
     stdout.write(usage());
     return;
@@ -95,6 +110,7 @@ async function main(): Promise<void> {
     reviewerModel: options.reviewerModel,
     thinking: options.thinking,
     dryRun: options.dryRun,
+    sessionStrategy: options.sessionStrategy,
     debug: { enabled: options.debug, showThinking: options.showThinking, showToolUpdates: options.showToolUpdates },
     onText: (text) => stdout.write(text),
     onStatus: (text) => stderr.write(text),
@@ -102,13 +118,17 @@ async function main(): Promise<void> {
     onToolEvent: (text) => stderr.write(text),
   });
   if (result.responseText && !result.responseText.endsWith("\n")) stdout.write("\n");
+  stderr.write(`[world-import] session strategy: ${result.sessionStrategy}\n`);
+  stderr.write(`[world-import] stages: ${result.stages.map((stage) => stage.stage).join(" -> ")}\n`);
   stderr.write(`[world-import] final output summary: ${JSON.stringify(result.outputSummary)}\n`);
   if (!options.dryRun && result.outputSummary.worldMarkdownFiles === 0) {
     stderr.write("[world-import warning] run completed but no world markdown files were emitted; inspect model output and tool diagnostics.\n");
   }
 }
 
-main().catch((error: unknown) => {
-  stderr.write(`memchat-world-import failed: ${error instanceof Error ? error.message : String(error)}\n`);
-  exit(1);
-});
+if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
+  main().catch((error: unknown) => {
+    stderr.write(`memchat-world-import failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    exit(1);
+  });
+}

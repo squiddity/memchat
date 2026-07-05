@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { parseArgs } from "./world-import-cli.js";
+
+test("parseArgs keeps single-session as default and reviewer defaults to import model", () => {
+  const options = parseArgs(["--input", "./in", "--output", "./out", "--model", "openai/gpt-4o"]);
+  assert.equal(options.sessionStrategy, "single");
+  assert.equal(options.reviewerModel, "openai/gpt-4o");
+});
+
+test("parseArgs accepts staged session strategy", () => {
+  const options = parseArgs(["--input", "./in", "--output", "./out", "--session-strategy", "staged"]);
+  assert.equal(options.sessionStrategy, "staged");
+});
+
+test("parseArgs supports explicit reviewer disable", () => {
+  const noReviewer = parseArgs(["--input", "./in", "--output", "./out", "--model", "openai/gpt-4o", "--no-reviewer"]);
+  assert.equal(noReviewer.reviewerModel, undefined);
+
+  const reviewerOff = parseArgs(["--input", "./in", "--output", "./out", "--model", "openai/gpt-4o", "--reviewer-model", "off"]);
+  assert.equal(reviewerOff.reviewerModel, undefined);
+});
+
+test("parseArgs rejects invalid session strategy", () => {
+  assert.throws(() => parseArgs(["--input", "./in", "--output", "./out", "--session-strategy", "banana"]), /Invalid --session-strategy value/);
+});
