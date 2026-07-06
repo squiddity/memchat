@@ -6,6 +6,24 @@ import { envToggle, loadLocalEnv } from "../local-env.js";
 import { resolveReviewerModel, resolveShowThinking, styleThinkingText } from "../world-import-cli-format.js";
 import { emitWorldLibrary } from "./emit.js";
 import { lintWorldImport, runReviewerModelEvaluation } from "./eval.js";
+import {
+  buildCoveragePlan,
+  buildRepairSummary,
+  emitLintRepairLoop,
+  parseMaxChars,
+  parseMaxIterations,
+  parsePlannedIds,
+  parseWriteMode,
+  patchMerge,
+  quoteRef,
+  readArtifactFromFileOrStdin,
+  readPatchFromFileOrStdin,
+  resolveRef,
+  selectorFromOptions,
+  validateArtifact,
+  writeArtifact,
+  writeRepairSummaryFile,
+} from "./helper-tools.js";
 import { normalizeSources } from "./normalize.js";
 import { readSlice } from "./spans.js";
 import { readManifest, readNormalizedUnit, validateStageEnvelope, writeExtractionStage, writeMergeStage } from "./staging.js";
@@ -17,6 +35,14 @@ function usage(): string {
     `  list-units --output <dir>\n` +
     `  read-unit --output <dir> --unit <unit-id>\n` +
     `  read-slice --output <dir> --unit <unit-id> --start <anchor> --end <anchor>\n` +
+    `  resolve-ref --output <dir> (--unit <unit-id>|--order <n>|--entry-path <text>|--title <text>) --start <anchor> --end <anchor>\n` +
+    `  quote-ref --output <dir> (--unit <unit-id>|--order <n>|--entry-path <text>|--title <text>) --start <anchor> --end <anchor> [--as-ref] [--max-chars <n>]\n` +
+    `  validate-artifact --output <dir> [--file artifact.json] [--planned-ids a,b] [--allow-empty-quotes]\n` +
+    `  write-artifact --output <dir> [--mode add|replace|upsert] [--file artifact.json] [--planned-ids a,b] [--allow-empty-quotes]\n` +
+    `  patch-merge --output <dir> [--file patch.json]\n` +
+    `  coverage-plan --output <dir>\n` +
+    `  repair-summary --output <dir> [--format json|markdown] [--write]\n` +
+    `  emit-lint-repair-loop --output <dir> [--max-iterations <n>]\n` +
     `  write-extraction --output <dir> --unit <unit-id> < stage.json\n` +
     `  write-merge --output <dir> < merged-stage.json\n` +
     `  validate-stage --kind extraction|merge --file <stage.json>\n` +
@@ -95,6 +121,97 @@ async function main(): Promise<void> {
   if (command === "read-slice") {
     const unit = await readNormalizedUnit(requireString(options, "output"), requireString(options, "unit"));
     stdout.write(`${readSlice(unit, requireString(options, "start"), requireString(options, "end"))}\n`);
+    return;
+  }
+
+  if (command === "resolve-ref") {
+    const ref = await resolveRef({
+      outputRoot: requireString(options, "output"),
+      ...selectorFromOptions(options),
+      start: requireString(options, "start"),
+      end: requireString(options, "end"),
+    });
+    stdout.write(`${JSON.stringify(ref, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "quote-ref") {
+    const ref = await quoteRef({
+      outputRoot: requireString(options, "output"),
+      ...selectorFromOptions(options),
+      start: requireString(options, "start"),
+      end: requireString(options, "end"),
+      maxChars: parseMaxChars(options["max-chars"]),
+      joiner: typeof options.joiner === "string" ? options.joiner : undefined,
+      plain: options.plain === true,
+      asRef: options["as-ref"] === true,
+    });
+    const output = options["as-ref"] === true
+      ? { sourceId: ref.sourceId, unitId: ref.unitId, startAnchor: ref.startAnchor, endAnchor: ref.endAnchor, quote: ref.quote }
+      : ref;
+    stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "validate-artifact") {
+    const artifactFile = typeof options.file === "string" ? options.file : undefined;
+    const artifact = await readArtifactFromFileOrStdin(artifactFile, artifactFile ? "" : await readStdin());
+    const result = await validateArtifact({
+      outputRoot: requireString(options, "output"),
+      artifact,
+      allowEmptyQuotes: options["allow-empty-quotes"] === true,
+      plannedIds: parsePlannedIds(options["planned-ids"]),
+    });
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.passed) exit(1);
+    return;
+  }
+
+  if (command === "write-artifact") {
+    const artifactFile = typeof options.file === "string" ? options.file : undefined;
+    const result = await writeArtifact({
+      outputRoot: requireString(options, "output"),
+      artifact: await readArtifactFromFileOrStdin(artifactFile, artifactFile ? "" : await readStdin()),
+      mode: parseWriteMode(options.mode),
+      validate: options["no-validate"] !== true,
+      allowEmptyQuotes: options["allow-empty-quotes"] === true,
+      plannedIds: parsePlannedIds(options["planned-ids"]),
+    });
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.wrote) exit(1);
+    return;
+  }
+
+  if (command === "patch-merge") {
+    const patchFile = typeof options.file === "string" ? options.file : undefined;
+    const result = await patchMerge(requireString(options, "output"), await readPatchFromFileOrStdin(patchFile, patchFile ? "" : await readStdin()));
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.patched) exit(1);
+    return;
+  }
+
+  if (command === "coverage-plan") {
+    const result = await buildCoveragePlan(requireString(options, "output"));
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "repair-summary") {
+    const format = options.format === "json" ? "json" : "markdown";
+    const result = await buildRepairSummary(requireString(options, "output"), format);
+    if (format === "markdown" && typeof result === "string" && options.write === true) {
+      const path = await writeRepairSummaryFile(requireString(options, "output"), result);
+      stdout.write(`${JSON.stringify({ path }, null, 2)}\n`);
+    } else {
+      stdout.write(typeof result === "string" ? result : `${JSON.stringify(result, null, 2)}\n`);
+    }
+    return;
+  }
+
+  if (command === "emit-lint-repair-loop") {
+    const result = await emitLintRepairLoop(requireString(options, "output"), parseMaxIterations(options["max-iterations"]));
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.passed) exit(1);
     return;
   }
 

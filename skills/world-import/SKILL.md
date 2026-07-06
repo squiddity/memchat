@@ -46,6 +46,20 @@ When merging candidates about the same entity, combine all useful detail from ev
 ### Provenance target for v1
 The emitted bundle retains normalized source-unit markdown pages under `world/sources/units/`. Treat those retained normalized source pages as the canonical v1 citation target for emitted provenance links. Normalized anchors are paragraph/poem/pre source blocks when structure is available; preserve those fine-grained spans instead of citing whole chapters. Original EPUB/HTML layout fidelity may be partial; preserve original-path diagnostics, but portable source ids should not depend on local absolute paths.
 
+### Required helper posture
+
+Do **not** write ad hoc Python or shell scripts to invent source ids, unit ids, anchor validation, provenance refs, or giant merge JSON packets. Use deterministic helper commands for deterministic work:
+
+- `resolve-ref` to build canonical source/unit/anchor refs from the manifest.
+- `quote-ref --as-ref` to populate exact provenance quotes.
+- `validate-artifact` before adding complex artifacts.
+- `write-artifact` to add or replace one artifact at a time.
+- `coverage-plan` before final merge review.
+- `emit-lint-repair-loop` before declaring success.
+- `repair-summary` to turn diagnostics into a model-actionable checklist.
+
+Ad hoc scripts are acceptable only for one-off inspection that has no corresponding helper. If you find yourself coding `sid()`, `uid()`, `ref()`, source hash maps, anchor checks, or merge-stage rewrite loops, stop and use the helper surface documented in `references/helper-tools.md`.
+
 ### New world vs maintained world
 Treat a fresh import and an update to an existing world as different postures:
 
@@ -117,6 +131,7 @@ Read these before importing:
 - `references/workflow.md` — command sequence and model-pass workflow.
 - `references/contracts.md` — skill-owned candidate and artifact packet contracts.
 - `references/artifact-format.md` — markdown output packet expectations and detail guidance.
+- `references/helper-tools.md` — deterministic helper command cheat sheet for provenance refs, artifact writing, coverage, lint repair, and anti-patterns.
 
 ## Helper commands
 
@@ -127,6 +142,13 @@ npm run world-import-helper -- normalize --input <input> --output <output>
 npm run world-import-helper -- list-units --output <output>
 npm run world-import-helper -- read-unit --output <output> --unit <unit-id>
 npm run world-import-helper -- read-slice --output <output> --unit <unit-id> --start <anchor> --end <anchor>
+npm run world-import-helper -- resolve-ref --output <output> --unit <unit-id> --start <anchor> --end <anchor>
+npm run world-import-helper -- quote-ref --output <output> --unit <unit-id> --start <anchor> --end <anchor> --as-ref
+npm run world-import-helper -- validate-artifact --output <output> --file artifact.json
+npm run world-import-helper -- write-artifact --output <output> --mode upsert --file artifact.json
+npm run world-import-helper -- coverage-plan --output <output>
+npm run world-import-helper -- repair-summary --output <output>
+npm run world-import-helper -- emit-lint-repair-loop --output <output>
 npm run world-import-helper -- write-extraction --output <output> --unit <unit-id> < stage.json
 npm run world-import-helper -- write-merge --output <output> < merged-stage.json
 npm run world-import-helper -- emit --output <output>
@@ -149,10 +171,11 @@ Stage hints are optional orchestration boundaries:
 2. For each normalized unit, read bounded text and produce an extraction stage envelope. **Extract rich, detailed candidates — not chapter summaries.** Preserve provenance spans for every candidate. Follow the entity-type guidance above.
 3. If the output already contains an emitted world bundle and this is not a dry run, inspect the existing world indexes, affected artifacts, coverage, log, and any existing `World Overview` / `Corpus Synopsis` artifact before merging new material.
 4. Merge from staged candidates, not whole raw files. **Combine and preserve all useful detail from each candidate** rather than distilling to minimal summaries. Use `read-slice` only when candidate evidence is ambiguous or conflicting and only for the minimum anchor range needed. For maintained worlds, enrich existing artifacts when evidence supports continuity, preserve older provenance unless it is superseded or contested, and keep retcons/conflicts visible rather than silently flattening them.
-5. Write a merge stage containing model-authored artifact packets with substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. Include candidate disposition accounting: every extraction candidate should be represented by artifact metadata, merged into a broader artifact, deferred, or dropped with a model-authored reason. For substantive imports, include or update a corpus-level `World Overview` artifact as a normal model-authored packet rather than relying on the emitter to summarize the world. Add model-authored `style` artifacts when narrative voice, tone, aphorisms/formulae, parody/poems, or character voice notes are useful for reuse.
-6. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
-7. Run deterministic `lint`. Treat diagnostics as evidence for repair, not ontology: create missing artifacts, fix/remove unresolved links, add candidate dispositions, improve source coverage, or explicitly justify acceptable omissions in metadata/sections. Re-emit and re-lint after repairs.
-8. If a reviewer model is configured, run the eval helper after emission/lint; otherwise report that reviewer-model scoring was skipped.
-9. Summarize outputs, lint diagnostics, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
+5. Write merge artifacts incrementally with `write-artifact` when practical. Use `resolve-ref` and `quote-ref --as-ref` for provenance rather than guessing source ids or writing source-id mapping scripts. Artifact packets should have substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. Include candidate disposition accounting: every extraction candidate should be represented by artifact metadata, merged into a broader artifact, deferred, or dropped with a model-authored reason. For substantive imports, include or update a corpus-level `World Overview` artifact as a normal model-authored packet rather than relying on the emitter to summarize the world. Add model-authored `style` artifacts when narrative voice, tone, aphorisms/formulae, parody/poems, or character voice notes are useful for reuse.
+6. Run `coverage-plan` before final emission to inspect group coverage, unit coverage, retained source pages, and candidate accounting. Repair omissions semantically or record model-authored dispositions.
+7. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
+8. Run deterministic `emit-lint-repair-loop` or `lint` plus `repair-summary`. Treat diagnostics as evidence for repair, not ontology: create missing artifacts, fix/remove unresolved links, add candidate dispositions, improve source coverage, or explicitly justify acceptable omissions in metadata/sections. Re-emit and re-lint after repairs.
+9. If a reviewer model is configured, run the eval helper after emission/lint; otherwise report that reviewer-model scoring was skipped.
+10. Summarize outputs, lint diagnostics, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
 
 When `dryRun` is true, stop after normalization/listing and report whether the helper surface is available.

@@ -81,6 +81,14 @@ npm run world-import-helper -- normalize --input ./sources --output /tmp/world-i
 npm run world-import-helper -- list-units --output /tmp/world-import
 npm run world-import-helper -- read-unit --output /tmp/world-import --unit <unit-id>
 npm run world-import-helper -- read-slice --output /tmp/world-import --unit <unit-id> --start b0001 --end b0003
+npm run world-import-helper -- resolve-ref --output /tmp/world-import --unit <unit-id> --start b0001 --end b0003
+npm run world-import-helper -- quote-ref --output /tmp/world-import --unit <unit-id> --start b0001 --end b0003 --as-ref
+npm run world-import-helper -- validate-artifact --output /tmp/world-import --file artifact.json
+npm run world-import-helper -- write-artifact --output /tmp/world-import --mode upsert --file artifact.json
+npm run world-import-helper -- patch-merge --output /tmp/world-import --file patch.json
+npm run world-import-helper -- coverage-plan --output /tmp/world-import
+npm run world-import-helper -- repair-summary --output /tmp/world-import
+npm run world-import-helper -- emit-lint-repair-loop --output /tmp/world-import
 npm run world-import-helper -- write-extraction --output /tmp/world-import --unit <unit-id> < extraction.json
 npm run world-import-helper -- write-merge --output /tmp/world-import < merge.json
 npm run world-import-helper -- emit --output /tmp/world-import

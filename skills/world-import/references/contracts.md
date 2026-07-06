@@ -4,7 +4,7 @@ This contract is skill-owned guidance for the model. TypeScript helpers validate
 
 ## Source span reference
 
-Every semantic claim should cite at least one source span:
+Every semantic claim should cite at least one source span. Use `resolve-ref` to get canonical ids and `quote-ref --as-ref` to populate exact quote text rather than guessing source hashes or using placeholders:
 
 ```json
 {
@@ -100,6 +100,10 @@ Persist a single merge stage:
 ```
 
 Candidate dispositions are model-authored audit metadata. Every extraction candidate id should be represented by an artifact (`metadata.representedCandidateIds`, e.g. `["unit-id:candidate-id"]`), merged into a broader artifact, deferred, or dropped with a reason. Helper lint checks completeness only; it does not judge whether the disposition is semantically wise.
+
+Prefer incremental merge construction with `write-artifact --mode upsert --file artifact.json` and validate complex artifacts with `validate-artifact`. Use `coverage-plan` before final emission to inspect source-unit and candidate accounting. Use `emit-lint-repair-loop` and `repair-summary` before declaring the import complete.
+
+`SourceSpanRef.quote` should be an exact or lightly trimmed source excerpt. Placeholder strings such as `[Source span b0001-b0003]`, `TODO quote`, or an empty quote are acceptable only as temporary drafts and will produce lint/validation diagnostics.
 
 The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes. `type`, `description`, `tags`, `resource`, and `timestamp` are optional interoperability fields for emitted OKF-style concept pages; helpers should validate their structure but must not infer their values.
 

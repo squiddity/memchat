@@ -112,6 +112,16 @@ function checkExists(diagnostics: LintDiagnostic[], code: string, path: string, 
   if (!existsSync(path)) diagnostics.push({ code, level: "error", path, message });
 }
 
+function isPlaceholderQuote(quote: string | undefined): boolean {
+  return [
+    /^\s*$/,
+    /\[\s*source\s+span\b/i,
+    /source\s+span\s+b\d{4}/i,
+    /TODO\s+quote/i,
+    /^\s*quote\s*$/i,
+  ].some((pattern) => pattern.test(quote ?? ""));
+}
+
 function hasMarkdownHeadingAnchor(content: string, anchor: string): boolean {
   return new RegExp(`^##\\s+${anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m").test(content);
 }
@@ -145,6 +155,9 @@ export async function lintWorldImport(outputRoot: string): Promise<WorldImportLi
       diagnostics.push({ code: "missing-description", level: "warning", artifactId: artifact.id, message: `Artifact ${artifact.id} lacks description or summary/capsule fallback` });
     }
     if (artifact.provenance.length === 0) diagnostics.push({ code: "missing-provenance", level: "error", artifactId: artifact.id, message: `Artifact ${artifact.id} has no provenance` });
+    artifact.provenance.forEach((ref, index) => {
+      if (isPlaceholderQuote(ref.quote)) diagnostics.push({ code: "missing-provenance-quote", level: "warning", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}].quote`, message: `Artifact ${artifact.id} provenance ref ${index} has an empty or placeholder quote` });
+    });
   }
 
   const conceptFiles: string[] = [];
@@ -232,7 +245,28 @@ export async function lintWorldImport(outputRoot: string): Promise<WorldImportLi
     }
   }
 
+  const manifestUnitsById = new Map(units.map((unit) => [unit.unitId, unit]));
   const citedUnits = new Set((merge?.artifacts ?? []).flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)));
+  for (const artifact of merge?.artifacts ?? []) {
+    for (const [index, ref] of artifact.provenance.entries()) {
+      const manifestUnit = manifestUnitsById.get(ref.unitId);
+      if (!manifestUnit) diagnostics.push({ code: "unresolved-provenance-unit", level: "error", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: `Provenance unit ${ref.unitId} is not in the manifest` });
+      else {
+        let sourceId = manifestUnit.sourceId;
+        let anchors = new Set(manifestUnit.anchors);
+        try {
+          const unit = await readNormalizedUnit(outputRoot, ref.unitId);
+          sourceId = unit.sourceId;
+          anchors = new Set(unit.blocks.map((block) => block.anchor));
+        } catch {
+          // Some deterministic eval fixtures provide manifest + emitted source pages
+          // without normalized JSON. The manifest still carries sourceId/anchor facts.
+        }
+        if (sourceId !== ref.sourceId) diagnostics.push({ code: "provenance-source-mismatch", level: "error", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: `Ref sourceId ${ref.sourceId} does not match normalized unit sourceId ${sourceId}` });
+        if (!anchors.has(ref.startAnchor) || !anchors.has(ref.endAnchor)) diagnostics.push({ code: "unresolved-provenance-anchor", level: "error", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: `Ref anchors ${ref.startAnchor}-${ref.endAnchor} do not resolve in ${ref.unitId}` });
+      }
+    }
+  }
   for (const unit of units.filter((entry) => (entry.role ?? "body") === "body")) {
     if (hasExtractionData && extractionByUnit.has(unit.unitId) && !citedUnits.has(unit.unitId)) {
       diagnostics.push({ code: "body-unit-no-emitted-coverage", level: "error", unitId: unit.unitId, message: `Body source unit ${unit.unitId} has extraction data but no emitted artifact provenance` });

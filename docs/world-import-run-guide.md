@@ -192,6 +192,18 @@ npm run world-import-run -- \
   --show-tool-updates
 ```
 
+## During model-backed imports
+
+The `world-import` skill should use deterministic helper tools for provenance and merge operations instead of ad hoc scripts. If a run shows the model writing source-id mapping code, `sid()` / `uid()` / `ref()` helpers, giant JSON-generation scripts, or placeholder quote strings, prefer the helper commands documented in `skills/world-import/references/helper-tools.md`.
+
+Common helper checks during or after a run:
+
+```bash
+npm run world-import-helper -- coverage-plan --output /tmp/world-out
+npm run world-import-helper -- repair-summary --output /tmp/world-out
+npm run world-import-helper -- emit-lint-repair-loop --output /tmp/world-out
+```
+
 ## Inspecting output
 
 After a run, check whether the wiki bundle was produced:
@@ -242,6 +254,14 @@ npm run world-import-helper -- normalize --input <path> --output <dir>
 npm run world-import-helper -- list-units --output <dir>
 npm run world-import-helper -- read-unit --output <dir> --unit <unit-id>
 npm run world-import-helper -- read-slice --output <dir> --unit <unit-id> --start <anchor> --end <anchor>
+npm run world-import-helper -- resolve-ref --output <dir> --unit <unit-id> --start <anchor> --end <anchor>
+npm run world-import-helper -- quote-ref --output <dir> --unit <unit-id> --start <anchor> --end <anchor> --as-ref
+npm run world-import-helper -- validate-artifact --output <dir> --file artifact.json
+npm run world-import-helper -- write-artifact --output <dir> --mode upsert --file artifact.json
+npm run world-import-helper -- patch-merge --output <dir> --file patch.json
+npm run world-import-helper -- coverage-plan --output <dir>
+npm run world-import-helper -- repair-summary --output <dir>
+npm run world-import-helper -- emit-lint-repair-loop --output <dir>
 npm run world-import-helper -- write-extraction --output <dir> --unit <unit-id> < stage.json
 npm run world-import-helper -- write-merge --output <dir> < merged-stage.json
 npm run world-import-helper -- emit --output <dir>

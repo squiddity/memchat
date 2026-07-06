@@ -16,7 +16,7 @@ Before merging any new source material, inspect whether `<output>` already conta
 - **New world** — no prior bundle of interest exists. Proceed normally.
 - **Maintained world** — prior world pages already exist and should be treated as world state to revise rather than output to discard mentally.
 
-For a maintained world, inspect the existing `world/index.md`, relevant group indexes, affected artifact pages, `world/coverage.md`, `world/log.md`, and the prior `World Overview` / `Corpus Synopsis` artifact if present. There are not yet dedicated helper commands for all of this inspection, so use the emitted markdown files themselves together with the helper commands below.
+For a maintained world, inspect the existing `world/index.md`, relevant group indexes, affected artifact pages, `world/coverage.md`, `world/log.md`, and the prior `World Overview` / `Corpus Synopsis` artifact if present. Use emitted markdown files together with `coverage-plan`, `repair-summary`, and targeted source-reading helpers.
 
 ## 1. Normalize
 
@@ -40,7 +40,14 @@ For each unit:
 npm run world-import-helper -- read-unit --output <output> --unit <unit-id>
 ```
 
-Produce one extraction stage envelope per unit following `contracts.md`. Extract reusable world-canon candidates with source spans.
+Use deterministic helpers for provenance spans:
+
+```bash
+npm run world-import-helper -- resolve-ref --output <output> --unit <unit-id> --start b0001 --end b0003
+npm run world-import-helper -- quote-ref --output <output> --unit <unit-id> --start b0001 --end b0003 --as-ref
+```
+
+Produce one extraction stage envelope per unit following `contracts.md`. Extract reusable world-canon candidates with source spans. Prefer exact `quote-ref --as-ref` provenance over placeholder quote strings.
 
 ### Extraction detail guidelines
 
@@ -115,7 +122,7 @@ Example good extraction (rich) vs poor extraction (too brief):
 - Think of `related` as the deduplication mechanism: the croquet game gets one detailed fact artifact; Alice's entry links to it rather than retelling the entire scene.
 - Prefer useful discovery metadata in the merge packet: `type`, a concise `description`, and tags when they materially help indexing.
 - Preserve multiple provenance refs after merge.
-- Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly.
+- Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly. Use `resolve-ref` and `quote-ref --as-ref`; do not guess source ids or source hashes.
 - For maintained worlds, enrich existing artifacts when identity continuity is supported instead of cloning near-duplicates. If identity is uncertain, keep the ambiguity visible rather than forcing a merge.
 - For maintained worlds, preserve prior provenance and make retcons/conflicts explicit in sections or metadata. Do not silently drop older evidence just because newer material exists.
 - For substantive imports, include or update a `World Overview` / `Corpus Synopsis` artifact as a normal `facts` artifact. Revise it from prior overview + affected artifacts + new evidence, not from new input alone.
@@ -125,12 +132,35 @@ Example good extraction (rich) vs poor extraction (too brief):
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.
 
-## 3. Coverage repair loop
+## 3. Merge writing and coverage planning
 
-After writing and emitting the merge packet, run deterministic lint:
+Prefer incremental artifact writing instead of giant merge JSON heredocs:
 
 ```bash
-npm run world-import-helper -- lint --output <output>
+npm run world-import-helper -- validate-artifact --output <output> --file artifact.json
+npm run world-import-helper -- write-artifact --output <output> --mode upsert --file artifact.json
+```
+
+Before final emission, inspect deterministic coverage:
+
+```bash
+npm run world-import-helper -- coverage-plan --output <output>
+```
+
+Use coverage diagnostics to decide model-authored repairs: add artifacts, add provenance, add represented candidate ids, or add candidate dispositions with reasons.
+
+## 4. Coverage repair loop
+
+After writing artifacts, run the deterministic emit/lint loop:
+
+```bash
+npm run world-import-helper -- emit-lint-repair-loop --output <output>
+```
+
+If there are diagnostics, inspect the repair summary:
+
+```bash
+npm run world-import-helper -- repair-summary --output <output>
 ```
 
 For each diagnostic, repair semantically rather than obeying blindly:
@@ -141,3 +171,13 @@ For each diagnostic, repair semantically rather than obeying blindly:
 - body coverage gaps: inspect the source unit and extraction stage, then add missing artifacts or record why no durable artifact is warranted.
 
 Re-emit and re-run lint after repairs. Lint diagnoses structural/accounting facts; it does not decide ontology, canon importance, prose quality, or whether a drop reason is semantically persuasive.
+
+## 5. Helper anti-patterns
+
+If you find yourself doing any of these, stop and use `references/helper-tools.md`:
+
+- writing Python or shell functions named `sid`, `uid`, or `ref`;
+- hard-coding source-hash maps from manifest rows;
+- using placeholder quote text in final artifacts;
+- rewriting the entire merge stage to fix one provenance reference;
+- declaring success without lint/coverage checks.
