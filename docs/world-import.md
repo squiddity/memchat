@@ -6,7 +6,7 @@ Skill-first pipeline for turning HTML/XHTML directories, ZIPs, and EPUB-like arc
 
 ### Execution supervision
 
-For watched or long-running imports, helper loops, lint/eval, repairs, audits, and source-search runs from herdr/pi, prefer a dedicated pane below the current pane. Use existing skill/helper/tool entrypoints before ad hoc scripts.
+When operating from herdr/pi, run world-import-related project commands in a dedicated pane **below** the current pane whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. This covers `npm run world-import-run`, model-backed import test runs, `npm run world-import-helper -- lint|eval|provenance-audit`, helper/repair loops, and repeated source-search/provenance workflows. Avoid side panes for routine supervision, and do not hide these runs behind `nohup`, background `bash`, or detached transcripts unless no pane tool is available. Use existing skill/helper/tool entrypoints before ad hoc scripts.
 
 ### Build & prerequisites
 

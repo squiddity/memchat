@@ -42,7 +42,7 @@ npm run world-import-run -- --input ./sources --output /tmp/memchat-world --dry-
 npm run world-import-run -- --input samples/pg120-images-3.epub --output /tmp/memchat-world --model openrouter/deepseek/deepseek-v4-pro
 ```
 
-For imports and other longer-running shell jobs, prefer a dedicated herdr pane **below** the current one so you can keep monitoring output without crowding the main conversation pane. Avoid side panes for routine job supervision.
+When working from herdr/pi, run project tool commands in a dedicated pane **below** the current one whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. This includes imports, builds/tests, playtests, lint/eval, provenance audits, helper loops, repair loops, and repeated source-search workflows. Avoid side panes for routine job supervision; keep inline execution for quick one-shot inspection commands.
 
 ## Docs
 

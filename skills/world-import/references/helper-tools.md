@@ -2,7 +2,7 @@
 
 Use these deterministic helpers instead of ad hoc scripts for source references, quotes, merge-stage edits, coverage checks, provenance audit, source search, and lint repair.
 
-When operating in herdr/pi, run watched, iterative, or potentially longer helper actions in a dedicated pane **below** the current pane using the same supervision pattern as model-backed imports. This is especially useful for `emit-lint-repair-loop`, `eval`, `provenance-audit`, repeated `find-text` / `suggest-ref-candidates` repair searches, and patch/re-emit loops. Short one-shot inspections can stay inline when clearer.
+When operating in herdr/pi, run helper commands in a dedicated pane **below** the current pane whenever they are meant to be watched, may take more than a moment, or emit useful streaming output, using the same supervision pattern as model-backed imports. This is especially important for `emit-lint-repair-loop`, `eval`, `provenance-audit`, repeated `find-text` / `suggest-ref-candidates` repair searches, and patch/re-emit loops. Short one-shot inspections can stay inline when clearer; do not use `nohup` or detached background shells for supervised helper work unless no pane tool is available.
 
 ## Core rule
 
