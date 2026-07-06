@@ -2,7 +2,7 @@
 
 Quick reference for running `memchat-world-import` from the shell.
 
-When running imports, evals, or other longer-lived shell jobs from herdr, use a dedicated pane **below** the current pane and monitor it there. Avoid side panes for routine job supervision.
+When running imports, evals, helper repair loops, or other longer-lived shell jobs from herdr, use a dedicated pane **below** the current pane and monitor it there. Avoid side panes for routine job supervision. Prefer this lower-pane pattern for any `world-import-helper` action whose progress/output should be watched or may take more than a moment, not just model-backed imports.
 
 Preferred wrapper for live terminal/herdr runs, including dry runs:
 
@@ -196,7 +196,7 @@ npm run world-import-run -- \
 
 The `world-import` skill should use deterministic helper tools for provenance and merge operations instead of ad hoc scripts. If a run shows the model writing source-id mapping code, `sid()` / `uid()` / `ref()` helpers, giant JSON-generation scripts, or placeholder quote strings, prefer the helper commands documented in `skills/world-import/references/helper-tools.md`.
 
-Common helper checks during or after a run:
+Common helper checks during or after a run. In herdr/pi, run these in the same dedicated lower job pane pattern when they are part of a repair loop or you want visible progress/output history:
 
 ```bash
 npm run world-import-helper -- coverage-plan --output /tmp/world-out
@@ -231,7 +231,7 @@ A healthy wiki bundle should normally include:
 
 ## Linting and evaluating output
 
-Run deterministic lint immediately after emission:
+Run deterministic lint immediately after emission. In herdr/pi, use the dedicated lower job pane for lint/eval/provenance audit and repair helper loops when possible, matching the import-run supervision pattern:
 
 ```bash
 npm run world-import-helper -- lint --output /tmp/world-out
@@ -239,7 +239,7 @@ npm run world-import-helper -- lint --output /tmp/world-out
 
 Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps. Repair the merge packet or explicitly account for intentional omissions before declaring the import healthy.
 
-Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model. Run that eval in the same lower herdr job pane pattern. The main `world-import` CLI now defaults the reviewer model to the active import model when `--reviewer-model` is omitted, but manual helper runs still let you override it explicitly:
+Then run eval; it embeds the same deterministic lint result in `stages/review.json` and can optionally call a reviewer model. Run that eval in the same lower herdr job pane pattern. The same applies to helper-driven provenance repair sessions (`provenance-audit`, `find-text`, `suggest-ref-candidates`, `quote-ref`, `patch-merge`, `emit-lint-repair-loop`) when you are iterating and monitoring output. The main `world-import` CLI now defaults the reviewer model to the active import model when `--reviewer-model` is omitted, but manual helper runs still let you override it explicitly:
 
 ```bash
 npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model openrouter/google/gemma-4-31b-it:free
@@ -248,6 +248,8 @@ npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model ope
 Omit `--reviewer-model` to run deterministic checks only (no model scoring). Reviewer prompts include source reconstruction, dropped-candidate risk, and style/tone usefulness checks.
 
 ## Helper cheat sheet
+
+When running these from herdr/pi and the command is watched, iterative, or potentially long-running, run it in a dedicated pane below the current pane using the same approach as `npm run world-import-run -- ...`. Short one-shot inspection commands may still be run inline when that is clearer.
 
 ```bash
 npm run world-import-helper -- normalize --input <path> --output <dir>

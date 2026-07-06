@@ -68,6 +68,75 @@ export type ArtifactValidationResult = {
   diagnostics: LintDiagnostic[];
 };
 
+export type ProvenanceAuditOptions = {
+  outputRoot: string;
+  artifactId?: string;
+  strict?: boolean;
+};
+
+export type ProvenanceAuditDiagnostic = LintDiagnostic & {
+  suggestion: string;
+};
+
+export type ProvenanceAuditResult = {
+  passed: boolean;
+  summary: {
+    artifacts: number;
+    warnings: number;
+    errors: number;
+  };
+  diagnostics: ProvenanceAuditDiagnostic[];
+};
+
+export type FindTextOptions = SourceSelector & {
+  outputRoot: string;
+  query: string;
+  regex?: boolean;
+  caseSensitive?: boolean;
+  groupBodyOnly?: boolean;
+  context?: number;
+  maxResults?: number;
+};
+
+export type FindTextResult = {
+  query: string;
+  matches: Array<{
+    unitId: string;
+    sourceId: string;
+    order: number;
+    title?: string;
+    anchor: string;
+    kind?: string;
+    text: string;
+    context: Array<{ anchor: string; kind?: string; text: string }>;
+    quoteRefCommand: string;
+  }>;
+};
+
+export type SuggestRefCandidatesOptions = SourceSelector & {
+  outputRoot: string;
+  claim: string;
+  artifactId?: string;
+  maxResults?: number;
+  window?: number;
+};
+
+export type SuggestRefCandidatesResult = {
+  claim: string;
+  candidates: Array<{
+    score: number;
+    unitId: string;
+    sourceId: string;
+    order: number;
+    title?: string;
+    startAnchor: string;
+    endAnchor: string;
+    quote: string;
+    matchedTerms: string[];
+    quoteRefCommand: string;
+  }>;
+};
+
 export type CoveragePlan = {
   sourceUnits: number;
   extractionStages: number;
@@ -405,6 +474,268 @@ function repairSuggestion(code: string): string {
     default:
       return "Inspect the diagnostic and repair the merge packet or emitted markdown as appropriate.";
   }
+}
+
+function auditSuggestion(code: string): string {
+  switch (code) {
+    case "heading-only-provenance":
+    case "first-block-provenance":
+      return "Use find-text or suggest-ref-candidates to locate narrative evidence, then quote-ref --as-ref to add or replace the heading citation.";
+    case "low-information-provenance":
+      return "Use quote-ref --as-ref on a more informative source span that supports the artifact claim.";
+    case "sparse-provenance-density":
+    case "single-ref-many-sections":
+      return "Review major sections and add claim-supporting refs with quote-ref --as-ref where evidence is thin.";
+    case "repeated-identical-provenance":
+      return "Inspect repeated citations; story headings are often useful context but weak sole evidence for detailed artifacts.";
+    case "style-under-cited":
+      return "Find multiple representative style examples across source blocks and cite them separately.";
+    case "event-heading-only-provenance":
+      return "Find setup/action/reveal/consequence passages with find-text or suggest-ref-candidates and cite narrative spans.";
+    default:
+      return "Inspect the citation and add more precise source evidence if needed.";
+  }
+}
+
+function plainQuote(text: string): string {
+  return text.replace(/^\[b\d{4}\]\s*/gm, "").replace(/\s+/g, " ").trim();
+}
+
+function isMostlyTitleLike(text: string): boolean {
+  const words = text.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 14) return false;
+  const titled = words.filter((word) => /^[A-Z0-9]/.test(word));
+  return titled.length / words.length >= 0.7;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function quoteRefCommand(outputRoot: string, unitId: string, startAnchor: string, endAnchor: string): string {
+  return `npm run world-import-helper -- quote-ref --output ${shellQuote(outputRoot)} --unit ${shellQuote(unitId)} --start ${shellQuote(startAnchor)} --end ${shellQuote(endAnchor)} --as-ref`;
+}
+
+function markdownDiagnosticList(title: string, diagnostics: ProvenanceAuditDiagnostic[]): string[] {
+  const lines = [`## ${title}`, ""];
+  if (diagnostics.length === 0) return [...lines, "None.", ""];
+  diagnostics.forEach((item, index) => {
+    lines.push(`${index + 1}. \`${item.code}\`${item.artifactId ? ` in \`${item.artifactId}\`` : ""}${item.unitId ? ` for unit \`${item.unitId}\`` : ""}`);
+    lines.push(`   - ${item.message}`);
+    lines.push(`   - Suggested repair: ${item.suggestion}`);
+    if (item.path) lines.push(`   - Path: \`${item.path}\``);
+    lines.push("");
+  });
+  return lines;
+}
+
+export function renderProvenanceAuditMarkdown(result: ProvenanceAuditResult): string {
+  const errors = result.diagnostics.filter((item) => item.level === "error");
+  const warnings = result.diagnostics.filter((item) => item.level === "warning");
+  const lines = [
+    "# World import provenance audit",
+    "",
+    `Passed: ${result.passed ? "yes" : "no"}`,
+    `Artifacts audited: ${result.summary.artifacts}`,
+    `Warnings: ${result.summary.warnings}`,
+    `Errors: ${result.summary.errors}`,
+    "",
+    ...markdownDiagnosticList("Errors", errors),
+    ...markdownDiagnosticList("Warnings", warnings),
+  ];
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+export async function provenanceAudit(options: ProvenanceAuditOptions): Promise<ProvenanceAuditResult> {
+  const stage = await readMergeStage(options.outputRoot);
+  const artifacts = (stage.artifacts ?? []).filter((artifact) => !options.artifactId || artifact.id === options.artifactId);
+  if (options.artifactId && artifacts.length === 0) throw new Error(`Artifact ${options.artifactId} not found`);
+  const unitCache = new Map<string, Awaited<ReturnType<typeof readNormalizedUnit>>>();
+  const getUnit = async (unitId: string) => {
+    let unit = unitCache.get(unitId);
+    if (!unit) {
+      unit = await readNormalizedUnit(options.outputRoot, unitId);
+      unitCache.set(unitId, unit);
+    }
+    return unit;
+  };
+  const diagnostics: ProvenanceAuditDiagnostic[] = [];
+  const repeated = new Map<string, Array<{ artifactId: string; index: number }>>();
+  const add = (diagnostic: LintDiagnostic) => diagnostics.push({ ...diagnostic, level: options.strict && diagnostic.level === "warning" ? "error" : diagnostic.level, suggestion: auditSuggestion(diagnostic.code) });
+
+  for (const artifact of artifacts) {
+    const sectionCount = artifact.sections.filter((section) => section.body.trim().length > 0).length;
+    const bodyChars = artifact.sections.reduce((sum, section) => sum + section.body.trim().length, 0);
+    const refCount = artifact.provenance.length;
+    if (sectionCount >= 4 && refCount < 2) add({ code: "single-ref-many-sections", level: "warning", artifactId: artifact.id, message: `${sectionCount} non-empty sections have only ${refCount} provenance ref(s).` });
+    if ((sectionCount >= 4 || bodyChars >= 1600) && (refCount / Math.max(1, sectionCount) < 0.5 || bodyChars / Math.max(1, refCount) > 1200)) add({ code: "sparse-provenance-density", level: "warning", artifactId: artifact.id, message: `${sectionCount} sections, ${bodyChars} body chars, ${refCount} provenance ref(s).` });
+    if (artifact.group === "style" && bodyChars >= 80 && refCount < 3) add({ code: "style-under-cited", level: "warning", artifactId: artifact.id, message: `Substantive style artifact has ${refCount} provenance ref(s); multiple examples are usually needed.` });
+
+    let headingOnlyRefs = 0;
+    for (const [index, ref] of artifact.provenance.entries()) {
+      const key = `${ref.unitId}:${ref.startAnchor}:${ref.endAnchor}`;
+      repeated.set(key, [...(repeated.get(key) ?? []), { artifactId: artifact.id, index }]);
+      let unit;
+      try { unit = await getUnit(ref.unitId); } catch { continue; }
+      const start = unit.blocks.findIndex((block) => block.anchor === ref.startAnchor);
+      const end = unit.blocks.findIndex((block) => block.anchor === ref.endAnchor);
+      if (start === -1 || end === -1 || end < start) continue;
+      const blocks = unit.blocks.slice(start, end + 1);
+      const quote = plainQuote(ref.quote || blocks.map((block) => block.text).join("\n"));
+      const headingOnly = blocks.length > 0 && blocks.every((block) => block.kind === "heading");
+      const quoteLooksLikeTitle = Boolean(unit.title && quote.toLowerCase() === unit.title.toLowerCase()) || isMostlyTitleLike(quote);
+      if (headingOnly || quoteLooksLikeTitle) {
+        headingOnlyRefs++;
+        add({ code: "heading-only-provenance", level: "warning", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: "Citation points to a heading/title-like block; detailed claims usually need narrative evidence." });
+      }
+      if (quote.length > 0 && quote.length < 30) add({ code: "low-information-provenance", level: "warning", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}].quote`, message: `Citation quote is very short (${quote.length} chars).` });
+      if (ref.startAnchor === "b0001") add({ code: "first-block-provenance", level: "warning", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: "Citation starts at b0001; first-block refs are often headings or coarse story context." });
+    }
+    if ((artifact.group === "facts" || artifact.type === "event") && refCount > 0 && headingOnlyRefs === refCount) add({ code: "event-heading-only-provenance", level: "warning", artifactId: artifact.id, message: "Fact/event artifact provenance is only heading/title-like refs; event details likely need narrative body evidence." });
+  }
+
+  for (const [key, uses] of repeated.entries()) {
+    if (uses.length < 3) continue;
+    const [unitId, startAnchor, endAnchor] = key.split(":");
+    add({ code: "repeated-identical-provenance", level: "warning", unitId, path: `${unitId}:${startAnchor}-${endAnchor}`, message: `Same source span is cited by ${uses.length} artifacts: ${uses.map((use) => use.artifactId).slice(0, 8).join(", ")}${uses.length > 8 ? ", …" : ""}.` });
+  }
+  const warnings = diagnostics.filter((item) => item.level === "warning").length;
+  const errors = diagnostics.filter((item) => item.level === "error").length;
+  return { passed: errors === 0, summary: { artifacts: artifacts.length, warnings, errors }, diagnostics };
+}
+
+async function selectedUnits(outputRoot: string, selector: SourceSelector, groupBodyOnly?: boolean) {
+  const manifest = await readManifest(outputRoot);
+  let units = manifest.units.filter((unit) => unitMatchesSelector(unit, selector));
+  const selectorCount = [selector.unit, selector.source, selector.order, selector.entryPath, selector.title].filter((item) => item !== undefined).length;
+  if (selectorCount === 0) units = manifest.units;
+  if (groupBodyOnly) units = units.filter((unit) => (unit.role ?? "body") === "body");
+  return units;
+}
+
+export async function findText(options: FindTextOptions): Promise<FindTextResult> {
+  const units = await selectedUnits(options.outputRoot, options, options.groupBodyOnly);
+  const maxResults = options.maxResults ?? 20;
+  const contextSize = options.context ?? 0;
+  const matches: FindTextResult["matches"] = [];
+  const flags = options.caseSensitive ? "u" : "iu";
+  const pattern = options.regex ? new RegExp(options.query, flags) : undefined;
+  const needle = options.caseSensitive ? options.query : options.query.toLowerCase();
+  for (const entry of units) {
+    const unit = await readNormalizedUnit(options.outputRoot, entry.unitId);
+    for (const [index, block] of unit.blocks.entries()) {
+      const haystack = options.caseSensitive ? block.text : block.text.toLowerCase();
+      const ok = pattern ? pattern.test(block.text) : haystack.includes(needle);
+      if (!ok) continue;
+      const from = Math.max(0, index - contextSize);
+      const to = Math.min(unit.blocks.length - 1, index + contextSize);
+      matches.push({
+        unitId: unit.unitId,
+        sourceId: unit.sourceId,
+        order: unit.order,
+        ...(unit.title ? { title: unit.title } : {}),
+        anchor: block.anchor,
+        ...(block.kind ? { kind: block.kind } : {}),
+        text: block.text,
+        context: unit.blocks.slice(from, to + 1).map((item) => ({ anchor: item.anchor, ...(item.kind ? { kind: item.kind } : {}), text: item.text })),
+        quoteRefCommand: quoteRefCommand(options.outputRoot, unit.unitId, block.anchor, block.anchor),
+      });
+      if (matches.length >= maxResults) return { query: options.query, matches };
+    }
+  }
+  return { query: options.query, matches };
+}
+
+const stopwords = new Set("a an and are as at be by for from has he her his in into is it its of on or she that the their them they this to was were when where who with without while but not than then there these those through under over upon within across between during after before only very usually can could would should may might will have had do does did".split(" "));
+
+function tokenize(text: string): string[] {
+  return text.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}'\s-]/gu, " ").split(/[\s-]+/).map((token) => token.replace(/^'+|'+$/g, "")).filter((token) => token.length > 2 && !stopwords.has(token));
+}
+
+export async function suggestRefCandidates(options: SuggestRefCandidatesOptions): Promise<SuggestRefCandidatesResult> {
+  const claimTokens = [...new Set(tokenize(options.claim))];
+  if (claimTokens.length === 0) return { claim: options.claim, candidates: [] };
+  const units = await selectedUnits(options.outputRoot, options, true);
+  const merge = options.artifactId ? await readMergeStage(options.outputRoot) : undefined;
+  const artifact = options.artifactId ? merge?.artifacts?.find((item) => item.id === options.artifactId) : undefined;
+  if (options.artifactId && !artifact) throw new Error(`Artifact ${options.artifactId} not found`);
+  const citedUnits = new Set((artifact?.provenance ?? []).map((ref) => ref.unitId));
+  const citedStarts = new Map<string, number[]>();
+  const unitBlockCache = new Map<string, Awaited<ReturnType<typeof readNormalizedUnit>>>();
+  for (const ref of artifact?.provenance ?? []) {
+    const unit = unitBlockCache.get(ref.unitId) ?? await readNormalizedUnit(options.outputRoot, ref.unitId);
+    unitBlockCache.set(ref.unitId, unit);
+    const index = unit.blocks.findIndex((block) => block.anchor === ref.startAnchor);
+    if (index >= 0) citedStarts.set(ref.unitId, [...(citedStarts.get(ref.unitId) ?? []), index]);
+  }
+  const docFreq = new Map<string, number>();
+  const unitData = [] as Array<{ entry: SourceManifestEntry; unit: Awaited<ReturnType<typeof readNormalizedUnit>>; blockTokens: string[][] }>;
+  for (const entry of units) {
+    const unit = unitBlockCache.get(entry.unitId) ?? await readNormalizedUnit(options.outputRoot, entry.unitId);
+    const blockTokens = unit.blocks.map((block) => tokenize(block.text));
+    for (const tokens of blockTokens) for (const token of new Set(tokens)) docFreq.set(token, (docFreq.get(token) ?? 0) + 1);
+    unitData.push({ entry, unit, blockTokens });
+  }
+  const window = Math.max(1, options.window ?? 1);
+  const candidates: SuggestRefCandidatesResult["candidates"] = [];
+  const claimPhrase = options.claim.toLowerCase();
+  for (const { unit, blockTokens } of unitData) {
+    for (let index = 0; index < unit.blocks.length; index++) {
+      const endIndex = Math.min(unit.blocks.length - 1, index + window - 1);
+      const tokens = new Set(blockTokens.slice(index, endIndex + 1).flat());
+      const matchedTerms = claimTokens.filter((token) => tokens.has(token));
+      if (matchedTerms.length === 0) continue;
+      let score = 0;
+      for (const token of matchedTerms) score += 1 / Math.sqrt(docFreq.get(token) ?? 1);
+      score = score / Math.max(1, claimTokens.length);
+      const quote = unit.blocks.slice(index, endIndex + 1).map((block) => block.text).join("\n\n");
+      score += (matchedTerms.length / claimTokens.length) * 0.2;
+      if (quote.toLowerCase().includes(claimPhrase)) score += 0.5;
+      if (citedUnits.has(unit.unitId)) score += 0.15;
+      const starts = citedStarts.get(unit.unitId) ?? [];
+      if (starts.some((start) => Math.abs(start - index) <= 3)) score += 0.1;
+      if (unit.blocks.slice(index, endIndex + 1).every((block) => block.kind === "heading") || isMostlyTitleLike(quote)) score *= 0.45;
+      candidates.push({
+        score: Number(score.toFixed(4)),
+        unitId: unit.unitId,
+        sourceId: unit.sourceId,
+        order: unit.order,
+        ...(unit.title ? { title: unit.title } : {}),
+        startAnchor: unit.blocks[index]!.anchor,
+        endAnchor: unit.blocks[endIndex]!.anchor,
+        quote,
+        matchedTerms,
+        quoteRefCommand: quoteRefCommand(options.outputRoot, unit.unitId, unit.blocks[index]!.anchor, unit.blocks[endIndex]!.anchor),
+      });
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score || a.order - b.order || a.startAnchor.localeCompare(b.startAnchor));
+  return { claim: options.claim, candidates: candidates.slice(0, options.maxResults ?? 10) };
+}
+
+export function renderFindTextMarkdown(result: FindTextResult): string {
+  const lines = [`# find-text: ${result.query}`, ""];
+  if (result.matches.length === 0) lines.push("No matches.", "");
+  result.matches.forEach((match, index) => {
+    lines.push(`## ${index + 1}. ${match.title ?? match.unitId} ${match.anchor}`, "", match.text, "", "```bash", match.quoteRefCommand, "```", "");
+  });
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+export function renderSuggestRefCandidatesMarkdown(result: SuggestRefCandidatesResult): string {
+  const lines = [`# suggest-ref-candidates`, "", `Claim: ${result.claim}`, ""];
+  if (result.candidates.length === 0) lines.push("No candidates.", "");
+  result.candidates.forEach((candidate, index) => {
+    lines.push(`## ${index + 1}. score ${candidate.score} — ${candidate.title ?? candidate.unitId} ${candidate.startAnchor}-${candidate.endAnchor}`, "", `Matched terms: ${candidate.matchedTerms.join(", ")}`, "", candidate.quote, "", "```bash", candidate.quoteRefCommand, "```", "");
+  });
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+export async function writeProvenanceAuditFile(outputRoot: string, format: "json" | "markdown", result: ProvenanceAuditResult): Promise<string> {
+  const path = join(outputRoot, "stages", `provenance-audit.${format === "json" ? "json" : "md"}`);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, format === "json" ? `${JSON.stringify(result, null, 2)}\n` : renderProvenanceAuditMarkdown(result), "utf-8");
+  return path;
 }
 
 export async function buildRepairSummary(outputRoot: string, format: "json" | "markdown" = "markdown"): Promise<unknown> {

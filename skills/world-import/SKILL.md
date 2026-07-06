@@ -57,6 +57,8 @@ Do **not** write ad hoc Python or shell scripts to invent source ids, unit ids, 
 - `coverage-plan` before final merge review.
 - `emit-lint-repair-loop` before declaring success.
 - `repair-summary` to turn diagnostics into a model-actionable checklist.
+- `provenance-audit` after clean lint to find structurally valid but weak citations.
+- `find-text` and `suggest-ref-candidates` to locate precise evidence before reading whole units during provenance repair.
 
 Ad hoc scripts are acceptable only for one-off inspection that has no corresponding helper. If you find yourself coding `sid()`, `uid()`, `ref()`, source hash maps, anchor checks, or merge-stage rewrite loops, stop and use the helper surface documented in `references/helper-tools.md`.
 
@@ -148,6 +150,9 @@ npm run world-import-helper -- validate-artifact --output <output> --file artifa
 npm run world-import-helper -- write-artifact --output <output> --mode upsert --file artifact.json
 npm run world-import-helper -- coverage-plan --output <output>
 npm run world-import-helper -- repair-summary --output <output>
+npm run world-import-helper -- provenance-audit --output <output> --format markdown --write
+npm run world-import-helper -- find-text --output <output> --query <phrase> --context 2
+npm run world-import-helper -- suggest-ref-candidates --output <output> --artifact <artifact-id> --claim <claim-text>
 npm run world-import-helper -- emit-lint-repair-loop --output <output>
 npm run world-import-helper -- write-extraction --output <output> --unit <unit-id> < stage.json
 npm run world-import-helper -- write-merge --output <output> < merged-stage.json
@@ -157,6 +162,8 @@ npm run world-import-helper -- eval --output <output> --reviewer-model <provider
 ```
 
 Installed-package users may call `memchat-world-import-helper` with the same arguments. If invocation arguments include `helperCommand`, use that exact prefix for all helper calls.
+
+When running inside herdr/pi, use the same dedicated lower-pane pattern for watched or iterative helper actions as for `world-import-run` whenever possible. This keeps helper repair/eval/audit output monitorable without cluttering the conversation pane.
 
 ## Workflow summary
 
@@ -175,7 +182,8 @@ Stage hints are optional orchestration boundaries:
 6. Run `coverage-plan` before final emission to inspect group coverage, unit coverage, retained source pages, and candidate accounting. Repair omissions semantically or record model-authored dispositions.
 7. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
 8. Run deterministic `emit-lint-repair-loop` or `lint` plus `repair-summary`. Treat diagnostics as evidence for repair, not ontology: create missing artifacts, fix/remove unresolved links, add candidate dispositions, improve source coverage, or explicitly justify acceptable omissions in metadata/sections. Re-emit and re-lint after repairs.
-9. If a reviewer model is configured, run the eval helper after emission/lint; otherwise report that reviewer-model scoring was skipped.
-10. Summarize outputs, lint diagnostics, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
+9. Run `provenance-audit` before eval or before declaring high-quality success. Clean lint is necessary but not sufficient: heading/title refs can identify story context, but should not be the sole evidence for detailed people/place/thing/fact/style claims. Use `find-text`, `suggest-ref-candidates`, and `quote-ref --as-ref` to add or replace weak refs without blindly rewriting semantic prose.
+10. If a reviewer model is configured, run the eval helper after emission/lint/provenance-audit; otherwise report that reviewer-model scoring was skipped.
+11. Summarize outputs, lint diagnostics, provenance-audit warnings, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
 
 When `dryRun` is true, stop after normalization/listing and report whether the helper surface is available.

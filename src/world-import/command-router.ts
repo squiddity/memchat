@@ -10,18 +10,25 @@ import {
   buildCoveragePlan,
   buildRepairSummary,
   emitLintRepairLoop,
+  findText,
   parseMaxChars,
   parseMaxIterations,
   parsePlannedIds,
   parseWriteMode,
   patchMerge,
+  provenanceAudit,
   quoteRef,
   readArtifactFromFileOrStdin,
   readPatchFromFileOrStdin,
+  renderFindTextMarkdown,
+  renderProvenanceAuditMarkdown,
+  renderSuggestRefCandidatesMarkdown,
   resolveRef,
   selectorFromOptions,
+  suggestRefCandidates,
   validateArtifact,
   writeArtifact,
+  writeProvenanceAuditFile,
   writeRepairSummaryFile,
 } from "./helper-tools.js";
 import { normalizeSources } from "./normalize.js";
@@ -42,6 +49,9 @@ function usage(): string {
     `  patch-merge --output <dir> [--file patch.json]\n` +
     `  coverage-plan --output <dir>\n` +
     `  repair-summary --output <dir> [--format json|markdown] [--write]\n` +
+    `  provenance-audit --output <dir> [--artifact <id>] [--format json|markdown] [--strict] [--write]\n` +
+    `  find-text --output <dir> --query <text> [--unit <id>|--order <n>] [--context <n>] [--max-results <n>] [--regex] [--case-sensitive] [--group-body-only] [--format json|markdown]\n` +
+    `  suggest-ref-candidates --output <dir> (--claim <text>|--claim-file <path>) [--artifact <id>] [--unit <id>] [--window <n>] [--max-results <n>] [--format json|markdown]\n` +
     `  emit-lint-repair-loop --output <dir> [--max-iterations <n>]\n` +
     `  write-extraction --output <dir> --unit <unit-id> < stage.json\n` +
     `  write-merge --output <dir> < merged-stage.json\n` +
@@ -69,6 +79,18 @@ function requireString(options: Record<string, string | true>, key: string): str
   const value = options[key];
   if (typeof value !== "string" || value.length === 0) throw new Error(`Missing --${key}`);
   return value;
+}
+
+function optionalInteger(options: Record<string, string | true>, key: string, minimum = 1): number | undefined {
+  const value = options[key];
+  if (value === undefined || value === true) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum) throw new Error(`--${key} must be an integer >= ${minimum}`);
+  return parsed;
+}
+
+function outputFormatted(value: unknown, format: "json" | "markdown", markdown: string): string {
+  return format === "json" ? `${JSON.stringify(value, null, 2)}\n` : markdown;
 }
 
 async function readStdin(): Promise<string> {
@@ -205,6 +227,57 @@ async function main(): Promise<void> {
     } else {
       stdout.write(typeof result === "string" ? result : `${JSON.stringify(result, null, 2)}\n`);
     }
+    return;
+  }
+
+  if (command === "provenance-audit") {
+    const outputRoot = requireString(options, "output");
+    const format = options.format === "markdown" ? "markdown" : "json";
+    const result = await provenanceAudit({
+      outputRoot,
+      artifactId: typeof options.artifact === "string" ? options.artifact : undefined,
+      strict: options.strict === true,
+    });
+    if (options.write === true) {
+      const path = await writeProvenanceAuditFile(outputRoot, format, result);
+      stdout.write(`${JSON.stringify({ path, summary: result.summary, passed: result.passed }, null, 2)}\n`);
+    } else {
+      stdout.write(outputFormatted(result, format, renderProvenanceAuditMarkdown(result)));
+    }
+    if (!result.passed) exit(1);
+    return;
+  }
+
+  if (command === "find-text") {
+    const format = options.format === "markdown" ? "markdown" : "json";
+    const result = await findText({
+      outputRoot: requireString(options, "output"),
+      ...selectorFromOptions(options),
+      query: requireString(options, "query"),
+      regex: options.regex === true,
+      caseSensitive: options["case-sensitive"] === true,
+      groupBodyOnly: options["group-body-only"] === true,
+      context: optionalInteger(options, "context", 0),
+      maxResults: optionalInteger(options, "max-results", 1),
+    });
+    stdout.write(outputFormatted(result, format, renderFindTextMarkdown(result)));
+    return;
+  }
+
+  if (command === "suggest-ref-candidates") {
+    const format = options.format === "markdown" ? "markdown" : "json";
+    const claim = typeof options.claim === "string"
+      ? options.claim
+      : await readFile(requireString(options, "claim-file"), "utf-8");
+    const result = await suggestRefCandidates({
+      outputRoot: requireString(options, "output"),
+      ...selectorFromOptions(options),
+      claim,
+      artifactId: typeof options.artifact === "string" ? options.artifact : undefined,
+      window: optionalInteger(options, "window", 1),
+      maxResults: optionalInteger(options, "max-results", 1),
+    });
+    stdout.write(outputFormatted(result, format, renderSuggestRefCandidatesMarkdown(result)));
     return;
   }
 

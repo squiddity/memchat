@@ -121,7 +121,7 @@ Example good extraction (rich) vs poor extraction (too brief):
 - **Standalone summaries + cross-references for full detail.** Each artifact should have enough context to be useful when retrieved alone (via vector search), but use `related` links to avoid duplicating full event narratives across multiple entities. The full event blow-by-blow lives in a `facts` artifact — character and place artifacts summarize and link.
 - Think of `related` as the deduplication mechanism: the croquet game gets one detailed fact artifact; Alice's entry links to it rather than retelling the entire scene.
 - Prefer useful discovery metadata in the merge packet: `type`, a concise `description`, and tags when they materially help indexing.
-- Preserve multiple provenance refs after merge.
+- Preserve multiple provenance refs after merge. Use heading/title refs only as broad context; detailed people/place/thing/fact/style claims should have exact source evidence when possible.
 - Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly. Use `resolve-ref` and `quote-ref --as-ref`; do not guess source ids or source hashes.
 - For maintained worlds, enrich existing artifacts when identity continuity is supported instead of cloning near-duplicates. If identity is uncertain, keep the ambiguity visible rather than forcing a merge.
 - For maintained worlds, preserve prior provenance and make retcons/conflicts explicit in sections or metadata. Do not silently drop older evidence just because newer material exists.
@@ -172,7 +172,34 @@ For each diagnostic, repair semantically rather than obeying blindly:
 
 Re-emit and re-run lint after repairs. Lint diagnoses structural/accounting facts; it does not decide ontology, canon importance, prose quality, or whether a drop reason is semantically persuasive.
 
-## 5. Helper anti-patterns
+## 5. Provenance quality repair
+
+After structural lint is clean, audit provenance quality:
+
+```bash
+npm run world-import-helper -- provenance-audit --output <output> --format markdown --write
+```
+
+Prioritize heading-only refs on important artifacts, style artifacts with too few examples, long artifacts with one ref, fact/event pages citing only story headings, and reviewer-identified weak examples.
+
+To locate better evidence, use exact search first:
+
+```bash
+npm run world-import-helper -- find-text --output <output> --query "distinctive phrase" --context 2
+```
+
+For paraphrased claims, use lexical candidate search:
+
+```bash
+npm run world-import-helper -- suggest-ref-candidates \
+  --output <output> \
+  --artifact <artifact-id> \
+  --claim "claim text needing support"
+```
+
+Then generate exact refs with `quote-ref --as-ref` and repair provenance using `patch-merge` or `write-artifact`. Do not blindly rewrite artifact prose just to satisfy audit density; better provenance means claim-supporting evidence, not maximum citation count.
+
+## 6. Helper anti-patterns
 
 If you find yourself doing any of these, stop and use `references/helper-tools.md`:
 

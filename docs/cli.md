@@ -103,7 +103,7 @@ If either value is missing, the Lemonade provider is skipped.
 
 World import is a skill-first importer for HTML/XHTML directories, ZIPs, and EPUB-like archives. The CLI is a thin pi SDK wrapper that loads the `world-import` skill and passes paths/model settings through to it.
 
-When running imports, evals, builds, or other longer shell jobs from herdr, prefer a dedicated pane **below** the current pane and monitor that pane while keeping this conversation pane clear. Avoid side panes for routine job supervision.
+When running imports, world-import helper actions, evals, builds, or other longer shell jobs from herdr, prefer a dedicated pane **below** the current pane and monitor that pane while keeping this conversation pane clear. Avoid side panes for routine job supervision. Use the same pattern for watched/iterative helper commands such as lint/eval/emit-repair/provenance-audit/source-search loops when possible.
 
 ```bash
 npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5

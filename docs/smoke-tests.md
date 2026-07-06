@@ -2,7 +2,7 @@
 
 Run these after changes that affect CLI startup, model selection, providers/extensions, chat behavior, or world-import helpers.
 
-For longer-running smoke jobs in herdr, prefer a dedicated pane **below** the current pane and monitor that pane instead of opening a side pane. For world-import runs you are watching live, prefer `npm run world-import-run -- ...` over `npm run world-import -- ...`, including dry runs.
+For longer-running smoke jobs in herdr, prefer a dedicated pane **below** the current pane and monitor that pane instead of opening a side pane. Use the same lower-pane pattern for watched or iterative `world-import-helper` actions (lint/eval/emit-repair/audit/search loops) when possible. For world-import runs you are watching live, prefer `npm run world-import-run -- ...` over `npm run world-import -- ...`, including dry runs.
 
 ## 1. Build
 
@@ -168,7 +168,7 @@ If using a different configured model, replace `lemonade/Qwen3.6-35B-A3B-MTP-GGU
 
 ## 9. World import helper smoke test
 
-For deterministic world-import helper changes:
+For deterministic world-import helper changes, run watched or iterative helper smoke commands in the dedicated lower herdr job pane when possible:
 
 ```bash
 rm -rf /tmp/memchat-world-smoke /tmp/memchat-world-src

@@ -1,6 +1,8 @@
 # World import helper tools
 
-Use these deterministic helpers instead of ad hoc scripts for source references, quotes, merge-stage edits, coverage checks, and lint repair.
+Use these deterministic helpers instead of ad hoc scripts for source references, quotes, merge-stage edits, coverage checks, provenance audit, source search, and lint repair.
+
+When operating in herdr/pi, run watched, iterative, or potentially longer helper actions in a dedicated pane **below** the current pane using the same supervision pattern as model-backed imports. This is especially useful for `emit-lint-repair-loop`, `eval`, `provenance-audit`, repeated `find-text` / `suggest-ref-candidates` repair searches, and patch/re-emit loops. Short one-shot inspections can stay inline when clearer.
 
 ## Core rule
 
@@ -49,7 +51,7 @@ Options:
 - `--max-chars <n>` trims long quotes.
 - `--plain` strips block markers if present.
 
-Use this to avoid placeholder quotes like `[Source span b0001-b0003]`.
+Use this to avoid placeholder quotes like `[Source span b0001-b0003]`. For final artifacts, prefer exact, claim-supporting quotes over coarse story-heading refs.
 
 ## Artifact authoring
 
@@ -111,6 +113,57 @@ Example:
 
 The helper writes a backup before patching and validates the result.
 
+## Provenance search and quality audit
+
+Clean lint only proves that links resolve; it does not prove citations support the artifact's claims. Run a provenance audit before reviewer eval or before declaring a high-quality import.
+
+### `provenance-audit`
+
+Find structurally valid but weak citation patterns: heading-only refs, very short quotes, sparse provenance density, repeated identical refs, first-block refs, and under-cited style artifacts.
+
+```bash
+npm run world-import-helper -- provenance-audit --output <output>
+npm run world-import-helper -- provenance-audit --output <output> --format markdown --write
+npm run world-import-helper -- provenance-audit --output <output> --artifact <artifact-id>
+```
+
+Warnings are model-repair prompts, not truth verdicts. Heading/title refs are acceptable for identifying a story or unit, but they are weak as sole evidence for detailed claims.
+
+### `find-text`
+
+Search normalized source blocks for exact words/phrases or regexes and get ready-to-run `quote-ref --as-ref` commands.
+
+```bash
+npm run world-import-helper -- find-text \
+  --output <output> \
+  --query "carbuncle" \
+  --context 2
+```
+
+Useful options: `--unit <unit-id>`, `--order <n>`, `--group-body-only`, `--regex`, `--case-sensitive`, `--max-results <n>`, `--format markdown`.
+
+### `suggest-ref-candidates`
+
+Given a claim, rank candidate source spans by deterministic lexical overlap. This helps locate evidence for paraphrased claims without making semantic proof decisions.
+
+```bash
+npm run world-import-helper -- suggest-ref-candidates \
+  --output <output> \
+  --artifact <artifact-id> \
+  --claim "The blue carbuncle is found in a Christmas goose's crop"
+```
+
+Use the returned candidates as evidence to inspect. If a span is appropriate, run the suggested `quote-ref --as-ref` command and patch or rewrite the artifact provenance.
+
+### Provenance expectations by artifact type
+
+- **People:** cite appearance, personality, role, and key action claims separately when possible.
+- **Places:** cite physical description and narrative significance.
+- **Things:** cite first description, possessor/use, and consequence.
+- **Facts/events:** cite setup, key action/reveal, and consequence.
+- **Style:** cite multiple representative examples across the corpus.
+- **World overview:** may use broader refs, but should not be the only detailed provenance in the bundle.
+
 ## Coverage and repair
 
 ### `coverage-plan`
@@ -155,6 +208,10 @@ This does not make semantic repairs. It tells you what needs model-authored repa
 | `unresolved-related` / `unresolved-wikilink` | Create the target artifact or fix/remove the link. |
 | `unaccounted-candidate` | Add `metadata.representedCandidateIds` or a candidate disposition with reason. |
 | `body-unit-no-emitted-coverage` | Add artifact provenance for that unit or account for omitted candidates. |
+| `heading-only-provenance` | Use `find-text` / `suggest-ref-candidates`, then `quote-ref --as-ref`, to add narrative evidence. |
+| `low-information-provenance` | Replace or supplement the quote with a more informative exact span. |
+| `sparse-provenance-density` / `single-ref-many-sections` | Inspect major sections and add claim-supporting refs where evidence is thin. |
+| `style-under-cited` | Add multiple representative style examples. |
 
 ## Anti-patterns
 
@@ -163,5 +220,7 @@ Avoid these unless no helper can support the task:
 - Python dictionaries mapping chapter numbers to source hashes.
 - Handwritten `sid(n)`, `uid(n)`, or `ref(n, ...)` functions.
 - Placeholder quote strings in final artifacts.
+- Treating clean lint as proof that provenance is high quality.
+- Leaving detailed artifacts supported only by story-title or heading refs.
 - Rewriting the whole merge stage to fix one provenance ref.
 - Declaring success without `coverage-plan` and `emit-lint-repair-loop` or `lint`.
