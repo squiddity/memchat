@@ -108,12 +108,13 @@ When running imports, evals, builds, or other longer shell jobs from herdr, pref
 ```bash
 npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5
 npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5 --debug --show-tool-updates
-npm run world-import-helper -- normalize --input ./sources --output /tmp/memchat-world
 ```
+
+For a concise quick-start covering build, prerequisites, TTY-safe output, dry-run, output inspection, lint/eval, and helper commands, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
 
 Prefer `npm run world-import-run -- ...` for terminal/herdr runs, including `--dry-run`, when you want ANSI-styled thinking output preserved. The main CLI also defaults reviewer scoring to the active import model unless `--reviewer-model` is supplied, supports `--session-strategy single|staged`, and lets you disable review explicitly with `--no-reviewer` or `--reviewer-model off`.
 
-See [`docs/world-import.md`](./world-import.md) for the helper contract and output layout.
+See [`docs/world-import.md`](./world-import.md) for the helper contract, output layout, and CLI flags.
 
 ## Local pi packages
 

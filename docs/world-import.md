@@ -21,6 +21,8 @@ The repo has a gitignored `world-output/` directory for persistent extractions. 
 npm run world-import-run -- --input ./sources --output world-output/my-corpus --model anthropic/claude-sonnet-4-5
 ```
 
+For a concise shell-oriented quick-start covering build, prerequisites, run flags, the TTY-safe wrapper, helper commands, dry-run, output inspection, lint/eval, and file layout, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
+
 For TTY-safe terminal or herdr-pane runs with ANSI-styled thinking output preserved, prefer the wrapper. In herdr, run imports in a dedicated pane **below** the current pane, not beside it:
 
 ```bash

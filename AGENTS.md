@@ -27,6 +27,7 @@ Do not load every doc by default. Read the smallest relevant doc for the task:
 - `docs/memory-backends.md` — backend strategy, storage layout, comparison, and implementation order.
 - `docs/architecture.md` — goals, memory quality bar, design direction, and current roadmap.
 - `docs/world-import.md` — skill-first world-import architecture, helper contract boundary, emitted wiki bundle shape, and update expectations.
+- `docs/world-import-run-guide.md` — concise shell quick-start: build, prerequisites, TTY-safe wrapper, dry-run, output inspection, lint/eval, and helper cheat sheet.
 - `docs/smoke-tests.md` — validation commands after code changes.
 - `docs/plans/*.md` — only when a task explicitly references a plan or when implementation details need the latest plan context.
 
