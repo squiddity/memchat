@@ -99,23 +99,6 @@ MEMCHAT_LEMONADE_API_KEY=...
 
 If either value is missing, the Lemonade provider is skipped.
 
-## World import CLI
-
-World import is a skill-first importer for HTML/XHTML directories, ZIPs, and EPUB-like archives. The CLI is a thin pi SDK wrapper that loads the `world-import` skill and passes paths/model settings through to it.
-
-When running imports, world-import helper actions, evals, builds, or other longer shell jobs from herdr, prefer a dedicated pane **below** the current pane and monitor that pane while keeping this conversation pane clear. Avoid side panes for routine job supervision. Use the same pattern for watched/iterative helper commands such as lint/eval/emit-repair/provenance-audit/source-search loops when possible.
-
-```bash
-npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5
-npm run world-import-run -- --input ./sources --output /tmp/memchat-world --model anthropic/claude-sonnet-4-5 --debug --show-tool-updates
-```
-
-For a concise quick-start covering build, prerequisites, TTY-safe output, dry-run, output inspection, lint/eval, and helper commands, see [`docs/world-import-run-guide.md`](./world-import-run-guide.md).
-
-Prefer `npm run world-import-run -- ...` for terminal/herdr runs, including `--dry-run`, when you want ANSI-styled thinking output preserved. The main CLI also defaults reviewer scoring to the active import model unless `--reviewer-model` is supplied, supports `--session-strategy single|staged`, and lets you disable review explicitly with `--no-reviewer` or `--reviewer-model off`.
-
-See [`docs/world-import.md`](./world-import.md) for the helper contract, output layout, and CLI flags.
-
 ## Local pi packages
 
 Memchat can resolve npm-installed local pi packages from `package.json`:
@@ -140,5 +123,5 @@ Inside the CLI, use `/plugins` to see the resolved local package paths.
 
 - backend strategy and storage layout: [`docs/memory-backends.md`](./memory-backends.md)
 - interactive shell testing flow: [`docs/playtesting.md`](./playtesting.md)
-- world import package/skill surface: [`docs/world-import.md`](./world-import.md)
+- world import: [`docs/world-import.md`](./world-import.md)
 - validation commands: [`docs/smoke-tests.md`](./smoke-tests.md)

@@ -23,7 +23,7 @@ Make multi-session chat feel consistent over time: if the agent invents or learn
 
 ## Design principle
 
-Memchat favors small deterministic helpers plus model-owned semantic workflows. For memory and world-import features, TypeScript should make state, provenance, links, candidate accounting, source coverage, and validation inspectable; skills, prompts, and evals should own interpretation, style/tone analysis, synopsis quality, identity matching, continuity, conflicts, and narrative judgment.
+Memchat favors small deterministic helpers plus model-owned semantic workflows. Prefer existing skills, helper commands, documented CLIs, and bounded tools over ad hoc scripts; add helper tools when a workflow becomes repetitive. For memory and world-import features, TypeScript should make state, provenance, links, candidate accounting, source coverage, and validation inspectable; skills, prompts, and evals should own interpretation, style/tone analysis, synopsis quality, identity matching, continuity, conflicts, and narrative judgment.
 
 ## Quick start
 
@@ -42,7 +42,7 @@ npm run world-import-run -- --input ./sources --output /tmp/memchat-world --dry-
 npm run world-import-run -- --input samples/pg120-images-3.epub --output /tmp/memchat-world --model openrouter/deepseek/deepseek-v4-pro
 ```
 
-For imports, tests, evals, and other longer-running shell jobs, prefer a dedicated herdr pane **below** the current one so you can keep monitoring output without crowding the main conversation pane. Avoid side panes for routine job supervision.
+For imports and other longer-running shell jobs, prefer a dedicated herdr pane **below** the current one so you can keep monitoring output without crowding the main conversation pane. Avoid side panes for routine job supervision.
 
 ## Docs
 
@@ -50,8 +50,7 @@ For imports, tests, evals, and other longer-running shell jobs, prefer a dedicat
 - [`docs/playtesting.md`](docs/playtesting.md) — interactive-shell playtesting workflow and agent defaults
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
-- [`docs/world-import.md`](docs/world-import.md) — skill-first world import package, helper commands, emitted wiki bundle shape, and artifact format
-- [`docs/world-import-run-guide.md`](docs/world-import-run-guide.md) — shell-oriented quick-start for running imports and helpers, including the TTY-safe wrapper
+- [`docs/world-import.md`](docs/world-import.md) — shell quick-start, architecture, helper commands, lint/eval, and debugging
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 
 ## Status

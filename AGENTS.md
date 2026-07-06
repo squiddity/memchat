@@ -10,10 +10,11 @@ Build `memchat`: a TypeScript chat agent on `@earendil-works/pi-coding-agent` fo
 - Keep memory pluggable; do not hard-code one model provider or backend.
 - Use TypeScript and prefer small, explicit interfaces and event/state types.
 - When implementing memory, distinguish raw transcript/events, extracted facts, summaries, current state, and conflicts/retcons.
+- Prefer skill/tool-based execution surfaces over ad hoc scripts whenever practical: use existing skills, helper commands, documented CLIs, and bounded tools; add or improve helper tools when a workflow becomes repetitive.
 - For skill-first workflows such as `world-import`, keep TypeScript helpers deterministic and operational: normalize structure-preserving source blocks, persist stages, validate shape/candidate accounting, emit browseable artifacts, and check provenance/link/coverage integrity. Keep entity identity, relationship meaning, canon truth, retcons/conflicts, synopsis/style quality, and update decisions in model/skill workflow guidance rather than helper code.
 - When semantic quality depends on judgment, invest first in skill instructions, bounded inspection tools, contracts, reviewer prompts, and eval fixtures so the executing model has enough leeway and context to produce high-quality maintained wiki outputs.
 - For model-backed `world-import` shell runs, prefer stronger debugging by default when behavior is uncertain or a prior run failed to emit world docs: use a stronger model, keep `--debug`, and add `--show-tool-updates` so the next session can inspect tool-level failures quickly.
-- For `world-import` helper actions run from herdr/pi, use the same dedicated lower-pane supervision pattern as import runs whenever possible, especially for emit/lint/repair/eval/audit/search loops or commands whose output should be monitored. Avoid side panes for routine helper supervision.
+- For project code execution from herdr/pi, prefer a dedicated lower pane for watched or long-running builds, tests, imports, helper loops, evals, and repair/audit/search workflows. Avoid side panes for routine supervision; inline execution is fine for quick one-shot inspection or when no pane tool is available.
 - Add tests or eval fixtures for meaningful memory behavior changes when feasible.
 - After changes, run the relevant checks from `docs/smoke-tests.md`.
 - When asked to push, use the configured GitHub CLI auth (`gh auth status`, `gh auth setup-git`) rather than unauthenticated HTTPS prompts.
@@ -27,8 +28,7 @@ Do not load every doc by default. Read the smallest relevant doc for the task:
 - `docs/playtesting.md` — how the agent should run manual shell playtests; default to `interactive_shell`, a fresh memory dir, `qmd-hybrid`, and `--memory-debug` unless the user asks otherwise.
 - `docs/memory-backends.md` — backend strategy, storage layout, comparison, and implementation order.
 - `docs/architecture.md` — goals, memory quality bar, design direction, and current roadmap.
-- `docs/world-import.md` — skill-first world-import architecture, helper contract boundary, emitted wiki bundle shape, and update expectations.
-- `docs/world-import-run-guide.md` — concise shell quick-start: build, prerequisites, TTY-safe wrapper, dry-run, output inspection, lint/eval, and helper cheat sheet.
+- `docs/world-import.md` — skill-first world-import architecture, helper contract boundary, shell quick-start, lint/eval, and debugging.
 - `docs/smoke-tests.md` — validation commands after code changes.
 - `docs/plans/*.md` — only when a task explicitly references a plan or when implementation details need the latest plan context.
 
