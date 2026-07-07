@@ -6,7 +6,18 @@ Skill-first pipeline for turning HTML/XHTML directories, ZIPs, and EPUB-like arc
 
 ### Execution supervision
 
-When operating from herdr/pi, run world-import-related project commands in a dedicated pane **below** the current pane whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. This covers `npm run world-import-run`, model-backed import test runs, `npm run world-import-helper -- lint|eval|provenance-audit`, helper/repair loops, and repeated source-search/provenance workflows. Avoid side panes for routine supervision, and do not hide these runs behind `nohup`, background `bash`, or detached transcripts unless no pane tool is available. Use existing skill/helper/tool entrypoints before ad hoc scripts.
+Before running world-import commands, check whether you are operating from herdr/pi and whether the `herdr` CLI is available. If it is, use herdr instead of defaulting to inline shell execution.
+
+When operating from herdr/pi, run world-import-related project commands in a dedicated pane **below** the current pane whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. Preferred command sequence:
+
+```bash
+herdr pane current
+herdr pane split --current --direction down --cwd /home/squiddity/projects/memchat
+herdr pane run <new-pane-id> 'npm run world-import-run -- --input ... --output ... --model ... --show-tool-updates'
+herdr pane read <new-pane-id>
+```
+
+Use `herdr wait output <pane-id> --match '<text>'` when you need to block until a known milestone appears, and `herdr pane send-text` plus `herdr pane send-keys <pane-id> Enter` only when reusing an existing interactive shell. This covers `npm run world-import-run`, model-backed import test runs, `npm run world-import-helper -- lint|eval|provenance-audit`, helper/repair loops, and repeated source-search/provenance workflows. Avoid side panes for routine supervision, and do not hide these runs behind `nohup`, background `bash`, or detached transcripts unless no pane tool is available. Use existing skill/helper/tool entrypoints before ad hoc scripts. If herdr is unavailable, say so and then fall back to inline execution.
 
 ### Build & prerequisites
 

@@ -42,7 +42,9 @@ npm run world-import-run -- --input ./sources --output /tmp/memchat-world --dry-
 npm run world-import-run -- --input samples/pg120-images-3.epub --output /tmp/memchat-world --model openrouter/deepseek/deepseek-v4-pro
 ```
 
-When working from herdr/pi, run project tool commands in a dedicated pane **below** the current one whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. This includes imports, builds/tests, playtests, lint/eval, provenance audits, helper loops, repair loops, and repeated source-search workflows. Avoid side panes for routine job supervision; keep inline execution for quick one-shot inspection commands.
+Before running project commands, check whether you are in herdr/pi and whether the `herdr` CLI is available. If it is, use herdr rather than defaulting to inline shell execution.
+
+When working from herdr/pi, run project tool commands in a dedicated pane **below** the current one whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. Recommended sequence: `herdr pane current`, then `herdr pane split --current --direction down --cwd /home/squiddity/projects/memchat`, then `herdr pane run <new-pane-id> '<command>'`, and supervise with `herdr pane read <pane-id>` or `herdr wait output <pane-id> --match <text>`. This includes imports, builds/tests, playtests, lint/eval, provenance audits, helper loops, repair loops, and repeated source-search workflows. Avoid side panes for routine job supervision; keep inline execution for quick one-shot inspection commands. If herdr is unavailable, explicitly fall back to inline execution.
 
 ## Docs
 

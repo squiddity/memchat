@@ -2,7 +2,9 @@
 
 Use this when a human wants to try memchat in a real shell or when the agent needs to supervise a live CLI session.
 
-For herdr-managed playtests, prefer a dedicated pane **below** the current pane for the live session you are monitoring. Avoid side panes for routine supervision.
+Before starting a live playtest, check whether you are operating from herdr/pi and whether the `herdr` CLI is available. If it is, use herdr rather than defaulting to an inline shell run.
+
+For herdr-managed playtests, prefer a dedicated pane **below** the current pane for the live session you are monitoring. Recommended sequence: `herdr pane current`, `herdr pane split --current --direction down --cwd /home/squiddity/projects/memchat`, `herdr pane run <new-pane-id> 'npm run dev -- --memory qmd-hybrid --memory-debug --memory-dir /tmp/memchat-<date>-<run>'`, then supervise with `herdr pane read <pane-id>` or `herdr wait output <pane-id> --match '<text>'`. Use `herdr pane send-text` plus `herdr pane send-keys <pane-id> Enter` when interacting with the running shell. Avoid side panes for routine supervision. If herdr is unavailable, explicitly fall back to inline execution.
 
 ## Agent defaults
 

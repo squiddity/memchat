@@ -2,7 +2,7 @@
 
 Use these deterministic helpers instead of ad hoc scripts for source references, quotes, merge-stage edits, coverage checks, provenance audit, source search, and lint repair.
 
-When operating in herdr/pi, run helper commands in a dedicated pane **below** the current pane whenever they are meant to be watched, may take more than a moment, or emit useful streaming output, using the same supervision pattern as model-backed imports. This is especially important for `emit-lint-repair-loop`, `eval`, `provenance-audit`, repeated `find-text` / `suggest-ref-candidates` repair searches, and patch/re-emit loops. Short one-shot inspections can stay inline when clearer; do not use `nohup` or detached background shells for supervised helper work unless no pane tool is available.
+When operating in herdr/pi, check that the `herdr` CLI is available and use it for supervised helper work rather than defaulting to inline shell execution. Preferred flow: `herdr pane current`, `herdr pane split --current --direction down --cwd /home/squiddity/projects/memchat`, `herdr pane run <new-pane-id> '<command>'`, then supervise with `herdr pane read <pane-id>` or `herdr wait output <pane-id> --match <text>`. Use `herdr pane send-text` plus `herdr pane send-keys <pane-id> Enter` only when reusing an already-running shell. This is especially important for `emit-lint-repair-loop`, `eval`, `provenance-audit`, repeated `find-text` / `suggest-ref-candidates` repair searches, and patch/re-emit loops. Short one-shot inspections can stay inline when clearer; do not use `nohup` or detached background shells for supervised helper work unless no pane tool is available.
 
 ## Core rule
 
