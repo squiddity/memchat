@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, lintWorldImport, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
+import { buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, generateQaQuestions, lintWorldImport, parseStructuredReviewerOutput, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
 import { writeExtractionStage, writeManifest, writeMergeStage } from "./world-import/staging.js";
 
 async function createReviewableWorldOutput(options: { includeSourcePage?: boolean } = {}): Promise<string> {
@@ -90,6 +90,43 @@ test("deterministic evaluation reports referenced source page coverage", async (
   assert.ok(checks.checks.some((check) => check.name === "retained source pages emitted" && check.message === "1/1 referenced source page(s) emitted"));
 });
 
+test("deterministic evaluation surfaces non-failing narrative risk signals and provenance audit warnings", async () => {
+  const output = await mkdtemp(join(tmpdir(), "memchat-world-eval-"));
+  await writeManifest({
+    version: 1,
+    createdAt: "2026-06-24T00:00:00.000Z",
+    inputRoot: "/tmp/source",
+    outputRoot: output,
+    units: [
+      { sourceId: "s1", unitId: "u1", kind: "html", role: "body", inputPath: "act1.html", order: 0, blockCount: 1, anchors: ["b0001"], normalizedPath: "sources/normalized/u1.json", sourceHash: "a", contentHash: "b", normalizerVersion: 2 },
+      { sourceId: "s2", unitId: "u2", kind: "html", role: "body", inputPath: "act2.html", order: 1, blockCount: 1, anchors: ["b0001"], normalizedPath: "sources/normalized/u2.json", sourceHash: "c", contentHash: "d", normalizerVersion: 2 },
+    ],
+    diagnostics: [],
+  });
+  await writeMergeStage(output, {
+    version: 1,
+    kind: "merge",
+    artifacts: [{
+      id: "romeo",
+      group: "people",
+      title: "Romeo",
+      sections: [
+        { heading: "Summary", body: "Romeo is impulsive." },
+        { heading: "Role", body: "He drives the romance." },
+        { heading: "Conflict", body: "He is caught in family conflict." },
+        { heading: "Outcome", body: "His choices end tragically." },
+      ],
+      provenance: [{ sourceId: "s1", unitId: "u1", startAnchor: "b0001", endAnchor: "b0001", quote: "ACT I" }],
+    }],
+  });
+  const checks = await deterministicWorldImportChecks(output);
+  assert.ok(checks.riskSignals?.some((item) => item.code === "missing-plot-synopsis"));
+  assert.ok(checks.riskSignals?.some((item) => item.code === "missing-timeline"));
+  assert.ok(checks.riskSignals?.some((item) => item.code === "missing-scene-guide"));
+  assert.ok(checks.riskSignals?.some((item) => item.code === "empty-things-group"));
+  assert.ok(checks.provenanceAudit?.diagnostics.some((item) => item.code === "heading-only-provenance"));
+});
+
 test("deterministic evaluation fails clearly when cited source pages are missing", async () => {
   const output = await createReviewableWorldOutput({ includeSourcePage: false });
   const checks = await deterministicWorldImportChecks(output);
@@ -119,7 +156,11 @@ test("reviewer prompt JSON example includes all scored dimensions", async () => 
     "answerability",
     "navigability",
     "progressiveDisclosure",
-    "duplicateNarrativeControl",
+    "plotSynopsisQuality",
+    "timelineCompleteness",
+    "sourceStructureCoverage",
+    "objectPropCoverage",
+    "omissionVisibility",
     "citationReconstructability",
     "droppedCandidateRisk",
     "styleToneCoverage",
@@ -201,6 +242,60 @@ test("lint accounts extraction candidates through represented and dropped dispos
   });
   lint = await lintWorldImport(output);
   assert.equal(lint.passed, true, JSON.stringify(lint.diagnostics));
+});
+
+test("reviewer parser only treats valid final JSON as authoritative", () => {
+  const valid = parseStructuredReviewerOutput(`notes\n\n\
+\`\`\`json
+{
+  "score": 2,
+  "dimensionScores": [
+    {"dimension": "entityRecall", "score": 2, "justification": "x"},
+    {"dimension": "detailRichness", "score": 2, "justification": "x"},
+    {"dimension": "sourceCoverage", "score": 2, "justification": "x"},
+    {"dimension": "provenance", "score": 2, "justification": "x"},
+    {"dimension": "mergeQuality", "score": 2, "justification": "x"},
+    {"dimension": "answerability", "score": 2, "justification": "x"},
+    {"dimension": "navigability", "score": 2, "justification": "x"},
+    {"dimension": "progressiveDisclosure", "score": 2, "justification": "x"},
+    {"dimension": "plotSynopsisQuality", "score": 1, "justification": "x"},
+    {"dimension": "timelineCompleteness", "score": 1, "justification": "x"},
+    {"dimension": "sourceStructureCoverage", "score": 1, "justification": "x"},
+    {"dimension": "objectPropCoverage", "score": 1, "justification": "x"},
+    {"dimension": "omissionVisibility", "score": 1, "justification": "x"},
+    {"dimension": "citationReconstructability", "score": 2, "justification": "x"},
+    {"dimension": "droppedCandidateRisk", "score": 2, "justification": "x"},
+    {"dimension": "styleToneCoverage", "score": 2, "justification": "x"}
+  ],
+  "qaResults": [{"question":"Q","answerable":true,"answer":"A","confidence":"high"}]
+}
+\`\`\``);
+  assert.equal(valid.parseStatus, "valid");
+  assert.equal(valid.authoritativeScore, true);
+  assert.equal(valid.score, 2);
+
+  const proseOnly = parseStructuredReviewerOutput("entityRecall — Score: 4\nNo final JSON block.");
+  assert.equal(proseOnly.parseStatus, "missing");
+  assert.equal(proseOnly.authoritativeScore, false);
+  assert.equal(proseOnly.score, undefined);
+
+  const malformed = parseStructuredReviewerOutput("```json\n{\"score\": 7, \"dimensionScores\": [], \"qaResults\": []}\n```");
+  assert.equal(malformed.authoritativeScore, false);
+  assert.ok(["partial", "invalid"].includes(malformed.parseStatus));
+  assert.ok((malformed.parseErrors ?? []).length > 0);
+});
+
+test("QA generation excludes stopwords and stage directions and adds plot traversal/object questions", () => {
+  const questions = generateQaQuestions([
+    { unitId: "u1", sourceId: "s1", order: 0, title: "Act I", content: "And Romeo meets Juliet. Enter Mercutio. Romeo speaks again. Juliet replies. The Nurse interrupts." },
+    { unitId: "u2", sourceId: "s2", order: 1, title: "Act II", content: "Romeo returns. Juliet waits. Exit Nurse. A letter and potion shape the plot." },
+  ]);
+  assert.ok(questions.some((question) => question.includes("Romeo")));
+  assert.ok(questions.every((question) => !question.includes("Describe And")));
+  assert.ok(questions.every((question) => !question.includes("Enter")));
+  assert.ok(questions.every((question) => !question.includes("Exit")));
+  assert.ok(questions.some((question) => /major plot events in source order/i.test(question)));
+  assert.ok(questions.some((question) => /objects, props, letters, weapons, documents/i.test(question)));
 });
 
 test("evaluation bundle records deterministic pass and skipped reviewer state", async () => {

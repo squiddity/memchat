@@ -125,7 +125,10 @@ Example good extraction (rich) vs poor extraction (too brief):
 - Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly. Use `resolve-ref` and `quote-ref --as-ref`; do not guess source ids or source hashes.
 - For maintained worlds, enrich existing artifacts when identity continuity is supported instead of cloning near-duplicates. If identity is uncertain, keep the ambiguity visible rather than forcing a merge.
 - For maintained worlds, preserve prior provenance and make retcons/conflicts explicit in sections or metadata. Do not silently drop older evidence just because newer material exists.
-- For substantive imports, include or update a `World Overview` / `Corpus Synopsis` artifact as a normal `facts` artifact. Revise it from prior overview + affected artifacts + new evidence, not from new input alone.
+- For substantive imports, include or update first-class narrative surfaces as normal `facts` artifacts: a `Plot Synopsis` / `Corpus Synopsis`, a `Timeline`, and a `Scene Guide` / `Chapter Guide` / `Episode Guide` when the source has that structure. Revise them from prior overview + affected artifacts + new evidence, not from new input alone.
+- Preserve source order in timelines and scene/chapter/episode guides.
+- Give major scenes/chapters/episodes durable fact coverage or an explicit omission/disposition reason rather than leaving them only implied by entity pages.
+- Give plot-critical objects durable `things` artifacts or an explicit omission/disposition reason rather than silently flattening them into character summaries.
 - Account for every extraction candidate through merge: list represented candidate ids on artifacts, or add a merge-level disposition of `represented`, `merged`, `deferred`, or `dropped`. Deferred/dropped candidates need a model-authored reason so omissions remain auditable.
 - Add model-authored `style` artifacts when voice, tone, aphorisms/formulae, parody/poem mechanics, or character voice guidance would help future reuse. Cite source spans for style claims like any other artifact.
 - Before finalizing, check whether every major source set-piece needed for reconstruction has a durable fact/event artifact or an explicit, reviewable omission reason.

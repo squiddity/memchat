@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type MarkdownSection, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type WorldImportGroup } from "./types.js";
+import { classifyNarrativeSurface } from "./narrative-surfaces.js";
 import { readManifest, readMergeStage, readNormalizedUnit, validateStageEnvelope } from "./staging.js";
 
 const groups = [...WORLD_IMPORT_GROUPS];
@@ -157,10 +158,17 @@ function renderIndex(title: string, entries: IndexEntry[], currentRelativePath: 
   return `# ${title}\n\n${entries.map((entry) => `- [${entry.title}](${relativeLink(currentRelativePath, entry.targetPath)}) - ${entry.description}`).join("\n")}\n`;
 }
 
-function renderRootIndex(groupEntries: IndexEntry[], sourceEntry: IndexEntry, coverageEntry: IndexEntry, currentRelativePath: string): string {
+function renderRootIndex(groupEntries: IndexEntry[], narrativeEntries: IndexEntry[], sourceEntry: IndexEntry, coverageEntry: IndexEntry, currentRelativePath: string): string {
   return [
     "# World Index",
     "",
+    ...(narrativeEntries.length > 0
+      ? [
+          "## Plot and Reading Order",
+          ...narrativeEntries.map((entry) => `- [${entry.title}](${relativeLink(currentRelativePath, entry.targetPath)}) - ${entry.description}`),
+          "",
+        ]
+      : []),
     "## Groups",
     ...groupEntries.map((entry) => `- [${entry.title}](${relativeLink(currentRelativePath, entry.targetPath)}) - ${entry.description}`),
     "",
@@ -206,6 +214,28 @@ async function loadManifestIfPresent(outputRoot: string): Promise<SourceManifest
   return readManifest(outputRoot);
 }
 
+function narrativeSurfacePriority(entry: IndexEntry): number {
+  const label = entry.title.toLowerCase();
+  if (label.includes("plot synopsis") || label.includes("corpus synopsis") || label.includes("world overview")) return 0;
+  if (label.includes("timeline")) return 1;
+  return 2;
+}
+
+function collectNarrativeIndexEntries(planned: PlannedArtifactFile[]): IndexEntry[] {
+  const entriesByKind = new Map<string, IndexEntry>();
+  for (const entry of planned) {
+    for (const kind of classifyNarrativeSurface(entry.artifact)) {
+      if (entriesByKind.has(kind)) continue;
+      entriesByKind.set(kind, {
+        title: entry.artifact.title,
+        targetPath: entry.relativePath,
+        description: effectiveDescription(entry.artifact),
+      });
+    }
+  }
+  return [...entriesByKind.values()].sort((a, b) => narrativeSurfacePriority(a) - narrativeSurfacePriority(b) || a.title.localeCompare(b.title));
+}
+
 function planArtifactFiles(outputRoot: string, artifacts: ArtifactPacket[]): { planned: PlannedArtifactFile[]; relatedTargets: Record<string, string> } {
   const worldRoot = join(outputRoot, "world");
   const used = new Map<string, number>();
@@ -234,6 +264,7 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
   await mkdir(join(worldRoot, "sources", "units"), { recursive: true });
 
   const { planned: artifactFiles, relatedTargets } = planArtifactFiles(outputRoot, artifacts);
+  const narrativeEntries = collectNarrativeIndexEntries(artifactFiles);
   const referencedUnitIds = new Set(artifacts.flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)));
   const sourceTargets = new Map<string, string>();
   const sourceEntries: Array<{ unitId: string; title: string; targetPath: string; description: string }> = [];
@@ -311,7 +342,7 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
   written.push(coveragePath);
 
   const rootIndexPath = join(worldRoot, "index.md");
-  await writeFile(rootIndexPath, renderRootIndex(groupIndexEntries, {
+  await writeFile(rootIndexPath, renderRootIndex(groupIndexEntries, narrativeEntries, {
     title: "Sources",
     targetPath: "sources/index.md",
     description: `${sourceEntries.length} retained source-unit page(s).`,

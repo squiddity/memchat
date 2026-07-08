@@ -178,6 +178,11 @@ export type EvaluationResult = {
     passed: boolean;
     checks: Array<{ name: string; passed: boolean; message?: string; diagnostics?: LintDiagnostic[] }>;
     lint?: WorldImportLintResult;
+    riskSignals?: LintDiagnostic[];
+    provenanceAudit?: {
+      warnings: number;
+      diagnostics: LintDiagnostic[];
+    };
   };
   reviewer?: {
     model?: string;
@@ -187,6 +192,9 @@ export type EvaluationResult = {
     dimensionScores?: ReviewerDimensionScore[]; // per-dimension breakdown
     reconstructionSummary?: string; // reviewer's summary reconstructed from artifacts
     qaResults?: Array<{ question: string; answerable: boolean; answer: string; confidence: "high" | "medium" | "low" }>;
+    parseStatus?: "valid" | "partial" | "missing" | "invalid";
+    parseErrors?: string[];
+    authoritativeScore?: boolean;
     notes?: string;
   };
 };

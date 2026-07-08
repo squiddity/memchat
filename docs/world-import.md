@@ -159,7 +159,7 @@ echo "--- root index ---"; test -f /tmp/world-out/world/index.md && echo yes || 
 echo "--- source-unit pages ---"; find /tmp/world-out/world/sources/units -name '*.md' 2>/dev/null | wc -l
 ```
 
-A healthy bundle includes concept pages under `world/people`, `world/places`, `world/things`, `world/facts`, `world/index.md`, group/source indexes, `world/log.md`, `world/coverage.md`, retained source-unit pages, and optional style guides.
+A healthy bundle includes concept pages under `world/people`, `world/places`, `world/things`, `world/facts`, `world/index.md`, group/source indexes, `world/log.md`, `world/coverage.md`, retained source-unit pages, optional style guides, and — for substantive narrative corpora — first-class plot surfaces such as a `Plot Synopsis` / `Corpus Synopsis`, `Timeline`, and `Scene Guide` / `Chapter Guide` / `Episode Guide` as normal emitted artifacts.
 
 ## Linting & eval
 
@@ -177,7 +177,16 @@ Then run eval — it embeds the same lint result in `stages/review.json` with op
 npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model openrouter/google/gemma-4-31b-it:free
 ```
 
-Omit `--reviewer-model` for deterministic checks only. Reviewer prompts include source reconstruction, dropped-candidate risk, and style/tone usefulness checks.
+Omit `--reviewer-model` for deterministic checks only. Reviewer prompts include artifact-only plot reconstruction, plot-surface quality gates, dropped-candidate risk, source-structure coverage, object/prop coverage, omission visibility, and style/tone usefulness checks.
+
+`stages/review.json` now carries more than a single score. Inspect at least:
+
+- `deterministic.riskSignals` for non-failing warnings such as `missing-plot-synopsis`, `missing-timeline`, `missing-scene-guide`, and `empty-things-group`.
+- `deterministic.provenanceAudit` for provenance-quality warnings that should not be ignored just because lint passed.
+- `reviewer.parseStatus`, `reviewer.authoritativeScore`, and `reviewer.parseErrors` to distinguish valid structured reviewer output from missing/partial/invalid parsing.
+- Reviewer dimension scores for `plotSynopsisQuality`, `timelineCompleteness`, `sourceStructureCoverage`, `objectPropCoverage`, and `omissionVisibility`.
+
+Clean lint and clean provenance structure are necessary but not sufficient: a structurally tidy bundle without useful plot surfaces should still look risky in eval.
 
 For iterative repair, use the helper loop:
 
@@ -223,7 +232,7 @@ npm run world-import-helper -- lint --output /tmp/alice-world
 npm run world-import-helper -- eval --output /tmp/alice-world --reviewer-model openrouter/deepseek/deepseek-v4-pro
 ```
 
-Inspect whether lint catches unresolved links, candidate dispositions explain dropped Chapter III/X material, source pages show paragraph/poem/pre granularity, and reviewer output reconstructs key scenes and style guidance.
+Inspect whether lint catches unresolved links, candidate dispositions explain dropped Chapter III/X material, source pages show paragraph/poem/pre granularity, the root index exposes plot-reading surfaces, and `stages/review.json` shows narrative-risk warnings / parse status clearly when synopsis-timeline-scene coverage is weak.
 
 ---
 
@@ -277,7 +286,7 @@ In the emitted wiki, provenance links resolve to retained normalized source-unit
 
 ### New vs maintained world
 
-A substantive import may produce a model-authored `World Overview` / `Corpus Synopsis` as part of the normal artifact flow.
+A substantive import should usually produce model-authored narrative-surface artifacts as part of the normal artifact flow: a `Plot Synopsis` / `Corpus Synopsis`, a `Timeline`, and a `Scene Guide` / `Chapter Guide` / `Episode Guide` when the source has that structure. These pages remain model-authored packets under the existing taxonomy (typically `world/facts/`); helper code may promote or inspect them, but does not write their prose or decide scene/object importance.
 
 When importing additional source into an existing output root, treat the wiki as maintained world state. Helpers expose deterministic structure, provenance, and coverage for inspection; the model decides whether new evidence enriches existing artifacts, introduces conflicts/retcons, or justifies new artifacts.
 

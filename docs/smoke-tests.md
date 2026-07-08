@@ -164,6 +164,22 @@ Expected:
 
 If using a different configured model, replace `lemonade/Qwen3.6-35B-A3B-MTP-GGUF` with that provider/model. If the command prints `Command aborted` without an assistant response, retry once after checking the local model server; this can indicate a transient Lemonade/server-side failure rather than a memchat CLI failure.
 
+## 9. World-import targeted regression checks
+
+Run these after changes to world-import emit/eval/provenance behavior:
+
+```bash
+node --import tsx --test src/world-import-emit.test.ts
+node --import tsx --test src/world-import-eval.test.ts
+node --import tsx --test src/world-import-provenance-tools.test.ts
+```
+
+Expected:
+
+- Emit tests confirm narrative-surface promotion appears in `world/index.md` only when declared artifacts exist.
+- Eval tests confirm reviewer prompt dimensions include plot synopsis / timeline / source-structure / object coverage / omission visibility, parser status is explicit, prose-only score mentions are non-authoritative, and deterministic narrative risk signals remain non-failing warnings.
+- Provenance-tool tests confirm provenance-audit warnings still surface heading-only and sparse-citation risks.
+
 ## Notes
 
 - `.env` is local-only and ignored by git. It may contain values such as `MEMCHAT_LEMONADE_BASE_URL` and `MEMCHAT_LEMONADE_API_KEY`.
