@@ -94,6 +94,41 @@ Product Contract unchanged.
 - D3. Keep repairs model-owned by re-entering the skill workflow with the review packet plus existing merge/emitted state; helpers only persist, summarize, and validate envelopes.
 - D4. Bound the checkpoint with a small iteration cap (default 1, configurable to 2 later) and explicit skip/stop reasons.
 - D5. Keep final `eval` as a distinct end-stage that reads the repaired world state after intermediate fixes.
+- D6. Use a **TypeScript-owned finite-state control plane** as the production architecture. Model sessions, reviewer passes, and optional subagents are bounded workers inside that control plane; they do not own global completion, loop policy, artifact naming, or final status.
+
+### Control-Plane Architecture Decision
+
+Adopt **Option C: hybrid finite-state controller with model/agent workers**.
+
+The outer workflow should stay in `src/world-import/model-runner.ts` as a testable state machine rather than moving into a freeform agent that invokes subagents until it feels done. The uncertainty in `world-import` is semantic — what matters in the source, how artifacts should be synthesized, which omissions are acceptable — not the high-level import lifecycle. The lifecycle is known and should remain explicit:
+
+```text
+extract -> merge -> post-merge review -> bounded repair -> verification -> final eval
+```
+
+This design keeps three authority layers separate:
+
+- **TypeScript control plane:** session lifecycle, stage order, skip reasons, checkpoint ids, artifact paths, max repair iterations, one-writer discipline, final statuses, and unit-testable behavior.
+- **Model/skill workers:** semantic extraction, merge judgment, narrative synthesis, repair interpretation, and model-authored omission/conflict explanations.
+- **Deterministic helpers:** source normalization, bounded source reads, provenance resolution, envelope validation, artifact persistence, markdown emission, linting, deterministic eval, and checkpoint persistence.
+
+Subagents can still be used, but only as bounded worker jobs owned by the TypeScript control plane. The safe initial use is **read-only reviewer fanout**: one reviewer can focus on object/prop coverage, another on narrative surfaces, another on provenance density. Their outputs are normalized into a single checkpoint packet. A single repair model session remains the only semantic writer for each repair iteration.
+
+Do not make the `world-import` skill itself the global orchestrator that spawns arbitrary subagents. That pattern is useful for exploratory research, but it would weaken this feature's core guarantees: reproducible control flow, resumable file-backed state, inspectable artifacts, bounded loops, and ordinary unit-test coverage.
+
+The repair loop can still be flexible without becoming open-ended:
+
+```text
+post-merge-review-1
+repair-1
+verify-1
+post-merge-review-2   optional, only if maxRepairIterations > 1
+repair-2              optional
+verify-2
+final-eval
+```
+
+Each loop iteration must have a durable checkpoint id, persisted review packet, persisted repair summary, deterministic verification result, and explicit terminal status. The implementation may later make reviewer fanout pluggable, but the MVP should use one focused reviewer path unless the fanout contract is trivial to add without changing the control plane.
 
 ### High-Level Technical Design
 
@@ -126,7 +161,13 @@ Product Contract unchanged.
    - Staged mode: review/repair integrates as explicit orchestrator stages after the current `merge` session and before final `review`/eval, with resumable artifacts on disk.
    - Single-session mode: skip staged review with an explicit skip reason because the `full` run is one model session and the orchestrator has no merge-boundary hook. A future plan may decompose single-session into the same stages.
 
-5. **Observability**
+5. **Optional reviewer fanout**
+   - Keep fanout under the TypeScript control plane, not inside the import skill.
+   - Reviewer workers must be read-only and return structured findings.
+   - The control plane merges reviewer findings into one checkpoint packet before deciding whether to invoke the single repair writer.
+   - Fanout is optional for this MVP; a single focused reviewer is acceptable if it preserves the same packet contract.
+
+6. **Observability**
    - Persist checkpoint artifacts under `stages/`.
    - Include concise summaries in CLI output and docs so users know where a run paused, repaired, or accepted residual issues.
 
@@ -153,15 +194,19 @@ In current staged mode, the main program control flow is:
 
 The proposed checkpoint fits between steps 4 and 5. After the merge session exits, the orchestrator has a durable world bundle on disk and can run a focused reviewer before final eval. If the reviewer asks for grounded repairs, the orchestrator starts another fresh model session in a new **repair** mode. That repair model receives the review packet path and current output root, reads the durable merge/world files, performs only the requested model-owned semantic repairs, then uses deterministic helpers to re-emit/lint.
 
+For a graduate-level mental model: this is a durable-state finite-state machine wrapped around stochastic semantic workers. The state machine transition function is deterministic with respect to observed files, configuration, and worker result envelopes: if extract writes no stages, fail; if merge emits no markdown, skip review; if a checkpoint has no actionable findings, proceed; if actionable findings exist and the iteration budget remains, invoke repair; otherwise persist residuals and proceed to final eval. The model calls are not deterministic internally, but their authority is constrained by typed inputs, typed outputs, persisted artifacts, and bounded transitions.
+
+The design deliberately avoids turning the import skill into a recursive agent supervisor. Subagents may appear as implementation detail for read-only review fanout, but the TypeScript runner remains the owner of global liveness and safety properties: no infinite loops, no hidden retries, no concurrent semantic writers, and no final success state without persisted evidence.
+
 The responsibility split is:
 
 - **Model/skill-owned:** deciding what the story means, which entities matter, whether an object deserves a page, how to word narrative summaries, how to explain omissions, and how to resolve conflicts/retcons.
 - **Deterministic helper-owned:** normalizing sources, reading bounded slices, resolving/quoting provenance refs, validating JSON/envelopes, writing stage files, emitting markdown from artifact packets, linting links/frontmatter/provenance shape, auditing coverage, and persisting review/checkpoint artifacts.
-- **Orchestrator-owned:** starting and stopping sessions, passing skill args, enforcing stage order, checking whether files exist, bounding repair iterations, deciding whether to skip because config is missing, and recording statuses.
+- **Orchestrator-owned:** starting and stopping sessions, passing skill args, enforcing stage order, checking whether files exist, bounding repair iterations, deciding whether to skip because config is missing, merging optional read-only reviewer outputs, and recording statuses.
 
 ### Research Findings
 
-- Current workflow already distinguishes deterministic helper work from model-owned semantic work; staged review should preserve that boundary instead of pushing semantic checks into helpers.
+- Current workflow already distinguishes deterministic helper work from model-owned semantic work; staged review should preserve that boundary instead of pushing semantic checks into helpers or into an unbounded agent supervisor.
 - The recent plot/eval hardening already added reviewer dimensions for object coverage and omission visibility, which can seed a narrower intermediate rubric.
 - The Romeo & Juliet run showed that final reviewer findings can be actionable without implying the whole run failed; this supports a bounded repair checkpoint rather than a pass/fail-only gate.
 
@@ -183,6 +228,8 @@ The responsibility split is:
   **Mitigation:** Make staged mode the explicit MVP and document single-session skip behavior. Reuse the persisted review artifact contract if single-session is later decomposed into explicit stages.
 - **Risk:** The repair stage is underspecified and becomes impossible to invoke deterministically.  
   **Mitigation:** Define an explicit repair invocation contract before implementing orchestration: stage name, review packet path, checkpoint id, iteration number, expected artifacts, and status semantics.
+- **Risk:** Moving orchestration into an agent/subagent control plane makes the import adaptive but opaque.  
+  **Mitigation:** Keep the TypeScript runner as the finite-state control plane. Permit subagents only as bounded read-only reviewer workers or single-writer repair workers launched by that control plane.
 
 ---
 
@@ -194,7 +241,7 @@ The responsibility split is:
 - **Requirements:** R1, R2, R5, R6, R8, R10.
 - **Dependencies:** None.
 - **Files:** `src/world-import/types.ts`, `src/world-import/model-runner.ts`, `src/world-import/staging.ts`, `docs/world-import.md`, `skills/world-import/SKILL.md`, `skills/world-import/references/workflow.md`.
-- **Approach:** Add new review-stage/result types and iteration metadata. Document when checkpoints run, what they are allowed to do, and how loops stop. Update model-runner stage results and CLI/session summaries to report checkpoint outcomes.
+- **Approach:** Add new review-stage/result types and iteration metadata. Document when checkpoints run, what they are allowed to do, and how loops stop. Update model-runner stage results and CLI/session summaries to report checkpoint outcomes. Model this as a finite-state controller, not an agent-owned recursive workflow.
 - **Patterns to follow:** Existing staged orchestration and dependency injection in `src/world-import/model-runner.ts`; current CLI summary reporting in `src/world-import-cli.ts`; current eval result typing in `src/world-import/types.ts`; skill boundary language in `skills/world-import/SKILL.md`.
 - **Test scenarios:**
   - Given a run with staged review disabled or unavailable reviewer config, the orchestration records a clear skip reason and proceeds.
@@ -208,7 +255,7 @@ The responsibility split is:
 - **Requirements:** R3, R4, R9, R10.
 - **Dependencies:** U1.
 - **Files:** `src/world-import/eval.ts`, `src/world-import/types.ts`, `src/world-import-eval.test.ts`.
-- **Approach:** Add a dedicated prompt builder/parser for intermediate review. The schema should include findings, severity, requested actions, and a boolean/enum indicating whether a repair pass is recommended. Seed the rubric from existing final-eval dimensions but keep it focused on merge/emission readiness.
+- **Approach:** Add a dedicated prompt builder/parser for intermediate review. The schema should include findings, severity, requested actions, and a boolean/enum indicating whether a repair pass is recommended. Seed the rubric from existing final-eval dimensions but keep it focused on merge/emission readiness. Keep the schema compatible with later read-only reviewer fanout by making findings mergeable and independently grounded.
 - **Patterns to follow:** Existing final reviewer prompt + structured parsing in `src/world-import/eval.ts`.
 - **Test scenarios:**
   - Valid JSON findings parse into a structured intermediate review result.
@@ -236,7 +283,7 @@ The responsibility split is:
 - **Requirements:** R2, R4, R5, R7, R9.
 - **Dependencies:** U1, U2, U3.
 - **Files:** `src/world-import/model-runner.ts`, `src/world-import/staging.ts`, `skills/world-import/SKILL.md`, `skills/world-import/references/workflow.md`.
-- **Approach:** Feed the intermediate review packet plus current merge/emitted state back into the skill repair stage. Constrain the scope to repairing findings, not redoing the whole import. Re-emit and rerun deterministic checks afterward. Only mark `verified-repaired` if a verification pass confirms the repair; otherwise record `repair-attempted` or `residual`.
+- **Approach:** Feed the intermediate review packet plus current merge/emitted state back into the skill repair stage. Constrain the scope to repairing findings, not redoing the whole import. Re-emit and rerun deterministic checks afterward. Only mark `verified-repaired` if a verification pass confirms the repair; otherwise record `repair-attempted` or `residual`. Preserve one-writer discipline: reviewer workers are read-only, and only the repair stage may semantically modify merge/world artifacts during a repair iteration.
 - **Patterns to follow:** Current staged extract/merge/review orchestration in `src/world-import/model-runner.ts` and helper-driven incremental artifact writing.
 - **Test scenarios:**
   - Actionable review findings trigger one repair pass and then re-emit.
