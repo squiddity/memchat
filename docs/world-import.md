@@ -6,18 +6,7 @@ Skill-first pipeline for turning HTML/XHTML directories, ZIPs, and EPUB-like arc
 
 ### Execution supervision
 
-Before running world-import commands, check whether you are operating from herdr/pi and whether the `herdr` CLI is available. If it is, use herdr instead of defaulting to inline shell execution.
-
-When operating from herdr/pi, run world-import-related project commands in a dedicated pane **below** the current pane whenever they are meant to be watched, may take more than a moment, or emit useful streaming output. Preferred command sequence:
-
-```bash
-herdr pane current
-herdr pane split --current --direction down --cwd /home/squiddity/projects/memchat
-herdr pane run <new-pane-id> 'npm run world-import-run -- --input ... --output ... --model ... --show-tool-updates'
-herdr pane read <new-pane-id>
-```
-
-Use `herdr wait output <pane-id> --match '<text>'` when you need to block until a known milestone appears, and `herdr pane send-text` plus `herdr pane send-keys <pane-id> Enter` only when reusing an existing interactive shell. This covers `npm run world-import-run`, model-backed import test runs, `npm run world-import-helper -- lint|eval|provenance-audit`, helper/repair loops, and repeated source-search/provenance workflows. Avoid side panes for routine supervision, and do not hide these runs behind `nohup`, background `bash`, or detached transcripts unless no pane tool is available. Use existing skill/helper/tool entrypoints before ad hoc scripts. If herdr is unavailable, say so and then fall back to inline execution.
+Model-backed world-import runs are usually long-running. Use the active agent harness's supervised execution path for long, watched, or interactive runs; keep inline shell commands for quick one-shot inspection only.
 
 ### Build & prerequisites
 
@@ -26,15 +15,7 @@ npm install
 npm run build
 ```
 
-The CLI runs under `tsx` without a build; the build is only needed for the installed binary.
-
-Prerequisites use pi's SDK auth/credential resolution:
-
-- Auth: `~/.pi/agent/auth.json` — API keys per provider
-- Models: `~/.pi/agent/models.json` — custom model registrations
-- Environment: `.env` in the repo root is loaded automatically
-
-If you don't have a pi auth file, set the env var directly:
+The CLI runs under `tsx`; build is only needed for the installed binary. Auth/model settings use pi SDK files (`~/.pi/agent/auth.json`, `~/.pi/agent/models.json`) plus repo `.env`. Or set provider env vars directly:
 
 ```bash
 export OPENROUTER_API_KEY="sk-or-..."
@@ -42,16 +23,7 @@ export OPENROUTER_API_KEY="sk-or-..."
 
 ### Quick start
 
-Use a distinct output subdirectory per run:
-
-```bash
-npm run world-import-run -- \
-  --input samples/pg11-images-3.epub \
-  --output world-output/alice-2026-06-26 \
-  --model openrouter/deepseek/deepseek-v4-pro
-```
-
-For quick test runs, use `/tmp/`:
+Use a fresh output directory per run; use `/tmp/` for disposable tests:
 
 ```bash
 npm run world-import-run -- \
@@ -60,11 +32,9 @@ npm run world-import-run -- \
   --model openrouter/deepseek/deepseek-v4-pro
 ```
 
-### TTY-safe thinking output
+### TTY-safe transcripts
 
-Thinking deltas are ANSI-styled only when stderr is attached to a TTY. Pipelines like `tee`, `2>&1`, or process substitution make stderr non-TTY, so the CLI falls back to plain text.
-
-**For live terminal/herdr runs, prefer the wrapper.** It avoids the non-TTY pitfall and supports `--transcript <path>` for saved captures with ANSI output intact:
+For live runs, prefer the wrapper and `--transcript <path>`. It preserves ANSI thinking output and keeps a durable log:
 
 ```bash
 npm run world-import-run -- \
@@ -74,15 +44,9 @@ npm run world-import-run -- \
   --model openrouter/deepseek/deepseek-v4-pro
 ```
 
-Alternatively, use `script` for a pseudo-terminal:
-
-```bash
-script -qef world-output/run.typescript -c 'npm run world-import -- --input samples/pg11-images-3.epub --output world-output/with-tty --model openrouter/deepseek/deepseek-v4-pro'
-```
-
 ### Dry-run
 
-Validates setup and normalization without semantic extraction:
+Validate setup and normalization without semantic extraction:
 
 ```bash
 npm run world-import-run -- \
@@ -104,18 +68,19 @@ npm run world-import-helper -- read-unit --output world-output/alice-normalize -
 
 ### Full model-backed import
 
-Prefer a stronger model with debug output:
+For real imports, expect a long-running model-backed job; prefer a strong model, transcript, and debug output:
 
 ```bash
 rm -rf /tmp/world-out 2>/dev/null
 npm run world-import-run -- \
+  --transcript /tmp/world-out.typescript \
   --input samples/pg11-images-3.epub \
   --output /tmp/world-out \
   --model openrouter/deepseek/deepseek-v4-pro \
   --show-tool-updates
 ```
 
-A successful run with `worldMarkdownFiles: 0` means the model did not complete the import even if the process exited cleanly. Rerun with a stronger model.
+If a run exits cleanly with `worldMarkdownFiles: 0`, it still failed to complete the import; rerun with a stronger model.
 
 ### Silence debug/thinking output
 

@@ -4,7 +4,7 @@ type: feat
 date: 2026-07-10
 artifact_contract: ce-unified-plan/v1
 artifact_readiness: implementation-ready
-product_contract_source: herdr-run-observation
+product_contract_source: run-observation
 execution: code
 ---
 
@@ -15,7 +15,7 @@ execution: code
 | Field | Value |
 |---|---|
 | Objective | Reduce context-wasting world-import tool errors and stdout flood by adding durable transcripts, better helper affordances, and stronger skill/prompt guidance for model workers. |
-| Primary users | Agents and humans running `world-import` staged imports in Herdr/pi, especially long narrative imports with repair checkpoints. |
+| Primary users | Agents and humans running `world-import` staged imports in supervised terminal sessions, especially long narrative imports with repair checkpoints. |
 | Authority | `world-output/frankenfrankenstein` run observations, `docs/world-import.md`, `skills/world-import/SKILL.md`, `skills/world-import/references/workflow.md`, `src/world-import/model-runner.ts`, and helper surfaces in `src/world-import/command-router.ts`. |
 | Execution profile | Multi-unit helper, orchestration, skill prompt, and docs change. |
 | Stop conditions | Stop before moving semantic decisions into helpers, hiding model tool output needed for debugging, or making one corpus-specific workflow hard-coded. |
@@ -26,7 +26,7 @@ execution: code
 
 ### Summary
 
-The Frankenstein staged import successfully exercised the new post-merge review and repair loop, but the observed stdout showed avoidable context loss: ad hoc Python scripts to write JSON artifacts, wildcard unit-id mistakes, shell `head`/`tail` truncation, repeated verbose tool updates, and a misleading repair artifact that retained original findings as residuals after they were resolved. This plan adds helper and prompt improvements so running models use existing deterministic tools effectively, avoid brittle shell/Python glue, and leave durable logs that can be reviewed after long Herdr runs.
+The Frankenstein staged import successfully exercised the new post-merge review and repair loop, but the observed stdout showed avoidable context loss: ad hoc Python scripts to write JSON artifacts, wildcard unit-id mistakes, shell `head`/`tail` truncation, repeated verbose tool updates, and a misleading repair artifact that retained original findings as residuals after they were resolved. This plan adds helper and prompt improvements so running models use existing deterministic tools effectively, avoid brittle shell/Python glue, and leave durable logs that can be reviewed after long supervised terminal runs.
 
 ### Problem Frame
 
@@ -48,7 +48,7 @@ The fix should improve model behavior through better tools and clearer prompts, 
 - R3. Helpers must support batch artifact persistence so a model can add multiple model-authored artifacts without writing a custom Python loop.
 - R4. Helpers must provide safe unit discovery/lookup affordances that prevent literal wildcard unit-id mistakes and guide the model back to `list-units`/prefix matching.
 - R5. Helpers should expose bounded source-read options so models do not rely on shell `head`/`tail` pipes for context control.
-- R6. Verbose tool updates should remain available for debugging, but the default observed Herdr flow should favor compact pane output plus durable detailed artifacts/transcripts.
+- R6. Verbose tool updates should remain available for debugging, but the default observed supervised terminal flow should favor compact pane output plus durable detailed artifacts/transcripts.
 - R7. Repair summary artifacts must distinguish original findings, attempted actions, resolved actions, and actual residual findings without contradicting the model summary.
 - R8. Intermediate review prompts should include style/tone coverage and omission/candidate-disposition visibility when those are the most important remaining quality gaps.
 - R9. Changes must preserve the model/helper boundary: helpers route, validate, persist, and summarize; models decide semantic importance, artifact content, and repair disposition.
@@ -58,7 +58,7 @@ The fix should improve model behavior through better tools and clearer prompts, 
 
 #### In scope
 
-- CLI/docs changes to recommend or default transcript capture for Herdr model-backed imports.
+- CLI/docs changes to recommend or default transcript capture for model-backed imports.
 - Helper command additions for batch artifact writing, unit prefix/match lookup, and bounded reads.
 - Skill/prompt revisions that tell running models when and how to use the new helper surfaces.
 - Staged repair result schema improvements for resolved vs residual action accounting.
@@ -85,7 +85,7 @@ The fix should improve model behavior through better tools and clearer prompts, 
 - AE2. Given a model passes `--unit oebps-...-*u001`, the helper fails with a targeted message explaining that wildcards are not accepted and suggesting `list-units --match` or `read-unit --unit-prefix`.
 - AE3. Given a model wants the first 80 blocks of a source unit, it can use a helper flag instead of piping `read-unit` through `head`.
 - AE4. Given all requested repair actions are resolved, `post-merge-01.repair.json` records resolved action ids and leaves residual findings empty or absent.
-- AE5. Given a long Herdr run, a future reviewer can inspect a durable transcript/log artifact even if pane scrollback has rotated.
+- AE5. Given a long supervised terminal run, a future reviewer can inspect a durable transcript/log artifact even if pane scrollback has rotated.
 - AE6. Given a narrative import with no style artifacts and weak omission visibility, the intermediate review prompt can request a bounded repair or residual note for those dimensions.
 
 ---
@@ -96,13 +96,13 @@ The fix should improve model behavior through better tools and clearer prompts, 
 
 - D1. Prefer **helper affordances plus prompt discipline** over more model admonitions alone. The model fell back to Python because batch persistence was awkward; adding the right helper is more reliable than only saying “do not use Python.”
 - D2. Treat transcript capture as operational evidence, not semantic output. Store/run transcripts outside `world/` and mention them in docs/debug guidance.
-- D3. Keep visible Herdr output compact by documentation/defaults first; only add a tool-event JSONL sink if existing transcript capture is insufficient during implementation.
+- D3. Keep visible supervised terminal output compact by documentation/defaults first; only add a tool-event JSONL sink if existing transcript capture is insufficient during implementation.
 - D4. Add structured repair-action accounting to the checkpoint contract rather than parsing freeform repair summaries as authoritative state.
 - D5. Expand the intermediate review rubric, but keep it focused and bounded: style/tone coverage and omission visibility are eligible only when grounded and repairable.
 
 ### High-Level Technical Design
 
-1. **Transcript-first Herdr run guidance**
+1. **Transcript-first supervised terminal run guidance**
    - Update docs and possibly `scripts/world-import-run.sh`/CLI help to recommend or default `--transcript` for long model-backed imports.
    - Keep visible pane output useful, but make post-hoc log review independent of scrollback length.
 
@@ -136,7 +136,7 @@ The fix should improve model behavior through better tools and clearer prompts, 
 - **Risk:** Batch helper becomes a semantic writer.  
   **Mitigation:** It only validates/persists model-authored packets, exactly like repeated `write-artifact`.
 - **Risk:** Transcript defaults create huge files.  
-  **Mitigation:** Document output path and allow opt-out; prefer transcript for long model-backed Herdr runs rather than every quick helper command.
+  **Mitigation:** Document output path and allow opt-out; prefer transcript for long model-backed supervised terminal runs rather than every quick helper command.
 - **Risk:** More review dimensions make checkpoint too broad.  
   **Mitigation:** Require findings to be grounded, bounded, and repairable; otherwise record residual notes for final eval.
 - **Risk:** Repair action accounting depends on model honesty.  
@@ -146,13 +146,13 @@ The fix should improve model behavior through better tools and clearer prompts, 
 
 ## Implementation Units
 
-### U1. Document transcript-first Herdr import supervision
+### U1. Document transcript-first supervised terminal import supervision
 
 - **Goal:** Make durable run logs the default expectation for long model-backed imports.
 - **Requirements:** R1, R6.
 - **Files:** `docs/world-import.md`, `docs/smoke-tests.md`, `scripts/world-import-run.sh`, `src/world-import-cli.ts`.
-- **Approach:** Update docs and CLI/help text to recommend `--transcript <path>` for Herdr import runs. During implementation, decide whether to only document the flag or have the wrapper auto-suggest/auto-create a transcript path for long model-backed runs.
-- **Patterns to follow:** Existing Herdr supervision language in `docs/world-import.md`; current wrapper behavior in `scripts/world-import-run.sh`.
+- **Approach:** Update docs and CLI/help text to recommend `--transcript <path>` for supervised terminal import runs. During implementation, decide whether to only document the flag or have the wrapper auto-suggest/auto-create a transcript path for long model-backed runs.
+- **Patterns to follow:** Existing supervised terminal supervision language in `docs/world-import.md`; current wrapper behavior in `scripts/world-import-run.sh`.
 - **Test scenarios:** CLI help/docs mention transcript usage; wrapper behavior remains backward-compatible.
 - **Verification:** Build passes and docs describe how to inspect a run after scrollback rotates.
 
@@ -230,13 +230,13 @@ The fix should improve model behavior through better tools and clearer prompts, 
 | Eval/prompt tests | `node --import tsx --test src/world-import-eval.test.ts` | U5 | Intermediate review prompt/parser coverage remains green. |
 | Full test suite | `npm test` | All units | Existing regressions remain green. |
 | TypeScript build | `npm run build` | All units | New helper/types compile. |
-| Manual Herdr smoke | Run a small staged import with transcript enabled | U1-U6 | Pane output is compact enough to monitor; durable transcript/checkpoint artifacts allow post-run review. |
+| Manual supervised terminal smoke | Run a small staged import with transcript enabled | U1-U6 | Pane output is compact enough to monitor; durable transcript/checkpoint artifacts allow post-run review. |
 
 ---
 
 ## Definition of Done
 
-- Long Herdr world-import runs have a documented durable transcript path.
+- Long world-import runs have a documented durable transcript path.
 - Running models have helper commands for batch artifact writes, safe unit lookup, and bounded reads.
 - Skill and prompt guidance explicitly directs models away from inline Python/JSON glue when helpers exist.
 - Repair checkpoint summaries accurately separate attempted, resolved, and residual work.
