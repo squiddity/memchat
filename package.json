@@ -10,20 +10,23 @@
   "bin": {
     "memchat": "dist/index.js",
     "memchat-world-import": "dist/world-import-cli.js",
-    "memchat-world-import-helper": "dist/world-import/command-router.js"
+    "memchat-world-import-helper": "dist/world-import/command-router.js",
+    "memchat-markdown-review": "dist/markdown-review-cli.js"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
     "world-import": "tsx src/world-import-cli.ts",
     "world-import-run": "bash ./scripts/world-import-run.sh",
     "world-import-helper": "tsx src/world-import/command-router.ts",
+    "markdown-review": "tsx src/markdown-review-cli.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.1",
-    "@tobilu/qmd": "2.5.3"
+    "@tobilu/qmd": "2.5.3",
+    "mdts": "0.20.3"
   },
   "pi": {
     "skills": [
