@@ -15,6 +15,7 @@ Build `memchat`: a TypeScript chat agent on `@earendil-works/pi-coding-agent` fo
 - When semantic quality depends on judgment, invest first in skill instructions, bounded inspection tools, contracts, reviewer prompts, and eval fixtures so the executing model has enough leeway and context to produce high-quality maintained wiki outputs.
 - For model-backed `world-import` shell runs, prefer stronger debugging by default when behavior is uncertain or a prior run failed to emit world docs: use a stronger model, keep `--debug`, and add `--show-tool-updates` so the next session can inspect tool-level failures quickly.
 - For watched or longer-running project code execution, use the active agent harness's supervised execution mechanism when available instead of hiding work behind detached background jobs. Keep inline execution for quick one-shot inspection commands. This applies to `npm run ...` invocations such as imports, builds, tests, playtests, lint/eval runs, provenance audits, helper loops, repair loops, and source-search workflows.
+- For a requested browser review of generated Markdown, run `npm run markdown-review` in a supervised Herdr pane. It defaults to the repository `world-output/` tree; use one explicit repository-contained root only when requested. Report only its emitted Tailscale URL, then close that exact pane after review or before the session ends. Never replace a Tailscale failure with a public bind, tunnel, reverse proxy, authentication workaround, or persistent service.
 - Add tests or eval fixtures for meaningful memory behavior changes when feasible.
 - After changes, run the relevant checks from `docs/smoke-tests.md`.
 - When asked to push, use the configured GitHub CLI auth (`gh auth status`, `gh auth setup-git`) rather than unauthenticated HTTPS prompts.
@@ -28,7 +29,7 @@ Do not load every doc by default. Read the smallest relevant doc for the task:
 - `docs/playtesting.md` — how the agent should run manual shell playtests; default to `interactive_shell`, a fresh memory dir, `qmd-hybrid`, and `--memory-debug` unless the user asks otherwise.
 - `docs/memory-backends.md` — backend strategy, storage layout, comparison, and implementation order.
 - `docs/architecture.md` — goals, memory quality bar, design direction, and current roadmap.
-- `docs/world-import.md` — skill-first world-import architecture, helper contract boundary, shell quick-start, lint/eval, and debugging.
+- `docs/world-import.md` — skill-first world-import architecture, helper contract boundary, shell quick-start, Markdown browser review workflow, lint/eval, and debugging.
 - `docs/smoke-tests.md` — validation commands after code changes.
 - `docs/plans/*.md` — only when a task explicitly references a plan or when implementation details need the latest plan context.
 

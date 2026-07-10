@@ -128,6 +128,31 @@ npm run world-import-run -- \
       units/                    # retained normalized source-unit pages for provenance
 ```
 
+### Browser review over Tailscale
+
+For a requested browser review of generated Markdown, start the pinned viewer in a supervised Herdr pane. It binds only to this server's active Tailscale IPv4 address, defaults to `world-output/`, and prints the private URL to share with the reviewer.
+
+```bash
+new_pane=$(herdr pane split "$HERDR_PANE_ID" --direction down --ratio 0.30 --cwd "$PWD" --no-focus \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>console.log(JSON.parse(s).result.pane.pane_id))')
+herdr pane rename "$new_pane" "review"
+herdr pane run "$new_pane" "npm run markdown-review"
+```
+
+Keep the primary pane available for chat. Report the emitted `Markdown review URL` (the Tailscale DNS URL with its actual selected port), not the bind address or other process details. For an explicitly requested, repository-contained alternate tree, start a separate pane rather than widening the default viewer:
+
+```bash
+herdr pane run "$new_pane" "npm run markdown-review storyboards"
+```
+
+Close the exact pane after review or before the agent session ends:
+
+```bash
+herdr pane close "$new_pane"
+```
+
+This is an on-demand, read-only browser review surface, not a public documentation host. If Tailscale address or DNS discovery fails, diagnose that local prerequisite; do **not** bind publicly, add a tunnel/reverse proxy, add viewer authentication, or leave a persistent service running. Browser preferences are isolated to a temporary runtime home and are discarded when the viewer stops.
+
 ### Inspecting a run
 
 ```bash

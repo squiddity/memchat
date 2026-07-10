@@ -182,6 +182,25 @@ Expected:
 - Orchestration tests confirm staged post-merge checkpoints, skipped-review reasons, repair-stage invocation fields, and bounded repair attempts remain wired.
 - Provenance-tool tests confirm provenance-audit warnings still surface heading-only and sparse-citation risks.
 
+## 10. Markdown review command smoke test
+
+The automated review-command test uses a temporary fixture and loopback-only test binding; it does not prove tailnet authorization:
+
+```bash
+node --import tsx --test src/markdown-review-cli.test.ts
+npm run markdown-review -- --help
+```
+
+For the required remote smoke, first ensure an emitted Markdown tree exists under `world-output/`. From an authorized Tailscale browser, have the agent launch `npm run markdown-review` in a named, supervised Herdr pane and open the emitted `Markdown review URL`. Verify the tree is visible, then close that exact pane and confirm the URL is unreachable. This validates tailnet access and shutdown only; do not test or configure public reachability.
+
+To review an explicitly requested alternate root, use a separate pane and a repository-contained directory such as:
+
+```bash
+npm run markdown-review storyboards
+```
+
+Expected: the command never falls back to a wildcard/public listener; it reports an actual-port Tailscale DNS URL only after mdts starts; closing the pane terminates the viewer and discards its temporary configuration home.
+
 ## Notes
 
 - `.env` is local-only and ignored by git. It may contain values such as `MEMCHAT_LEMONADE_BASE_URL` and `MEMCHAT_LEMONADE_API_KEY`.
