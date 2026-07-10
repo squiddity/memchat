@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildPostMergeReviewPrompt, buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, generateQaQuestions, lintWorldImport, parseStructuredPostMergeReviewOutput, parseStructuredReviewerOutput, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
-import { writeExtractionStage, writeManifest, writeMergeStage } from "./world-import/staging.js";
+import { writeExtractionStage, writeManifest, writeMergeStage, writeNormalizedUnit } from "./world-import/staging.js";
 
 async function createReviewableWorldOutput(options: { includeSourcePage?: boolean } = {}): Promise<string> {
   const output = await mkdtemp(join(tmpdir(), "memchat-world-eval-"));
@@ -117,14 +117,21 @@ test("deterministic evaluation surfaces non-failing narrative risk signals and p
         { heading: "Outcome", body: "His choices end tragically." },
       ],
       provenance: [{ sourceId: "s1", unitId: "u1", startAnchor: "b0001", endAnchor: "b0001", quote: "ACT I" }],
+    }, {
+      id: "plot-synopsis",
+      group: "facts",
+      title: "Plot Synopsis",
+      sections: [{ heading: "Synopsis", body: "A".repeat(2500) }],
+      provenance: [{ sourceId: "s1", unitId: "u1", startAnchor: "b0001", endAnchor: "b0001", quote: "ACT I" }],
     }],
   });
   const checks = await deterministicWorldImportChecks(output);
-  assert.ok(checks.riskSignals?.some((item) => item.code === "missing-plot-synopsis"));
+  assert.ok(!checks.riskSignals?.some((item) => item.code === "missing-plot-synopsis"));
   assert.ok(checks.riskSignals?.some((item) => item.code === "missing-timeline"));
   assert.ok(checks.riskSignals?.some((item) => item.code === "missing-scene-guide"));
   assert.ok(checks.riskSignals?.some((item) => item.code === "empty-things-group"));
   assert.ok(checks.provenanceAudit?.diagnostics.some((item) => item.code === "heading-only-provenance"));
+  assert.ok(checks.provenanceAudit?.diagnostics.some((item) => item.code === "sparse-synthesis-provenance" && item.artifactId === "plot-synopsis"));
 });
 
 test("deterministic evaluation fails clearly when cited source pages are missing", async () => {
@@ -141,6 +148,44 @@ test("review bundle includes wiki navigation files and cited source-unit pages",
   assert.match(bundle.markdown["coverage.md"], /# Source Coverage/);
   assert.match(bundle.markdown["sources\/index.md"], /# Sources/);
   assert.match(bundle.markdown["sources\/units\/u.md"], /## b0001/);
+});
+
+test("review bundle balances body-unit excerpts and exposes candidate accounting", async () => {
+  const output = await mkdtemp(join(tmpdir(), "memchat-world-balanced-bundle-"));
+  const units = ["u1", "u2", "u3"];
+  await writeManifest({
+    version: 1, createdAt: "2026-07-10T00:00:00.000Z", inputRoot: "/tmp/source", outputRoot: output, diagnostics: [],
+    units: units.map((unitId, order) => ({ sourceId: `s${order + 1}`, unitId, title: `Chapter ${order + 1}`, kind: "html" as const, role: "body" as const, inputPath: `${unitId}.html`, order, blockCount: 3, anchors: ["b0001", "b0002", "b0003"], normalizedPath: `sources/normalized/${unitId}.json`, sourceHash: `${order}`, contentHash: `${order}`, normalizerVersion: 2 })),
+  });
+  for (const [order, unitId] of units.entries()) {
+    await writeNormalizedUnit(output, { sourceId: `s${order + 1}`, unitId, title: `Chapter ${order + 1}`, kind: "html", role: "body", inputPath: `${unitId}.html`, order, sourceHash: `${order}`, contentHash: `${order}`, normalizerVersion: 2, content: `START-${unitId} ${"a".repeat(500)} MIDDLE-${unitId} ${"b".repeat(500)} END-${unitId}`, blocks: [{ anchor: "b0001", index: 0, text: `START-${unitId}` }, { anchor: "b0002", index: 1, text: `MIDDLE-${unitId}` }, { anchor: "b0003", index: 2, text: `END-${unitId}` }] });
+    await writeExtractionStage(output, { version: 1, kind: "extraction", unitId, sourceId: `s${order + 1}`, candidates: [{ id: `candidate-${unitId}`, group: "things", title: `Thing ${unitId}`, provenance: [{ sourceId: `s${order + 1}`, unitId, startAnchor: "b0001", endAnchor: "b0001", quote: `START-${unitId}` }] }] });
+  }
+  await writeMergeStage(output, { version: 1, kind: "merge", artifacts: [], candidateDispositions: [{ unitId: "u1", candidateId: "candidate-u1", disposition: "dropped", reason: "Covered by a broader event." }, { unitId: "u2", candidateId: "candidate-u2", disposition: "merged", artifactId: "event" }] });
+  const bundle = await buildReviewBundle(output);
+  assert.equal(bundle.sourceCoverage.coverageTruncated, false);
+  assert.deepEqual(bundle.sources.map((source) => source.unitId), units);
+  assert.ok(bundle.sources.every((source) => source.sourcePagePath === `sources/units/${source.unitId}.md`));
+  assert.ok(bundle.sources.every((source) => source.content.includes("[[start]]") && source.content.includes("[[middle]]") && source.content.includes("[[end]]")));
+  assert.deepEqual(bundle.candidateAccounting.counts, { represented: 0, merged: 1, deferred: 0, dropped: 1, unaccounted: 1 });
+  const prompt = buildReviewerPrompt(bundle);
+  assert.match(prompt, /Candidate Accounting/);
+  assert.match(prompt, /candidate-u1: dropped — Covered by a broader event/);
+});
+
+test("review bundle reports coverage truncation without omitting body units", async () => {
+  const output = await mkdtemp(join(tmpdir(), "memchat-world-truncated-bundle-"));
+  const units = Array.from({ length: 251 }, (_, index) => `u${index}`);
+  await writeManifest({
+    version: 1, createdAt: "2026-07-10T00:00:00.000Z", inputRoot: "/tmp/source", outputRoot: output, diagnostics: [],
+    units: units.map((unitId, order) => ({ sourceId: `s${order}`, unitId, kind: "html" as const, role: "body" as const, inputPath: `${unitId}.html`, order, blockCount: 1, anchors: ["b0001"], normalizedPath: `sources/normalized/${unitId}.json`, sourceHash: `${order}`, contentHash: `${order}`, normalizerVersion: 2 })),
+  });
+  await writeMergeStage(output, { version: 1, kind: "merge", artifacts: [] });
+  const bundle = await buildReviewBundle(output);
+  assert.equal(bundle.sourceCoverage.coverageTruncated, true);
+  assert.equal(bundle.sources.length, 251);
+  assert.ok(bundle.sources.every((source) => source.content.includes("coverage is truncated")));
+  assert.match(buildReviewerPrompt(bundle), /WARNING: source-text coverage was truncated/);
 });
 
 test("reviewer prompt JSON example includes all scored dimensions", async () => {
@@ -177,6 +222,9 @@ test("post-merge review prompt focuses repairable semantic gaps", async () => {
   assert.match(prompt, /omission/);
   assert.match(prompt, /"repairRecommended"/);
   assert.match(prompt, /"requestedActions"/);
+  assert.match(prompt, /Deterministic pre-review inventory/);
+  assert.match(prompt, /Narrative surfaces: synopsis: missing; timeline: missing; scene-guide: missing/);
+  assert.match(prompt, /Treat this inventory as authoritative/);
 });
 
 test("post-merge review parser accepts Romeo-like object repair requests", () => {

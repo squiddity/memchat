@@ -44,10 +44,10 @@ The current staged pipeline has a valuable shape: `extract -> merge -> post-merg
 
 - R1. Staged mode must preserve enough extraction context for merge to retain or explicitly account for minor named entities, plot-critical objects, and style/poem candidates.
 - R2. Final eval/reviewer prompts must include candidate accounting summaries so represented, dropped, merged, and deferred candidates are visible to reviewers.
-- R3. Final eval source sampling must represent every body unit well enough that reviewers do not infer missing late-chapter source evidence from prefix truncation.
+- R3. Final eval source sampling must give every body unit explicit, reconstructable start/middle/end evidence within a documented bounded-budget policy, so reviewers do not infer missing late-chapter source evidence from prefix truncation.
 - R4. Post-merge review prompts must include deterministic artifact existence/size summaries for narrative surfaces (`plot/corpus synopsis`, `timeline`, `chapter/scene guide`) to reduce false missing-surface findings.
-- R5. Staged repair must support at least one verification step after repair so the checkpoint records whether requested actions appear resolved or residual.
-- R6. Provenance review must highlight sparse long-form synthesis pages and give the repair model bounded evidence-finding instructions using existing helper tools.
+- R5. Staged repair must support one deterministic, action-scoped verification step after repair. The checkpoint must record per-action verified, residual, or not-deterministically-verifiable outcomes; it may report `verified-repaired` only when every requested action is verified.
+- R6. Provenance review must deterministically highlight sparse long-form synthesis pages using a documented coverage threshold, and give the repair model bounded evidence-finding instructions using existing helper tools.
 - R7. All changes must keep semantic decisions model-owned; TypeScript may summarize, sample, validate, and route, but must not decide entity importance or author world prose.
 - R8. Tests must cover prompt/bundle contents, staged checkpoint behavior, repair verification states, and regression cases matching the Alice quality gap.
 - R9. Documentation must explain how staged is intended to beat single: more reviews plus explicit context handoff, not opaque retries.
@@ -55,10 +55,10 @@ The current staged pipeline has a valuable shape: `extract -> merge -> post-merg
 ### Acceptance Examples
 
 - AE1. Given an Alice-like staged output with dropped candidates, final eval includes candidate disposition summaries and the reviewer no longer says dropped-candidate risk is impossible to assess solely because dispositions are hidden.
-- AE2. Given a corpus with 12 chapters, final eval source sampling includes representative excerpts from each chapter/source unit rather than only early prefixes.
+- AE2. Given a corpus with 12 chapters, final eval source sampling includes start/middle/end excerpts and source-page references for each body unit rather than only early prefixes; tests assert exact body-unit coverage.
 - AE3. Given existing `plot-synopsis.md`, `timeline.md`, and `chapter-guide.md`, post-merge review sees their presence and sizes and does not falsely request missing narrative surfaces.
-- AE4. Given a long synopsis page with only heading citations, provenance diagnostics identify the weak refs and repair guidance points to bounded helper commands for strengthening evidence.
-- AE5. Given a repair action adding a missing plot object, the subsequent verification checkpoint records whether the object exists, is indexed, has provenance, and whether residual findings remain.
+- AE4. Given a synthesis page of at least 2,500 body characters with only two bookend refs, provenance diagnostics emit `sparse-synthesis-provenance` from its deterministic ref-density and heading-ref signals; repair guidance points to bounded helper commands for strengthening evidence.
+- AE5. Given a repair action adding a missing plot object, the subsequent verification checkpoint records a per-action result for artifact existence, index presence, and resolved provenance; semantic actions without a deterministic predicate are explicitly `not-deterministically-verifiable` and leave the checkpoint `residual`.
 
 ---
 
@@ -69,10 +69,10 @@ The current staged pipeline has a valuable shape: `extract -> merge -> post-merg
 Staged should not attempt to recreate a single long model context. Instead, each boundary should persist the context the next stage needs:
 
 - extraction candidates with rich payloads and provenance;
-- candidate accounting with explicit dispositions;
+- candidate accounting with explicit dispositions keyed by the existing `(unitId, candidateId)` identity;
 - narrative-surface inventory;
 - provenance warning summaries;
-- checkpoint findings and repair outcomes.
+- checkpoint findings and action-scoped verification outcomes.
 
 This preserves the project boundary that helpers own structure while models own semantics.
 
@@ -101,17 +101,25 @@ After a repair stage, run a bounded verification checkpoint that inspects the re
   - Include unit metadata for all units.
   - Include bounded start/middle/end snippets per body unit when full content cannot fit.
   - Preserve source unit page references for reconstructability.
-- Add candidate accounting summary to `ReviewBundle` or prompt construction:
+- Replace sequential source slicing with a deterministic allocator:
+  - reserve an equal source-text share for every body unit before adding optional detail;
+  - emit start/middle/end snippets plus the source page reference for each unit;
+  - use a 240-character preferred snippet size and adapt evenly down to a 80-character minimum if the 60,000-character budget requires it;
+  - if the body-unit count cannot meet the minimum, emit all unit metadata and a `coverage-truncated` bundle diagnostic rather than silently dropping late units; reviewer instructions must treat that diagnostic as insufficient evidence, not missing source.
+- Add candidate accounting summary to `ReviewBundle` or prompt construction using the existing `CandidateDisposition` identity and enum:
   - extraction candidate count by unit/group;
   - represented/merged/deferred/dropped/unaccounted counts;
-  - dropped/deferred candidates with reasons, bounded by size.
+  - dropped/deferred candidates with reasons, bounded by size;
+  - a separate extraction-coverage section so disposition completeness is not presented as extraction recall.
 - Add artifact inventory summaries for key narrative surfaces and long synthesis pages:
   - id, group, title, section count, body character count, provenance count, related count.
 
 **Tests**
 
-- `src/world-import-eval.test.ts`: source sampling includes more than early units for a multi-unit corpus.
+- `src/world-import-eval.test.ts`: source sampling covers every body-unit ID and selects start/middle/end excerpts for a multi-unit corpus.
+- `src/world-import-eval.test.ts`: oversized-unit fixture emits `coverage-truncated` instead of silently omitting late units.
 - `src/world-import-eval.test.ts`: reviewer prompt includes candidate disposition summary and dropped-candidate reasons.
+- `src/world-import-eval.test.ts`: Alice-like extraction fixture verifies required minor entity, plot-object/document, and style candidate classes before merge; disposition accounting remains a separate assertion.
 - `src/world-import-eval.test.ts`: reviewer prompt includes narrative-surface artifact inventory.
 
 ### Unit 2: Post-merge review false-positive hardening
@@ -153,19 +161,20 @@ After a repair stage, run a bounded verification checkpoint that inspects the re
 **Work**
 
 - Add a post-repair verification step after `stage: "repair"`.
-- Persist verification under `stages/checkpoints/`, e.g. `post-merge-01.verify.json` or extend `post-merge-01.repair.json` with structured action results.
-- Verification should be bounded and action-scoped:
-  - target artifact exists;
-  - emitted markdown exists;
-  - target appears in group index when applicable;
-  - provenance refs resolve;
-  - lint is clean or residual diagnostics are explicit.
-- Record `verified-repaired` when requested actions are satisfied; otherwise `residual`.
+- Persist a versioned `stages/checkpoints/post-merge-01.verify.json` separate from the immutable review and repair records.
+- Add an `actionResults` contract keyed by requested action ID: `verified`, `residual`, or `not-deterministically-verifiable`; include the applicable checks, evidence paths/diagnostic codes, and residual explanation.
+- Verification is bounded and action-scoped. Require action-type selectors/predicates before a structural action can be verified:
+  - `add-artifact` / `add-narrative-surface`: target artifact and emitted markdown exist, index membership when applicable, and refs resolve;
+  - `repair-candidate-disposition`: canonical `(unitId, candidateId)` disposition is present and valid;
+  - `strengthen-artifact`, `record-omission`, `strengthen-provenance`, and `other`: record `not-deterministically-verifiable` unless the requested action supplies an explicit deterministic predicate. They remain residual for optional human/model review; file existence alone is not semantic verification.
+  - lint diagnostics are action-scoped: unrelated pre-existing diagnostics are reported but do not fail another action.
+- Record checkpoint `verified-repaired` only if every requested action is `verified`; otherwise record `residual`. This unit adds no automatic second repair loop: existing `maxRepairIterations` remains the single configured repair bound.
 
 **Tests**
 
-- `src/world-import.test.ts`: repair action followed by verification can produce `verified-repaired`.
-- `src/world-import.test.ts`: unresolved repair records `residual` and does not loop indefinitely.
+- `src/world-import.test.ts`: structural repair action followed by verification produces a versioned verify packet and `verified-repaired`.
+- `src/world-import.test.ts`: semantic repair action is `not-deterministically-verifiable` and leaves the checkpoint `residual`.
+- `src/world-import.test.ts`: unrelated existing lint diagnostics are reported without failing an otherwise verified action; unresolved repair records `residual` and does not loop indefinitely.
 
 ### Unit 4: Provenance repair guidance for long synthesis pages
 
@@ -178,16 +187,16 @@ After a repair stage, run a bounded verification checkpoint that inspects the re
 
 **Work**
 
+- Add deterministic `sparse-synthesis-provenance` reporting for synopsis/timeline/chapter-guide artifacts with at least 2,500 body characters when they have fewer than three resolved refs, more than 1,200 body characters per resolved ref, or only heading/title-like refs. Reuse existing artifact-level refs and body-character counts; report the triggered structural signals and do not infer claim-to-section placement, judge claim truth, or author prose.
 - Tighten skill guidance: long synthesis artifacts should carry provenance across major sections, not just bookends.
 - Teach repair stage to use `provenance-audit`, `suggest-ref-candidates`, and `quote-ref --as-ref` for synthesis-page provenance strengthening.
-- Document expected provenance pattern for synopsis/timeline/chapter-guide:
-  - at least representative refs across beginning/middle/end;
-  - chapter-level surfaces should cite multiple chapter units or explicitly justify summary-level refs.
+- Document expected provenance pattern for synopsis/timeline/chapter-guide: representative refs across beginning/middle/end; chapter-level surfaces should cite multiple chapter units or explicitly justify summary-level refs.
 
 **Tests**
 
 - Existing provenance audit tests remain green.
-- Add prompt/fixture assertions only if helper behavior changes; otherwise validate through docs/skill review.
+- Add deterministic fixtures for sparse two-ref/bookend-only density, sufficiently referenced pages, short-page exemption, heading-only refs, and unresolved-ref handling.
+- Add prompt/fixture assertions for repair guidance; validate remaining narrative guidance through docs/skill review.
 
 ### Unit 5: Staged extraction/merge prompt hardening
 
@@ -196,6 +205,7 @@ After a repair stage, run a bounded verification checkpoint that inspects the re
 - `skills/world-import/SKILL.md`
 - `skills/world-import/references/contracts.md`
 - `src/world-import.test.ts` if prompt rendering changes.
+- `src/world-import-eval.test.ts` for extraction fixture coverage.
 
 **Work**
 
@@ -204,12 +214,14 @@ After a repair stage, run a bounded verification checkpoint that inspects the re
   - plot-critical props/documents;
   - poems/songs/parodies/style surfaces;
   - omission/disposition notes when something is likely too minor for a standalone page.
+- Add an Alice-like deterministic extraction fixture with named expected candidate IDs/classes and source refs. It guards extraction recall before merge; it must not encode importance ranking or author prose.
 - In `stage: "merge"`, require dropped candidates to explain why their content remains discoverable or why standalone omission is acceptable.
-- Encourage explicit `record-omission` or disposition artifacts/sections where minor entities are merged into broader event pages.
+- Require the existing `CandidateDisposition` fields (`unitId`, `candidateId`, disposition enum, optional artifact ID, and reason where applicable) rather than introducing a second disposition artifact schema.
 
 **Tests**
 
 - Prompt rendering tests verify staged prompts include the new extraction/merge quality instructions if prompt construction is centralized.
+- Extraction fixture asserts expected candidate IDs/classes and valid source refs before merge.
 
 ### Unit 6: Default staged mode follow-through
 
@@ -217,17 +229,20 @@ After a repair stage, run a bounded verification checkpoint that inspects the re
 
 - `src/world-import-cli.ts`
 - `src/world-import-cli.test.ts`
+- `src/world-import/model-runner.ts`
+- `src/world-import.test.ts`
 - `docs/world-import.md`
 
 **Work**
 
-- Preserve the just-made default of `--session-strategy staged`.
+- Keep `--session-strategy staged` as the CLI default and make `runWorldImportSkillWithRunners()` default to staged too, so direct library callers do not silently take a different product default.
 - Document when to override with `--session-strategy single` for comparison/debugging.
 - Add docs explaining that staged may run longer but should produce better inspectability and bounded repair.
 
 **Tests**
 
-- `src/world-import-cli.test.ts`: default remains `staged`; explicit `single` still works.
+- `src/world-import-cli.test.ts`: CLI default remains `staged`; explicit `single` still works.
+- `src/world-import.test.ts`: direct runner invocation defaults to `staged`; explicit `single` still works.
 
 ---
 
@@ -253,9 +268,9 @@ node --import tsx --test src/world-import-eval.test.ts
 node --import tsx --test src/world-import-provenance-tools.test.ts
 ```
 
-Then run an empirical comparison:
+Then run a reproducible empirical comparison. Preserve each deterministic review bundle and parsed reviewer JSON. Re-evaluate both historical baselines and the new staged output using the same current evaluator prompt/bundle version and pinned reviewer model ID; run each evaluation three times. Compare median overall score and dimension scores: staged must meet or exceed the single-session median overall score, with no dimension worse by more than one point. Invalid reviewer parses fail the comparison rather than being dropped.
 
-```bash
+```
 npm run world-import-run -- \
   --transcript world-output/alice-staged-quality.typescript \
   --input samples/Alice_Adventures_in_Wonderland.epub \
@@ -268,18 +283,18 @@ npm run world-import-helper -- lint --output world-output/alice-staged-quality
 npm run world-import-helper -- eval --output world-output/alice-staged-quality --reviewer-model openrouter/deepseek/deepseek-v4-pro
 ```
 
-Compare against:
+Compare against (re-evaluated with the same evaluator protocol, not their historical scores):
 
 - `world-output/alice-wonderland-20260710-034901`
 - `world-output/alice-wonderland-staged-20260710-043551`
 
-Success target: staged lint passes, final reviewer parse is valid, score is on par with or above single-session, provenance warnings are reduced or clearly justified, and checkpoint repair/verification artifacts explain any residual tradeoffs.
+Success target: staged lint passes; all reviewer parses are valid; staged median overall score is on par with or above the re-evaluated single-session median with no dimension regression greater than one point; deterministic provenance warnings are reduced or explicitly exempt; and checkpoint repair/verification artifacts explain every residual tradeoff.
 
 ---
 
 ## Risks and Mitigations
 
-- **Risk: prompts become too long.** Mitigate with bounded summaries and source-unit-balanced snippets rather than full dumps.
+- **Risk: prompts become too long.** Mitigate with the documented equal-share source allocator, explicit `coverage-truncated` signal, and source-unit-balanced snippets rather than full dumps.
 - **Risk: reviewer overfits to deterministic summaries.** Keep source snippets, markdown artifacts, and candidate summaries together so reviewers can cross-check.
 - **Risk: more repair stages increase cost.** Default to one repair plus verification; make additional repair iterations explicit/configurable.
 - **Risk: helper code starts making semantic decisions.** Keep helper additions to summarization, validation, routing, and prompt evidence; model-authored stages remain the semantic source of truth.
@@ -288,6 +303,6 @@ Success target: staged lint passes, final reviewer parse is valid, score is on p
 
 ## Open Questions
 
-- Should repair verification be model-reviewed, deterministic, or hybrid? Recommended first pass: deterministic action checks plus optional reviewer explanation when residual.
-- Should staged extraction write a dedicated corpus inventory artifact, or should candidate dispositions carry enough inventory detail? Recommended first pass: candidate/disposition summaries, then decide from eval results.
+- Should residual semantic repair actions receive an optional model-review explanation in a later follow-up? This plan records them as `not-deterministically-verifiable` and does not add another repair loop.
+- Should staged extraction write a dedicated corpus inventory artifact after the candidate-fixture evidence is collected? This plan uses the existing candidate/disposition schema first.
 - Should final eval score be allowed to proceed when deterministic warnings exist? Current behavior allows warnings but blocks on deterministic failures; keep this unless tests reveal warning handling regressions.

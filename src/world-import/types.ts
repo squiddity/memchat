@@ -179,6 +179,26 @@ export type StagedReviewCheckpoint = {
   };
 };
 
+export type StagedReviewActionVerificationStatus = "verified" | "residual" | "not-deterministically-verifiable";
+
+export type StagedReviewActionVerification = {
+  actionId: string;
+  status: StagedReviewActionVerificationStatus;
+  checks: Array<{ name: string; passed: boolean; message: string; path?: string; diagnosticCodes?: string[] }>;
+  residualExplanation?: string;
+};
+
+export type StagedRepairVerification = {
+  version: 1;
+  kind: "post-merge-verify";
+  checkpointId: string;
+  iteration: number;
+  createdAt: string;
+  outputRoot: string;
+  status: Extract<StagedReviewStatus, "verified-repaired" | "residual">;
+  actionResults: StagedReviewActionVerification[];
+};
+
 export type StagedRepairSummary = {
   version: 1;
   kind: "post-merge-repair";
@@ -220,9 +240,27 @@ export type ArtifactPacket = {
   metadata?: Record<string, unknown>;
 };
 
+export type ReviewBundleSource = {
+  unitId: string;
+  sourceId: string;
+  title?: string;
+  order: number;
+  content: string;
+  sourcePagePath?: string;
+};
+
+export type ReviewBundleCandidateAccounting = {
+  extractionCandidateCount: number;
+  counts: Record<"represented" | "merged" | "deferred" | "dropped" | "unaccounted", number>;
+  droppedOrDeferred: Array<{ unitId?: string; candidateId: string; disposition: "deferred" | "dropped"; reason?: string }>;
+};
+
 export type ReviewBundle = {
   manifest: SourceManifest;
-  sources: Array<{ unitId: string; sourceId: string; title?: string; order: number; content: string }>;
+  sources: ReviewBundleSource[];
+  sourceCoverage: { bodyUnitCount: number; sampledBodyUnitCount: number; coverageTruncated: boolean };
+  candidateAccounting: ReviewBundleCandidateAccounting;
+  artifactInventory: Array<{ id: string; group: WorldImportGroup; title: string; sectionCount: number; bodyChars: number; provenanceCount: number; relatedCount: number }>;
   merge: StageEnvelope;
   markdown: Record<string, string>;
 };

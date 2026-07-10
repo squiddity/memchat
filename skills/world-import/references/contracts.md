@@ -54,6 +54,7 @@ Persist one envelope per normalized unit:
 - Places: include `description`, `atmosphere`, `events`, `visitors`, `significance`
 - Things: include `description`, `significance`, `possessor`, `narrativeContext`
 - Facts: include `event`, `participants`, `cause`, `consequence`, `setting`, `detail`
+- Staged extraction: do not omit minor named entities, plot-critical props/documents, or poems/songs/parodies/style surfaces merely because they may be merged later; preserve a provenance-backed candidate so merge can make the model-owned disposition.
 
 ## Merge stage envelope
 
@@ -99,7 +100,7 @@ Persist a single merge stage:
 }
 ```
 
-Candidate dispositions are model-authored audit metadata. Every extraction candidate id should be represented by an artifact (`metadata.representedCandidateIds`, e.g. `["unit-id:candidate-id"]`), merged into a broader artifact, deferred, or dropped with a reason. Helper lint checks completeness only; it does not judge whether the disposition is semantically wise.
+Candidate dispositions are model-authored audit metadata. Every extraction candidate id should be represented by an artifact (`metadata.representedCandidateIds`, e.g. `["unit-id:candidate-id"]`), merged into a broader artifact, deferred, or dropped with a reason. For dropped candidates, explain why their content remains discoverable or why standalone omission is acceptable. Use the existing `unitId`, `candidateId`, disposition, optional `artifactId`, and reason fields; do not create a second disposition schema. Helper lint checks completeness only; it does not judge whether the disposition is semantically wise.
 
 Prefer incremental merge construction with `write-artifact --mode upsert --file artifact.json` and validate complex artifacts with `validate-artifact`. Use `coverage-plan` before final emission to inspect source-unit and candidate accounting. Use `emit-lint-repair-loop` and `repair-summary` before declaring the import complete.
 
