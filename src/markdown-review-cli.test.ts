@@ -3,7 +3,7 @@ import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { discoverTailscale, parseArgs, resolveReviewRoot, tailscaleUrlFromStartup } from "./markdown-review-cli.js";
+import { discoverTailscale, parseArgs, resolveReviewRoot, runReview, tailscaleUrlFromStartup } from "./markdown-review-cli.js";
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "memchat-markdown-review-test-"));
@@ -62,6 +62,55 @@ test("tailscaleUrlFromStartup reports only the confirmed DNS URL and actual port
   );
   assert.equal(tailscaleUrlFromStartup("Server running at http://100.101.102.103:abc", "reviewer.example.ts.net"), undefined);
   assert.equal(tailscaleUrlFromStartup("not ready", "reviewer.example.ts.net"), undefined);
+  assert.equal(
+    tailscaleUrlFromStartup("Server running at \u001b]8;;http://100.101.102.103:8521\u001b\\http://100.101.102.103:8521\u001b]8;;\u001b\\", "reviewer.example.ts.net"),
+    "http://reviewer.example.ts.net:8521",
+  );
+});
+
+test("runReview serves a fixture through mdts and shuts it down", async () => {
+  await withTempDir(async (repo) => {
+    const root = join(repo, "world-output");
+    await mkdir(root);
+    await writeFile(join(root, "index.md"), "# Fixture review\n");
+    const mdts = resolve("node_modules/.bin/mdts");
+    let viewerPort: string | undefined;
+    let request: Promise<void> | undefined;
+    await runReview(
+      { root: "world-output" },
+      repo,
+      {
+        discoverTailscale: () => ({ address: "127.0.0.1", dnsName: "reviewer.example.ts.net" }),
+        mdtsBinary: mdts,
+        onUrl: (url) => {
+          viewerPort = new URL(url).port;
+        },
+        onChildStarted: (child) => {
+          request = (async () => {
+            let timedOut = false;
+            const deadline = setTimeout(() => {
+              timedOut = true;
+              child.kill("SIGTERM");
+            }, 10_000);
+            try {
+              while (!viewerPort) {
+                if (timedOut) throw new Error("Timed out waiting for mdts startup URL.");
+                await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+              }
+              const response = await fetch(`http://127.0.0.1:${viewerPort}/api/filetree`);
+              assert.equal(response.status, 200);
+              assert.match(JSON.stringify(await response.json()), /index\.md/);
+              child.kill("SIGTERM");
+            } finally {
+              clearTimeout(deadline);
+            }
+          })();
+        },
+      },
+    );
+    await request;
+    await assert.rejects(fetch(`http://127.0.0.1:${viewerPort}/api/filetree`));
+  });
 });
 
 test("review runtime homes are owner-only", async () => {

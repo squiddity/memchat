@@ -10,6 +10,12 @@ import { pathToFileURL } from "node:url";
 
 export type ReviewOptions = { root: string; help?: boolean };
 export type TailscaleIdentity = { address: string; dnsName: string };
+export type ReviewDependencies = {
+  discoverTailscale?: () => TailscaleIdentity;
+  mdtsBinary?: string;
+  onUrl?: (url: string) => void;
+  onChildStarted?: (child: ChildProcess) => void;
+};
 
 export function usage(): string {
   return "Usage: memchat-markdown-review [repository-contained-markdown-directory]\n\n" +
@@ -75,7 +81,10 @@ export function discoverTailscale(tailscaleBinary = "tailscale"): TailscaleIdent
 }
 
 export function tailscaleUrlFromStartup(output: string, dnsName: string): string | undefined {
-  const match = output.match(/Server running at http:\/\/[^\s/:]+:(\d+)(\/[^\s]*)?/);
+  const plainOutput = output
+    .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+  const match = plainOutput.match(/Server running at http:\/\/[^\s/:]+:(\d+)(\/[^\s]*)?/);
   if (!match) return undefined;
   const port = Number(match[1]);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) return undefined;
@@ -95,14 +104,18 @@ function installedMdts(repositoryRoot: string): string {
 async function waitForExit(child: ChildProcess): Promise<number> {
   return await new Promise((resolveExit, reject) => {
     child.once("error", reject);
-    child.once("close", (code, signal) => resolveExit(code ?? (signal ? 1 : 0)));
+    child.once("close", (code) => resolveExit(code ?? 0));
   });
 }
 
-export async function runReview(options: ReviewOptions, repositoryRoot = resolve(dirname(new URL(import.meta.url).pathname), "..")): Promise<void> {
+export async function runReview(
+  options: ReviewOptions,
+  repositoryRoot = resolve(dirname(new URL(import.meta.url).pathname), ".."),
+  dependencies: ReviewDependencies = {},
+): Promise<void> {
   const root = await resolveReviewRoot(repositoryRoot, options.root);
-  const tailscale = discoverTailscale();
-  const mdts = installedMdts(repositoryRoot);
+  const tailscale = dependencies.discoverTailscale?.() ?? discoverTailscale();
+  const mdts = dependencies.mdtsBinary ?? installedMdts(repositoryRoot);
   try {
     await access(mdts, constants.X_OK);
   } catch {
@@ -134,11 +147,13 @@ export async function runReview(options: ReviewOptions, repositoryRoot = resolve
         if (url) {
           announced = true;
           stdout.write(`Markdown review URL: ${url}\n`);
+          dependencies.onUrl?.(url);
         }
       }
     };
     child.stdout?.on("data", report);
     child.stderr?.on("data", report);
+    dependencies.onChildStarted?.(child);
     const code = await waitForExit(child);
     if (code !== 0) throw new Error(`mdts exited with code ${code}.`);
   } finally {
