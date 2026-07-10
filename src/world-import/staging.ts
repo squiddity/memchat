@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedReviewCheckpoint, type WorldImportGroup } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedRepairVerification, type StagedReviewCheckpoint, type WorldImportGroup } from "./types.js";
 
 const validGroups = [...WORLD_IMPORT_GROUPS];
 
@@ -31,6 +31,10 @@ export function checkpointReviewPath(outputRoot: string, checkpointId: string, i
 
 export function checkpointRepairPath(outputRoot: string, checkpointId: string, iteration: number): string {
   return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.repair.json`);
+}
+
+export function checkpointVerifyPath(outputRoot: string, checkpointId: string, iteration: number): string {
+  return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.verify.json`);
 }
 
 export function manifestPath(outputRoot: string): string {
@@ -109,6 +113,12 @@ export async function writeStagedReviewCheckpoint(outputRoot: string, checkpoint
 export async function writeStagedRepairSummary(outputRoot: string, summary: StagedRepairSummary): Promise<string> {
   const path = checkpointRepairPath(outputRoot, summary.checkpointId, summary.iteration);
   await writeJson(path, summary);
+  return path;
+}
+
+export async function writeStagedRepairVerification(outputRoot: string, verification: StagedRepairVerification): Promise<string> {
+  const path = checkpointVerifyPath(outputRoot, verification.checkpointId, verification.iteration);
+  await writeJson(path, verification);
   return path;
 }
 

@@ -32,7 +32,7 @@ export function usage(): string {
     `  --model <provider/model>          Extraction and merge model for the world-import skill\n` +
     `  --reviewer-model <provider/model> Reviewer model passed through to the skill/eval workflow (defaults to --model)\n` +
     `  --no-reviewer                     Disable reviewer-model scoring explicitly\n` +
-    `  --session-strategy <single|staged> Run one full session or staged extract/merge/review sessions (default: single)\n` +
+    `  --session-strategy <single|staged> Run staged extract/merge/review sessions or one full session (default: staged)\n` +
     `  --thinking <level>                off|minimal|low|medium|high|xhigh (default: low)\n` +
     `  --dry-run                         Ask the skill to validate setup without importing\n` +
     `  --debug                           Print startup, model, prompt, and tool-call diagnostics to stderr (default: on)\n` +
@@ -50,7 +50,7 @@ export function parseArgs(args: string[]): CliOptions {
     debug: envToggle("MEMCHAT_WORLD_IMPORT_DEBUG", true),
     showThinking: envShowThinking,
     showToolUpdates: envToggle("MEMCHAT_WORLD_IMPORT_SHOW_TOOL_UPDATES", false),
-    sessionStrategy: "single",
+    sessionStrategy: "staged",
     reviewerDisabled: false,
   };
   for (let i = 0; i < args.length; i++) {

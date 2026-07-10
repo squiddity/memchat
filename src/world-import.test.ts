@@ -62,7 +62,7 @@ test("extraction stage rejects candidates without operational provenance envelop
   );
 });
 
-test("staged world import orchestration runs extract, merge, then review", async () => {
+test("world import runner defaults to staged orchestration", async () => {
   const calls: string[] = [];
   const reviewResult: EvaluationResult = {
     version: 1,
@@ -74,7 +74,6 @@ test("staged world import orchestration runs extract, merge, then review", async
   const result = await runWorldImportSkillWithRunners({
     input: "/in",
     outputRoot: "/out",
-    sessionStrategy: "staged",
     reviewerModel: "openai/gpt-4o",
   }, {
     runModelPrompt: async (options) => {
@@ -121,13 +120,17 @@ test("staged orchestration routes actionable post-merge review into one repair p
     },
   });
   assert.deepEqual(calls, ["extract", "merge", "post-merge-review", "repair", "review"]);
-  assert.deepEqual(result.stages.map((stage) => stage.stage), ["extract", "merge", "post-merge-review", "repair", "review"]);
+  assert.deepEqual(result.stages.map((stage) => stage.stage), ["extract", "merge", "post-merge-review", "repair", "post-merge-verify", "review"]);
   assert.equal(result.outputSummary.worldMarkdownFiles, 4);
   const reviewArtifact = JSON.parse(await readFile(join(output, "stages", "checkpoints", "post-merge-01.review.json"), "utf-8"));
-  assert.equal(reviewArtifact.status, "repair-attempted");
+  assert.equal(reviewArtifact.status, "residual");
   const repairArtifact = JSON.parse(await readFile(join(output, "stages", "checkpoints", "post-merge-01.repair.json"), "utf-8"));
   assert.equal(repairArtifact.status, "repair-attempted");
   assert.deepEqual(repairArtifact.requestedActionIds, ["action-1"]);
+  const verifyArtifact = JSON.parse(await readFile(join(output, "stages", "checkpoints", "post-merge-01.verify.json"), "utf-8"));
+  assert.equal(verifyArtifact.kind, "post-merge-verify");
+  assert.equal(verifyArtifact.status, "residual");
+  assert.equal(verifyArtifact.actionResults[0].actionId, "action-1");
 });
 
 test("staged orchestration records skipped checkpoint when reviewer config is absent", async () => {

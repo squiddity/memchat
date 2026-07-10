@@ -14,7 +14,7 @@ import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtraction
 import { providerAuthEnvKeys, reviewerProvider } from "../local-env.js";
 import { isUsableModel, modelLabel, requireResolvedModel } from "../model-selection.js";
 import { classifyNarrativeSurface } from "./narrative-surfaces.js";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportLintResult } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StageEnvelope, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportLintResult } from "./types.js";
 
 const groups = [...WORLD_IMPORT_GROUPS];
 
@@ -164,6 +164,10 @@ async function collectProvenanceAuditWarnings(outputRoot: string, artifacts: Art
     if (sectionCount >= 4 && refCount < 2) diagnostics.push({ code: "single-ref-many-sections", level: "warning", artifactId: artifact.id, message: `${sectionCount} non-empty sections have only ${refCount} provenance ref(s).` });
     if ((sectionCount >= 4 || bodyChars >= 1600) && (refCount / Math.max(1, sectionCount) < 0.5 || bodyChars / Math.max(1, refCount) > 1200)) diagnostics.push({ code: "sparse-provenance-density", level: "warning", artifactId: artifact.id, message: `${sectionCount} sections, ${bodyChars} body chars, ${refCount} provenance ref(s).` });
     if (artifact.group === "style" && bodyChars >= 80 && refCount < 3) diagnostics.push({ code: "style-under-cited", level: "warning", artifactId: artifact.id, message: `Substantive style artifact has ${refCount} provenance ref(s); multiple examples are usually needed.` });
+    const isLongSynthesisSurface = classifyNarrativeSurface(artifact).length > 0 && bodyChars >= 2500;
+    const sparseSynthesisSignals: string[] = [];
+    if (isLongSynthesisSurface && refCount < 3) sparseSynthesisSignals.push(`only ${refCount} resolved ref(s)`);
+    if (isLongSynthesisSurface && bodyChars / Math.max(1, refCount) > 1200) sparseSynthesisSignals.push(`${bodyChars} body chars per ${refCount} ref(s)`);
     let headingOnlyRefs = 0;
     for (const [index, ref] of artifact.provenance.entries()) {
       let headingLike = isHeadingLikeQuote(ref.quote);
@@ -179,6 +183,8 @@ async function collectProvenanceAuditWarnings(outputRoot: string, artifacts: Art
         diagnostics.push({ code: "heading-only-provenance", level: "warning", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: "Citation points to a heading/title-like block; detailed claims usually need narrative evidence." });
       }
     }
+    if (isLongSynthesisSurface && refCount > 0 && headingOnlyRefs === refCount) sparseSynthesisSignals.push("all refs are heading/title-like");
+    if (sparseSynthesisSignals.length > 0) diagnostics.push({ code: "sparse-synthesis-provenance", level: "warning", artifactId: artifact.id, message: `Long synthesis artifact has sparse provenance: ${sparseSynthesisSignals.join("; ")}.` });
   }
   return diagnostics;
 }
@@ -457,24 +463,75 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
  * - The merged artifact packets
  * - The emitted markdown artifacts
  */
+function balancedSourceSample(content: string, snippetChars: number): string {
+  if (content.length <= snippetChars * 3) return content;
+  const middleStart = Math.max(0, Math.floor(content.length / 2) - Math.floor(snippetChars / 2));
+  return [
+    `[[start]]\n${content.slice(0, snippetChars)}`,
+    `[[middle]]\n${content.slice(middleStart, middleStart + snippetChars)}`,
+    `[[end]]\n${content.slice(-snippetChars)}`,
+  ].join("\n\n");
+}
+
+function reviewBundleCandidateAccounting(extractions: Awaited<ReturnType<typeof readExtractionStages>>, merge: StageEnvelope): ReviewBundle["candidateAccounting"] {
+  const candidates = extractions.flatMap((stage) => (stage.candidates ?? []).map((candidate) => ({ unitId: stage.unitId, candidate })));
+  const represented = new Set<string>();
+  for (const artifact of merge.artifacts ?? []) for (const candidateId of representedCandidateKeys(artifact)) represented.add(candidateId);
+  const dispositions = merge.candidateDispositions ?? [];
+  const dispositionByKey = new Map(dispositions.map((item) => [candidateKey(item.unitId, item.candidateId), item]));
+  const counts = { represented: 0, merged: 0, deferred: 0, dropped: 0, unaccounted: 0 };
+  for (const { unitId, candidate } of candidates) {
+    const disposition = dispositionByKey.get(candidateKey(unitId, candidate.id)) ?? dispositionByKey.get(candidateKey(undefined, candidate.id));
+    if (disposition) counts[disposition.disposition] += 1;
+    else if (represented.has(candidateKey(unitId, candidate.id)) || represented.has(candidate.id)) counts.represented += 1;
+    else counts.unaccounted += 1;
+  }
+  return {
+    extractionCandidateCount: candidates.length,
+    counts,
+    droppedOrDeferred: dispositions.filter((item): item is typeof item & { disposition: "deferred" | "dropped" } => item.disposition === "deferred" || item.disposition === "dropped").slice(0, 30).map(({ unitId, candidateId, disposition, reason }) => ({ unitId, candidateId, disposition, reason })),
+  };
+}
+
 export async function buildReviewBundle(outputRoot: string): Promise<ReviewBundle> {
   const manifest = await readManifest(outputRoot);
   const merge = await readMergeStage(outputRoot);
+  const extractions = await readExtractionStages(outputRoot);
 
-  // Read normalized source units, respecting character budgets
+  // Allocate evidence fairly before optional detail: no late body unit can vanish
+  // merely because an early unit consumed the shared budget.
+  const bodyEntries = manifest.units.filter((entry) => (entry.role ?? "body") === "body");
+  const minimumSnippetChars = 80;
+  const preferredSnippetChars = 240;
+  const canCoverAllBodies = bodyEntries.length * minimumSnippetChars * 3 <= MAX_SOURCE_CHARS;
+  const snippetChars = canCoverAllBodies
+    ? Math.min(preferredSnippetChars, Math.floor(MAX_SOURCE_CHARS / Math.max(1, bodyEntries.length * 3)))
+    : 0;
   const sources: ReviewBundle["sources"] = [];
-  let totalChars = 0;
-  for (const entry of manifest.units) {
-    if (totalChars >= MAX_SOURCE_CHARS) break;
+  for (const entry of bodyEntries) {
     try {
       const unit = await readNormalizedUnit(outputRoot, entry.unitId);
-      const content = unit.content.slice(0, Math.min(MAX_UNIT_CHARS, MAX_SOURCE_CHARS - totalChars));
-      sources.push({ unitId: unit.unitId, sourceId: unit.sourceId, title: unit.title, order: unit.order, content });
-      totalChars += content.length;
+      const sourcePagePath = `sources/units/${unit.unitId}.md`;
+      const content = canCoverAllBodies
+        ? balancedSourceSample(unit.content, snippetChars)
+        : "[Source text omitted: review bundle coverage is truncated; inspect the retained source page before treating this unit as missing evidence.]";
+      sources.push({ unitId: unit.unitId, sourceId: unit.sourceId, title: unit.title, order: unit.order, content, sourcePagePath });
     } catch {
-      // skip if a unit file is missing — still proceed with what we have
+      // Preserve the unit's identity in the bundle even when its normalized file is missing.
+      sources.push({ unitId: entry.unitId, sourceId: entry.sourceId, title: entry.title, order: entry.order, content: canCoverAllBodies ? "[Normalized source unit unavailable.]" : "[Normalized source unit unavailable; source-text coverage is truncated.]", sourcePagePath: `sources/units/${entry.unitId}.md` });
     }
   }
+  const sourceCoverage = { bodyUnitCount: bodyEntries.length, sampledBodyUnitCount: sources.length, coverageTruncated: !canCoverAllBodies };
+  const candidateAccounting = reviewBundleCandidateAccounting(extractions, merge);
+  const artifactInventory = (merge.artifacts ?? []).map((artifact) => ({
+    id: artifact.id,
+    group: artifact.group,
+    title: artifact.title,
+    sectionCount: artifact.sections.filter((section) => section.body.trim()).length,
+    bodyChars: artifact.sections.reduce((total, section) => total + section.body.trim().length, 0),
+    provenanceCount: artifact.provenance.length,
+    relatedCount: artifact.related?.length ?? 0,
+  }));
 
   // Read markdown artifacts and navigational files
   const worldRoot = join(outputRoot, "world");
@@ -504,7 +561,7 @@ export async function buildReviewBundle(outputRoot: string): Promise<ReviewBundl
     }
   }
 
-  return { manifest, sources, merge, markdown };
+  return { manifest, sources, sourceCoverage, candidateAccounting, artifactInventory, merge, markdown };
 }
 
 type ReviewerEval = NonNullable<EvaluationResult["reviewer"]>;
@@ -644,8 +701,20 @@ export function buildReviewerPrompt(bundle: ReviewBundle): string {
     .join("\n");
 
   const sourceSample = bundle.sources
-    .map((s) => `=== UNIT: ${s.title || s.unitId} (order ${s.order}) ===\n\n${s.content}`)
+    .map((s) => `=== UNIT: ${s.title || s.unitId} (order ${s.order}; retained page ${s.sourcePagePath ?? `sources/units/${s.unitId}.md`}) ===\n\n${s.content}`)
     .join("\n\n");
+  const coverageNotice = bundle.sourceCoverage.coverageTruncated
+    ? "WARNING: source-text coverage was truncated by the configured budget. Every body unit is listed, but omitted text is insufficient evidence of a source omission; inspect retained source pages before making that claim."
+    : "Every body unit has balanced start/middle/end source excerpts and a retained source-page reference.";
+  const candidateAccounting = bundle.candidateAccounting;
+  const candidateSummary = `Extracted candidates: ${candidateAccounting.extractionCandidateCount}. ` +
+    Object.entries(candidateAccounting.counts).map(([status, count]) => `${status}: ${count}`).join(", ");
+  const candidateDetails = candidateAccounting.droppedOrDeferred.length > 0
+    ? candidateAccounting.droppedOrDeferred.map((item) => `- ${item.unitId ?? "unknown unit"}/${item.candidateId}: ${item.disposition}${item.reason ? ` — ${item.reason}` : ""}`).join("\n")
+    : "(no dropped or deferred candidates)";
+  const artifactInventory = bundle.artifactInventory.length > 0
+    ? bundle.artifactInventory.map((item) => `- ${item.id} (${item.group}): ${item.title}; sections=${item.sectionCount}; bodyChars=${item.bodyChars}; provenance=${item.provenanceCount}; related=${item.relatedCount}`).join("\n")
+    : "(no emitted artifacts)";
 
   const artifactCount = bundle.merge.artifacts?.length ?? 0;
   const groupCounts = bundle.merge.artifacts?.reduce<Record<string, number>>((acc, a) => {
@@ -672,9 +741,24 @@ The source corpus has ${bundle.manifest.units.length} unit(s) in this order:
 
 ${sourceOverview}
 
-## Normalized Source Text (${bundle.sources.length} units shown)
+## Normalized Source Text (${bundle.sources.length}/${bundle.sourceCoverage.bodyUnitCount} body units shown)
+
+${coverageNotice}
 
 ${sourceSample}
+
+## Candidate Accounting
+
+${candidateSummary}
+
+Dropped/deferred candidates (bounded list):
+${candidateDetails}
+
+Candidate accounting records dispositions for extracted candidates; it does not prove extraction recall. Review source excerpts for independently visible omissions.
+
+## Artifact Inventory
+
+${artifactInventory}
 
 ## Merged Artifact Summary
 
@@ -902,11 +986,29 @@ export function buildPostMergeReviewPrompt(bundle: ReviewBundle, options: { chec
   const markdownBlock = Object.entries(bundle.markdown).map(([path, content]) => `--- ${path} ---\n${content}`).join("\n\n") || "(no markdown artifacts)";
   const artifactSummary = (bundle.merge.artifacts ?? []).map((artifact) => `- ${artifact.id} (${artifact.group}): ${artifact.title}; provenance=${artifact.provenance.length}; sections=${artifact.sections.map((section) => section.heading).join(", ")}`).join("\n") || "(no merge artifacts)";
   const dispositions = (bundle.merge.candidateDispositions ?? []).map((item) => `- ${item.unitId ?? "?"}:${item.candidateId} -> ${item.disposition}${item.artifactId ? ` (${item.artifactId})` : ""}${item.reason ? `: ${item.reason}` : ""}`).join("\n") || "(no candidate dispositions)";
+  const narrativeSurfaceKinds = new Set((bundle.merge.artifacts ?? []).flatMap((artifact) => classifyNarrativeSurface(artifact)));
+  const narrativeSurfaces = ["synopsis", "timeline", "scene-guide"].map((kind) => `${kind}: ${narrativeSurfaceKinds.has(kind as ReturnType<typeof classifyNarrativeSurface>[number]) ? "present" : "missing"}`).join("; ");
+  const candidateCounts = Object.entries(bundle.candidateAccounting.counts).map(([status, count]) => `${status}=${count}`).join(", ");
+  const provenanceWarnings = bundle.artifactInventory
+    .filter((artifact) => artifact.bodyChars >= 1600 && (artifact.provenanceCount === 0 || artifact.bodyChars / artifact.provenanceCount > 1200))
+    .map((artifact) => `${artifact.id}: ${artifact.provenanceCount} ref(s) across ${artifact.bodyChars} body chars`)
+    .join("\n") || "(no deterministic long-form provenance warnings)";
   const sourceSample = bundle.sources.map((source) => `=== UNIT: ${source.title || source.unitId} (order ${source.order}) ===\n${source.content}`).join("\n\n");
 
   return `You are a focused world-import intermediate reviewer for checkpoint ${options.checkpointId}, iteration ${options.iteration}.
 
 Review the post-merge/emitted world bundle before final eval. Stay focused on repairable semantic gaps that a bounded repair model can address from the persisted source and merge artifacts. Do not rewrite artifacts yourself.
+
+## Deterministic pre-review inventory
+
+Narrative surfaces: ${narrativeSurfaces}
+
+Candidate accounting: extracted=${bundle.candidateAccounting.extractionCandidateCount}; ${candidateCounts}
+
+Long-form provenance warnings:
+${provenanceWarnings}
+
+Treat this inventory as authoritative for whether an artifact exists. A present narrative surface may still need strengthening, but do not claim it is missing. If source text is marked truncated, inspect its retained source page before treating absence in the sample as an omission.
 
 ## Source sample
 
@@ -927,10 +1029,13 @@ ${markdownBlock}
 ## Focus rubric
 
 Look only for high-value, actionable gaps:
-- missing narrative surfaces such as synopsis, timeline, or scene/chapter/act guide;
+- missing narrative surfaces such as synopsis, timeline, or scene/chapter/act guide, but only after checking the deterministic inventory above;
+- existing narrative surfaces that need strengthening rather than replacement;
 - missing plot-critical objects, props, letters, weapons, documents, or durable thing pages;
 - important omissions hidden from candidate dispositions or coverage views;
 - sparse or weak provenance on synthesis pages whose claims need source grounding.
+
+Use the most precise requested action type: add-narrative-surface only for an actually missing surface, strengthen-artifact for a present but weak surface, record-omission for a documented decision, and strengthen-provenance for evidence gaps.
 
 Recommend repair only when the requested action is grounded, bounded, and likely to improve the current bundle before final eval. If the bundle is good enough or findings are speculative, set repairRecommended to false and leave requestedActions empty.
 

@@ -14,9 +14,9 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import { isUsableModel, modelLabel, requireResolvedModel, type ThinkingLevel } from "../model-selection.js";
-import { runPostMergeReviewEvaluation, runReviewerModelEvaluation, writePostMergeReviewResult } from "./eval.js";
-import { checkpointReviewPath, writeStagedRepairSummary } from "./staging.js";
-import type { EvaluationResult, StagedReviewCheckpoint } from "./types.js";
+import { lintWorldImport, runPostMergeReviewEvaluation, runReviewerModelEvaluation, writePostMergeReviewResult } from "./eval.js";
+import { checkpointReviewPath, readMergeStage, writeStagedRepairSummary, writeStagedRepairVerification } from "./staging.js";
+import type { EvaluationResult, StagedRepairVerification, StagedReviewActionVerification, StagedReviewCheckpoint, StagedReviewRequestedAction } from "./types.js";
 
 export type WorldImportDebugOptions = {
   enabled?: boolean;
@@ -34,7 +34,7 @@ export type WorldImportOutputSummary = {
 
 export type WorldImportSkillStage = "full" | "extract" | "merge" | "repair";
 export type WorldImportSessionStrategy = "single" | "staged";
-export type WorldImportStageName = WorldImportSkillStage | "post-merge-review" | "review";
+export type WorldImportStageName = WorldImportSkillStage | "post-merge-review" | "post-merge-verify" | "review";
 
 export type WorldImportRunOptions = {
   cwd?: string;
@@ -64,6 +64,7 @@ export type WorldImportStageResult = {
   outputSummary?: WorldImportOutputSummary;
   reviewer?: EvaluationResult["reviewer"];
   checkpoint?: StagedReviewCheckpoint;
+  verification?: StagedRepairVerification;
   deterministicPassed?: boolean;
 };
 
@@ -203,6 +204,76 @@ function summarizeCheckpoint(checkpoint: StagedReviewCheckpoint): string {
   return `status=${checkpoint.status}; repairRecommended=${checkpoint.repairRecommended}; actions=${checkpoint.requestedActions.length}`;
 }
 
+async function emittedArtifactExists(outputRoot: string, artifactId: string): Promise<boolean> {
+  const root = join(outputRoot, "world");
+  const scan = async (dir: string): Promise<boolean> => {
+    if (!existsSync(dir)) return false;
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory() && await scan(path)) return true;
+      if (entry.isFile() && entry.name.endsWith(".md") && (await readFile(path, "utf-8")).includes(`id: "${artifactId}"`)) return true;
+    }
+    return false;
+  };
+  return scan(root);
+}
+
+async function groupIndexContainsArtifact(outputRoot: string, artifact: NonNullable<Awaited<ReturnType<typeof readMergeStage>>["artifacts"]>[number]): Promise<boolean> {
+  const indexPath = join(outputRoot, "world", artifact.group, "index.md");
+  return existsSync(indexPath) && (await readFile(indexPath, "utf-8")).includes(artifact.id);
+}
+
+function relevantLintDiagnostics(action: StagedReviewRequestedAction, diagnostics: Awaited<ReturnType<typeof lintWorldImport>>["diagnostics"]): Awaited<ReturnType<typeof lintWorldImport>>["diagnostics"] {
+  return diagnostics.filter((diagnostic) => (
+    (action.targetArtifactId !== undefined && diagnostic.artifactId === action.targetArtifactId)
+    || (action.candidateId !== undefined && diagnostic.candidateId === action.candidateId)
+    || (action.unitId !== undefined && diagnostic.unitId === action.unitId)
+  ));
+}
+
+export async function verifyPostMergeRepair(outputRoot: string, checkpoint: StagedReviewCheckpoint): Promise<StagedRepairVerification> {
+  let merge: Awaited<ReturnType<typeof readMergeStage>>;
+  let lint: Awaited<ReturnType<typeof lintWorldImport>>;
+  try {
+    [merge, lint] = await Promise.all([readMergeStage(outputRoot), lintWorldImport(outputRoot)]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      version: 1, kind: "post-merge-verify", checkpointId: checkpoint.checkpointId, iteration: checkpoint.iteration, createdAt: new Date().toISOString(), outputRoot, status: "residual",
+      actionResults: checkpoint.requestedActions.map((action) => ({ actionId: action.id, status: "residual", checks: [{ name: "verification inputs", passed: false, message }], residualExplanation: "Merge output or deterministic lint could not be read after repair." })),
+    };
+  }
+  const actionResults: StagedReviewActionVerification[] = [];
+  for (const action of checkpoint.requestedActions) {
+    if (action.type === "strengthen-artifact" || action.type === "record-omission" || action.type === "strengthen-provenance" || action.type === "other") {
+      actionResults.push({ actionId: action.id, status: "not-deterministically-verifiable", checks: [], residualExplanation: `Action type ${action.type} has no deterministic predicate.` });
+      continue;
+    }
+    if (action.type === "repair-candidate-disposition") {
+      const disposition = (merge.candidateDispositions ?? []).find((item) => item.candidateId === action.candidateId && (action.unitId === undefined || item.unitId === action.unitId));
+      const passed = disposition !== undefined;
+      actionResults.push({ actionId: action.id, status: passed ? "verified" : "residual", checks: [{ name: "candidate disposition", passed, message: passed ? `Disposition ${disposition?.disposition} found for ${action.unitId ?? "any unit"}:${action.candidateId ?? "unknown candidate"}.` : "Requested candidate disposition was not found." }], ...(passed ? {} : { residualExplanation: "The requested candidate disposition is absent." }) });
+      continue;
+    }
+    const artifact = (merge.artifacts ?? []).find((item) => item.id === action.targetArtifactId);
+    const artifactExists = artifact !== undefined;
+    const markdownExists = artifactExists && action.targetArtifactId ? await emittedArtifactExists(outputRoot, action.targetArtifactId) : false;
+    const indexed = artifactExists ? await groupIndexContainsArtifact(outputRoot, artifact) : false;
+    const relevantDiagnostics = relevantLintDiagnostics(action, lint.diagnostics);
+    const cleanRefs = relevantDiagnostics.every((diagnostic) => !["unresolved-provenance-unit", "provenance-source-mismatch", "unresolved-provenance-anchor"].includes(diagnostic.code));
+    const checks = [
+      { name: "merge artifact", passed: artifactExists, message: artifactExists ? `Artifact ${action.targetArtifactId} exists in merge output.` : "Requested targetArtifactId is absent from merge output." },
+      { name: "emitted markdown", passed: markdownExists, message: markdownExists ? `Emitted markdown exists for ${action.targetArtifactId}.` : "Emitted markdown for the requested artifact is absent." },
+      { name: "group index", passed: indexed, message: indexed ? `Group index includes ${action.targetArtifactId}.` : "Group index does not include the requested artifact." },
+      { name: "resolved provenance", passed: cleanRefs, message: cleanRefs ? "No action-scoped provenance resolution errors." : "Action-scoped provenance resolution errors remain.", ...(relevantDiagnostics.length > 0 ? { diagnosticCodes: relevantDiagnostics.map((diagnostic) => diagnostic.code) } : {}) },
+    ];
+    const passed = checks.every((check) => check.passed);
+    actionResults.push({ actionId: action.id, status: passed ? "verified" : "residual", checks, ...(passed ? {} : { residualExplanation: "Structural repair checks did not all pass." }) });
+  }
+  const status = actionResults.every((result) => result.status === "verified") ? "verified-repaired" : "residual";
+  return { version: 1, kind: "post-merge-verify", checkpointId: checkpoint.checkpointId, iteration: checkpoint.iteration, createdAt: new Date().toISOString(), outputRoot, status, actionResults };
+}
+
 function writeSkippedPostMergeCheckpoint(outputRoot: string, reason: string): Promise<StagedReviewCheckpoint> {
   return writePostMergeReviewResult(outputRoot, {
     checkpointId: "post-merge",
@@ -325,7 +396,7 @@ export async function runWorldImportModelPrompt(options: WorldImportModelPromptO
 }
 
 export async function runWorldImportSkillWithRunners(options: WorldImportRunOptions, deps: WorldImportRunnerDeps = defaultRunnerDeps): Promise<WorldImportRunResult> {
-  const sessionStrategy = options.sessionStrategy ?? "single";
+  const sessionStrategy = options.sessionStrategy ?? "staged";
   const stages: WorldImportStageResult[] = [];
 
   if (sessionStrategy === "single") {
@@ -413,9 +484,12 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
         outputSummary: repair.outputSummary,
         residualFindings: checkpoint.findings,
       });
-      checkpoint = await writePostMergeReviewResult(options.outputRoot, { ...checkpoint, status: "repair-attempted", createdAt: new Date().toISOString() });
+      const verification = await verifyPostMergeRepair(options.outputRoot, checkpoint);
+      await writeStagedRepairVerification(options.outputRoot, verification);
+      checkpoint = await writePostMergeReviewResult(options.outputRoot, { ...checkpoint, status: verification.status, createdAt: new Date().toISOString() });
       stages[checkpointStageIndex] = { stage: "post-merge-review", checkpoint };
-      status(options, `repair stage completed; worldMarkdownFiles=${repair.outputSummary.worldMarkdownFiles}; mergeStageExists=${repair.outputSummary.mergeStageExists}`);
+      stages.push({ stage: "post-merge-verify", verification });
+      status(options, `repair stage completed; worldMarkdownFiles=${repair.outputSummary.worldMarkdownFiles}; mergeStageExists=${repair.outputSummary.mergeStageExists}; verification=${verification.status}`);
     }
   }
 

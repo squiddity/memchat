@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseArgs } from "./world-import-cli.js";
 
-test("parseArgs keeps single-session as default and reviewer defaults to import model", () => {
+test("parseArgs keeps staged as default and reviewer defaults to import model", () => {
   const options = parseArgs(["--input", "./in", "--output", "./out", "--model", "openai/gpt-4o"]);
-  assert.equal(options.sessionStrategy, "single");
+  assert.equal(options.sessionStrategy, "staged");
   assert.equal(options.reviewerModel, "openai/gpt-4o");
 });
 
-test("parseArgs accepts staged session strategy", () => {
-  const options = parseArgs(["--input", "./in", "--output", "./out", "--session-strategy", "staged"]);
-  assert.equal(options.sessionStrategy, "staged");
+test("parseArgs accepts single session strategy", () => {
+  const options = parseArgs(["--input", "./in", "--output", "./out", "--session-strategy", "single"]);
+  assert.equal(options.sessionStrategy, "single");
 });
 
 test("parseArgs supports explicit reviewer disable", () => {

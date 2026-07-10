@@ -12,6 +12,7 @@ dist/
 # Agent/tool local state
 .pi/
 .claude/
+.pi-subagents/
 .memchat*/
 .mcp.json
 

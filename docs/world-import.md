@@ -107,6 +107,7 @@ npm run world-import-run -- \
     checkpoints/
       post-merge-01.review.json # optional staged intermediate review packet
       post-merge-01.repair.json # optional bounded repair summary
+      post-merge-01.verify.json # optional action-scoped verification results
     review.json                 # final evaluation result
   world/
     index.md                    # root wiki index
@@ -151,7 +152,7 @@ npm run world-import-helper -- lint --output /tmp/world-out
 
 Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps.
 
-In staged CLI runs with a reviewer model, the runner first writes a focused post-merge checkpoint under `stages/checkpoints/`. The initial MVP checkpoint is `post-merge-01`: it runs after merge/emission and before final eval. `post-merge-01.review.json` records structured findings, requested actions, status (`no-action`, `repair-requested`, `repair-attempted`, `residual`, or `skipped`), and reviewer parse state. If actionable findings are present, the runner invokes one bounded `stage: "repair"` model pass and writes `post-merge-01.repair.json` with attempted action ids and residual findings. Single-session mode records a skipped checkpoint because it has no orchestrator-visible merge boundary.
+Staged is the default for both CLI and direct runner use; pass `--session-strategy single` only for comparison or debugging. In staged runs with a reviewer model, the runner first writes a focused post-merge checkpoint under `stages/checkpoints/`. The initial checkpoint is `post-merge-01`: it runs after merge/emission and before final eval. `post-merge-01.review.json` records structured findings, requested actions, status (`no-action`, `repair-requested`, `repair-attempted`, `verified-repaired`, `residual`, or `skipped`), and reviewer parse state. If actionable findings are present, the runner invokes one bounded `stage: "repair"` model pass, writes `post-merge-01.repair.json`, then writes `post-merge-01.verify.json` with action-scoped structural checks. Semantic actions without a deterministic predicate remain explicitly residual rather than being claimed repaired. Single-session mode records a skipped checkpoint because it has no orchestrator-visible merge boundary.
 
 Then run eval — it embeds the same lint result in `stages/review.json` with optional reviewer-model scoring:
 
@@ -228,7 +229,7 @@ Inspect whether lint catches unresolved links, candidate dispositions explain dr
 | `--output` | | output root |
 | `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` | | model used by the skill |
 | `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` | | optional stronger reviewer model; omit to use active model; `off` or `--no-reviewer` to disable |
-| `--session-strategy single\|staged` | | single session or staged extract/merge/post-merge-review/repair/review (default: `single`) |
+| `--session-strategy single\|staged` | | staged extract/merge/post-merge-review/repair/review or single session (default: `staged`) |
 | `--thinking` | | pi thinking level (default: `low`; `off` to disable) |
 | `--dry-run` | | validate without semantic extraction |
 | `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` | | startup, paths, model selection, prompt, tool call diagnostics to stderr (default: on; `0` to silence) |
