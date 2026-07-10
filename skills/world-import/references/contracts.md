@@ -107,7 +107,9 @@ Prefer incremental merge construction with `write-artifact --mode upsert --file 
 
 The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes. `type`, `description`, `tags`, `resource`, and `timestamp` are optional interoperability fields for emitted OKF-style concept pages; helpers should validate their structure but must not infer their values.
 
-For substantive imports, the merge stage may also include a corpus-level overview as a normal artifact packet, for example:
+For substantive imports, the merge stage should usually include first-class narrative surfaces as normal artifact packets under the existing taxonomy (typically `group: facts`): a `Plot Synopsis` / `Corpus Synopsis`, a `Timeline`, and a `Scene Guide` / `Chapter Guide` / `Episode Guide` when the source has that structure. These are model-authored pages, not helper-generated prose.
+
+For example:
 
 ```json
 {
@@ -139,11 +141,17 @@ Recommended sections for richer artifacts:
 | facts | Summary, What Happened, Participants, Cause & Effect, Setting, Significance, Uncertainty |
 | style | Summary, Narrative Voice, Tone, Aphorisms & Formulae, Poems & Parodies, Character Voice Notes, Source Examples, Uncertainty |
 | world overview / corpus synopsis | Current Synopsis, Major Characters, Major Places, Timeline / Story So Far, Open Questions and Conflicts, Provenance Notes |
+| plot synopsis / corpus synopsis | Summary, Plot Synopsis, Major Characters, Major Places, Reading Order, Open Questions and Conflicts |
+| timeline | Summary, Ordered Timeline, Major Turning Points, Related People and Places, Provenance Notes |
+| scene guide / chapter guide / episode guide | Summary, Structure Overview, Scene/Chapter/Episode Entries, Related Artifacts, Provenance Notes |
 
 The model may choose different headings as appropriate. The goal is **rich, standalone detail** balanced with **cross-references for deduplication**:
 
 - Each artifact's `Summary` or `Key Events` section should give enough context to be useful when retrieved alone via vector search.
 - For full scene-by-scene event detail, create a dedicated `facts` artifact and link to it via `related`. Character and place artifacts should summarize events and link, rather than retelling the entire scene.
+- Narrative surfaces should be first-class browseable pages, not just sections buried inside `world-overview`.
+- Preserve source order in timelines and scene/chapter/episode guides.
+- Major scenes/chapters/episodes and plot-critical objects should get dedicated artifacts or an explicit dropped/deferred reason so omissions remain auditable.
 - Example: Alice's entry has a "Key Events" section listing the croquet game participation and linking `related: ["queens-croquet-game"]`. The full croquet game blow-by-blow lives once in `facts/queens-croquet-game.md`.
 - Cross-reference in both directions: the fact artifact for the croquet game should include `related: ["alice", "queen-of-hearts", "croquet-ground"]`.
 

@@ -64,6 +64,7 @@ test("emits artifact packets into group directories with portable related links"
   assert.match(markdown, /## Related/);
   assert.match(markdown, /\[glass-tower\]\(\.\.\/places\/glass-tower\.md\)/);
   const rootIndex = await readFile(join(output, "world", "index.md"), "utf-8");
+  assert.doesNotMatch(rootIndex, /## Plot and Reading Order/);
   assert.match(rootIndex, /## Groups/);
   assert.match(rootIndex, /\[People\]\(people\/index\.md\)/);
   const peopleIndex = await readFile(join(output, "world", "people", "index.md"), "utf-8");
@@ -107,6 +108,51 @@ test("emits model-authored style artifacts under style group", async () => {
   assert.match(styleIndex, /Narrative Voice/);
   const rootIndex = await readFile(join(output, "world", "index.md"), "utf-8");
   assert.match(rootIndex, /\[Style\]\(style\/index\.md\)/);
+});
+
+test("promotes declared narrative surfaces into the root index", async () => {
+  const output = await tempDir();
+  await writeMergeStage(output, {
+    version: 1,
+    kind: "merge",
+    artifacts: [
+      {
+        id: "plot-synopsis",
+        group: "facts",
+        type: "Plot Synopsis",
+        title: "Plot Synopsis",
+        description: "Start here for the whole story.",
+        sections: [{ heading: "Summary", body: "A synopsis." }],
+        provenance: [{ sourceId: "chapter-1", unitId: "chapter-1-u001", startAnchor: "b0001", endAnchor: "b0001", quote: "Synopsis evidence." }],
+      },
+      {
+        id: "timeline",
+        group: "facts",
+        tags: ["timeline"],
+        title: "Timeline of the Tragedy",
+        sections: [{ heading: "Summary", body: "An ordered timeline." }],
+        provenance: [{ sourceId: "chapter-1", unitId: "chapter-1-u001", startAnchor: "b0001", endAnchor: "b0001", quote: "Timeline evidence." }],
+      },
+      {
+        id: "acts-and-scenes",
+        group: "facts",
+        title: "Acts and Scenes",
+        metadata: { narrativeSurface: "scene guide" },
+        sections: [{ heading: "Summary", body: "A scene guide." }],
+        provenance: [{ sourceId: "chapter-1", unitId: "chapter-1-u001", startAnchor: "b0001", endAnchor: "b0001", quote: "Scene guide evidence." }],
+      },
+    ],
+  });
+  await emitWorldLibrary(output);
+  const rootIndex = await readFile(join(output, "world", "index.md"), "utf-8");
+  assert.match(rootIndex, /## Plot and Reading Order/);
+  assert.match(rootIndex, /\[Plot Synopsis\]\(facts\/plot-synopsis\.md\)/);
+  assert.match(rootIndex, /\[Timeline of the Tragedy\]\(facts\/timeline\.md\)/);
+  assert.match(rootIndex, /\[Acts and Scenes\]\(facts\/acts-and-scenes\.md\)/);
+  const factsIndex = await readFile(join(output, "world", "facts", "index.md"), "utf-8");
+  assert.match(factsIndex, /Plot Synopsis/);
+  assert.match(factsIndex, /Timeline of the Tragedy/);
+  assert.match(factsIndex, /Acts and Scenes/);
 });
 
 test("invalid merged packet fails before half-written semantic output", async () => {

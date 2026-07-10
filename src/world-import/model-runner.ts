@@ -14,8 +14,9 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import { isUsableModel, modelLabel, requireResolvedModel, type ThinkingLevel } from "../model-selection.js";
-import { runReviewerModelEvaluation } from "./eval.js";
-import type { EvaluationResult } from "./types.js";
+import { runPostMergeReviewEvaluation, runReviewerModelEvaluation, writePostMergeReviewResult } from "./eval.js";
+import { checkpointReviewPath, writeStagedRepairSummary } from "./staging.js";
+import type { EvaluationResult, StagedReviewCheckpoint } from "./types.js";
 
 export type WorldImportDebugOptions = {
   enabled?: boolean;
@@ -31,9 +32,9 @@ export type WorldImportOutputSummary = {
   worldMarkdownFiles: number;
 };
 
-export type WorldImportSkillStage = "full" | "extract" | "merge";
+export type WorldImportSkillStage = "full" | "extract" | "merge" | "repair";
 export type WorldImportSessionStrategy = "single" | "staged";
-export type WorldImportStageName = WorldImportSkillStage | "review";
+export type WorldImportStageName = WorldImportSkillStage | "post-merge-review" | "review";
 
 export type WorldImportRunOptions = {
   cwd?: string;
@@ -42,6 +43,10 @@ export type WorldImportRunOptions = {
   outputRoot: string;
   model?: string;
   reviewerModel?: string;
+  stagedReview?: {
+    enabled?: boolean;
+    maxRepairIterations?: number;
+  };
   thinking?: ThinkingLevel;
   dryRun?: boolean;
   sessionStrategy?: WorldImportSessionStrategy;
@@ -58,6 +63,7 @@ export type WorldImportStageResult = {
   responseText?: string;
   outputSummary?: WorldImportOutputSummary;
   reviewer?: EvaluationResult["reviewer"];
+  checkpoint?: StagedReviewCheckpoint;
   deterministicPassed?: boolean;
 };
 
@@ -72,17 +78,22 @@ export type WorldImportRunResult = {
 
 type WorldImportModelPromptOptions = WorldImportRunOptions & {
   stage?: WorldImportSkillStage;
+  checkpointId?: string;
+  reviewPacket?: string;
+  iteration?: number;
 };
 
 type WorldImportModelPromptResult = Pick<WorldImportRunResult, "responseText" | "model" | "outputRoot" | "outputSummary">;
 
 type WorldImportRunnerDeps = {
   runModelPrompt: (options: WorldImportModelPromptOptions) => Promise<WorldImportModelPromptResult>;
+  runPostMergeReview?: (options: Pick<WorldImportRunOptions, "cwd" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent"> & { checkpointId: string; iteration: number }) => Promise<StagedReviewCheckpoint>;
   runReviewerEvaluation: (options: Pick<WorldImportRunOptions, "cwd" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent">) => Promise<EvaluationResult>;
 };
 
 const defaultRunnerDeps: WorldImportRunnerDeps = {
   runModelPrompt: runWorldImportModelPrompt,
+  runPostMergeReview: runPostMergeReviewEvaluation,
   runReviewerEvaluation: runReviewerModelEvaluation,
 };
 
@@ -103,7 +114,7 @@ export function worldImportSkill(packageRoot = defaultPackageRoot()): Skill {
   return skill;
 }
 
-export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOptions, "input" | "outputRoot" | "reviewerModel" | "dryRun"> & { helperCommand?: string; stage?: WorldImportSkillStage }): string {
+export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOptions, "input" | "outputRoot" | "reviewerModel" | "dryRun"> & { helperCommand?: string; stage?: WorldImportSkillStage; checkpointId?: string; reviewPacket?: string; iteration?: number }): string {
   return `/skill:world-import ${JSON.stringify({
     input: options.input,
     output: options.outputRoot,
@@ -111,6 +122,11 @@ export function renderWorldImportSkillInvocation(options: Pick<WorldImportRunOpt
     reviewerModel: options.reviewerModel,
     dryRun: options.dryRun ?? false,
     ...(options.stage && options.stage !== "full" ? { stage: options.stage } : {}),
+    ...(options.stage === "repair" ? {
+      checkpointId: options.checkpointId,
+      reviewPacket: options.reviewPacket,
+      iteration: options.iteration,
+    } : {}),
   })}`;
 }
 
@@ -180,6 +196,23 @@ function summarizeReviewResult(result: EvaluationResult): string {
   if (!reviewer) return `deterministicPassed=${result.deterministic.passed}`;
   if (reviewer.skipped) return `deterministicPassed=${result.deterministic.passed}; reviewerSkipped=true; reason=${reviewer.reason ?? "unknown"}`;
   return `deterministicPassed=${result.deterministic.passed}; reviewerSkipped=false; score=${reviewer.score ?? "none"}`;
+}
+
+function summarizeCheckpoint(checkpoint: StagedReviewCheckpoint): string {
+  if (checkpoint.reviewer?.skipped) return `status=${checkpoint.status}; skipped=true; reason=${checkpoint.reviewer.reason ?? "unknown"}`;
+  return `status=${checkpoint.status}; repairRecommended=${checkpoint.repairRecommended}; actions=${checkpoint.requestedActions.length}`;
+}
+
+function writeSkippedPostMergeCheckpoint(outputRoot: string, reason: string): Promise<StagedReviewCheckpoint> {
+  return writePostMergeReviewResult(outputRoot, {
+    checkpointId: "post-merge",
+    iteration: 1,
+    status: "skipped",
+    repairRecommended: false,
+    findings: [],
+    requestedActions: [],
+    reviewer: { skipped: true, reason },
+  });
 }
 
 export async function runWorldImportModelPrompt(options: WorldImportModelPromptOptions): Promise<WorldImportModelPromptResult> {
@@ -300,6 +333,8 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     const full = await deps.runModelPrompt({ ...options, stage: "full" });
     stages.push({ stage: "full", model: full.model, responseText: full.responseText, outputSummary: full.outputSummary });
     status(options, `full session completed; worldMarkdownFiles=${full.outputSummary.worldMarkdownFiles}`);
+    const checkpoint = await writeSkippedPostMergeCheckpoint(options.outputRoot, "single-session mode has no orchestrator-visible merge boundary");
+    stages.push({ stage: "post-merge-review", checkpoint });
     return { ...full, sessionStrategy, stages };
   }
 
@@ -319,6 +354,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
 
   status(options, "starting stage merge session");
   const merge = await deps.runModelPrompt({ ...options, stage: "merge" });
+  let latestOutput = merge;
   stages.push({ stage: "merge", model: merge.model, responseText: merge.responseText, outputSummary: merge.outputSummary });
   status(options, `merge session completed; worldMarkdownFiles=${merge.outputSummary.worldMarkdownFiles}; mergeStageExists=${merge.outputSummary.mergeStageExists}`);
 
@@ -327,9 +363,65 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     return { ...merge, sessionStrategy, stages };
   }
 
+  const stagedReviewEnabled = options.stagedReview?.enabled ?? true;
+  const maxRepairIterations = options.stagedReview?.maxRepairIterations ?? 1;
+  const checkpointId = "post-merge";
+  let checkpoint: StagedReviewCheckpoint;
+  if (!stagedReviewEnabled) {
+    checkpoint = await writeSkippedPostMergeCheckpoint(options.outputRoot, "staged review disabled");
+  } else if (!options.reviewerModel) {
+    checkpoint = await writeSkippedPostMergeCheckpoint(options.outputRoot, "no reviewer model configured");
+  } else {
+    status(options, "starting post-merge review checkpoint");
+    checkpoint = await (deps.runPostMergeReview ?? runPostMergeReviewEvaluation)({
+      cwd: options.cwd,
+      outputRoot: options.outputRoot,
+      reviewerModel: options.reviewerModel,
+      debug: options.debug,
+      onStatus: options.onStatus,
+      onThinking: options.onThinking,
+      onToolEvent: options.onToolEvent,
+      checkpointId,
+      iteration: 1,
+    });
+  }
+  const checkpointStageIndex = stages.push({ stage: "post-merge-review", checkpoint }) - 1;
+  status(options, `post-merge review checkpoint completed; ${summarizeCheckpoint(checkpoint)}`);
+
+  if (checkpoint.status === "repair-requested" && checkpoint.requestedActions.length > 0) {
+    if (maxRepairIterations < 1) {
+      checkpoint = await writePostMergeReviewResult(options.outputRoot, { ...checkpoint, status: "residual", repairRecommended: true, createdAt: new Date().toISOString() });
+      stages[checkpointStageIndex] = { stage: "post-merge-review", checkpoint };
+      status(options, "post-merge repair skipped; max repair iterations exhausted before repair");
+    } else {
+      const reviewPacket = checkpointReviewPath(options.outputRoot, checkpointId, checkpoint.iteration);
+      status(options, `starting repair stage for ${checkpoint.requestedActions.length} requested action(s)`);
+      const repair = await deps.runModelPrompt({ ...options, stage: "repair", checkpointId, reviewPacket, iteration: checkpoint.iteration });
+      latestOutput = repair;
+      stages.push({ stage: "repair", model: repair.model, responseText: repair.responseText, outputSummary: repair.outputSummary });
+      await writeStagedRepairSummary(options.outputRoot, {
+        version: 1,
+        kind: "post-merge-repair",
+        checkpointId,
+        iteration: checkpoint.iteration,
+        createdAt: new Date().toISOString(),
+        outputRoot: options.outputRoot,
+        status: "repair-attempted",
+        reviewPacketPath: reviewPacket,
+        requestedActionIds: checkpoint.requestedActions.map((action) => action.id),
+        responseText: repair.responseText,
+        outputSummary: repair.outputSummary,
+        residualFindings: checkpoint.findings,
+      });
+      checkpoint = await writePostMergeReviewResult(options.outputRoot, { ...checkpoint, status: "repair-attempted", createdAt: new Date().toISOString() });
+      stages[checkpointStageIndex] = { stage: "post-merge-review", checkpoint };
+      status(options, `repair stage completed; worldMarkdownFiles=${repair.outputSummary.worldMarkdownFiles}; mergeStageExists=${repair.outputSummary.mergeStageExists}`);
+    }
+  }
+
   if (!options.reviewerModel) {
-    status(options, "review stage skipped; reviewer model disabled");
-    return { ...merge, sessionStrategy, stages };
+    status(options, "final review stage skipped; reviewer model disabled");
+    return { ...latestOutput, sessionStrategy, stages };
   }
 
   status(options, "starting stage review session");
@@ -345,7 +437,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
   stages.push({ stage: "review", reviewer: review.reviewer, deterministicPassed: review.deterministic.passed });
   status(options, `review session completed; ${summarizeReviewResult(review)}`);
 
-  return { ...merge, sessionStrategy, stages };
+  return { ...latestOutput, sessionStrategy, stages };
 }
 
 export async function runWorldImportSkill(options: WorldImportRunOptions): Promise<WorldImportRunResult> {

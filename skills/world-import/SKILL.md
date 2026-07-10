@@ -113,6 +113,28 @@ Extract for each important fact or event:
 
 Major chapter set-pieces usually deserve durable `facts` artifacts when needed for source reconstruction. Use `related` links from characters/places to avoid duplicated full narration, but do not silently leave a major scene recoverable only from a broad overview.
 
+### Narrative / plot surfaces for substantive narrative corpora
+
+When the source is a substantive narrative corpus (novel, play, saga, episode/chapter sequence, or similarly plot-driven work), the emitted bundle should support a reader who wants to understand the story in order before drilling into entity pages.
+
+For these imports, author normal artifact packets — usually under `group: facts` — for the following surfaces when the source supports them:
+
+- **Plot Synopsis** or **Corpus Synopsis** — a browsable start-here page for the overall story.
+- **Timeline** — ordered major beats in source order.
+- **Scene Guide / Chapter Guide / Episode Guide** — a navigable breakdown of the source structure.
+- **Act Summary / Chapter Summary / Episode Summary** pages when the source naturally has those divisions.
+- **Plot-critical object coverage** — durable `things` artifacts for major props, documents, tokens, weapons, poisons, letters, keepsakes, or other objects that materially affect the plot.
+
+Keep this semantic and model-owned: TypeScript helpers may route and promote these artifacts, but they do not generate the prose, decide whether a scene is important, or infer object significance.
+
+Contract details:
+
+- Use existing groups only. Do **not** invent a new `plot` group; route narrative surfaces through normal artifact packets, most often `group: facts`, with clear `type`, `description`, tags, and optional metadata.
+- Preserve source order in timeline and scene/chapter/episode guide pages.
+- Link narrative surfaces to relevant people, places, things, facts, and style pages via `related` and inline links where useful.
+- Do not hide the whole story inside only `world-overview`; the plot synopsis, timeline, and scene/chapter guide should be first-class browseable pages.
+- Major scenes/chapters/episodes and plot-critical objects should get dedicated pages or an explicit omission/disposition reason. Do not silently flatten them away into broad character pages.
+
 ## Inputs
 
 The user should provide JSON or text containing:
@@ -121,7 +143,8 @@ The user should provide JSON or text containing:
 - `output`: output root for normalized sources, stages, and `world/` markdown.
 - `reviewerModel` optional: stronger model to recommend for review/eval.
 - `dryRun` optional: validate setup without doing model extraction.
-- `stage` optional: orchestration hint for `extract`, `merge`, `review`, or `full`. If omitted, run the full workflow. Treat stages as stopping points, not as deterministic semantic ownership by helper code.
+- `stage` optional: orchestration hint for `extract`, `merge`, `repair`, `review`, or `full`. If omitted, run the full workflow. Treat stages as stopping points, not as deterministic semantic ownership by helper code.
+- Repair-stage fields, used only with `stage: "repair"`: `checkpointId`, `reviewPacket`, and `iteration`. The repair stage must read the persisted checkpoint packet, address only its grounded requested actions, update model-authored merge artifacts, re-emit/lint, and report attempted/residual work.
 - `helperCommand` optional: exact helper command prefix to use, such as `npm run world-import-helper --` or `memchat-world-import-helper`.
 
 If either `input` or `output` is missing, ask one focused question for the missing path.
@@ -171,19 +194,21 @@ Stage hints are optional orchestration boundaries:
 
 - `full` or omitted — run the whole workflow below in one session.
 - `extract` — complete steps 1-2, write extraction stages, then stop before merge.
-- `merge` — inspect normalized sources, extraction stages, and any existing world bundle; complete steps 3-7, then stop before review/eval.
+- `merge` — inspect normalized sources, extraction stages, and any existing world bundle; complete steps 3-9, then stop before orchestrator-owned post-merge review/eval.
+- `repair` — read `reviewPacket` for `checkpointId`/`iteration`, inspect current merge/emitted state, perform only requested model-owned repairs, re-emit/lint, and stop.
 - `review` — inspect the emitted bundle, run/coordinate eval, and summarize findings.
 
 1. Normalize the input. Inspect manifest diagnostics before continuing.
 2. For each normalized unit, read bounded text and produce an extraction stage envelope. **Extract rich, detailed candidates — not chapter summaries.** Preserve provenance spans for every candidate. Follow the entity-type guidance above.
 3. If the output already contains an emitted world bundle and this is not a dry run, inspect the existing world indexes, affected artifacts, coverage, log, and any existing `World Overview` / `Corpus Synopsis` artifact before merging new material.
 4. Merge from staged candidates, not whole raw files. **Combine and preserve all useful detail from each candidate** rather than distilling to minimal summaries. Use `read-slice` only when candidate evidence is ambiguous or conflicting and only for the minimum anchor range needed. For maintained worlds, enrich existing artifacts when evidence supports continuity, preserve older provenance unless it is superseded or contested, and keep retcons/conflicts visible rather than silently flattening them.
-5. Write merge artifacts incrementally with `write-artifact` when practical. Use `resolve-ref` and `quote-ref --as-ref` for provenance rather than guessing source ids or writing source-id mapping scripts. Artifact packets should have substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. Include candidate disposition accounting: every extraction candidate should be represented by artifact metadata, merged into a broader artifact, deferred, or dropped with a model-authored reason. For substantive imports, include or update a corpus-level `World Overview` artifact as a normal model-authored packet rather than relying on the emitter to summarize the world. Add model-authored `style` artifacts when narrative voice, tone, aphorisms/formulae, parody/poems, or character voice notes are useful for reuse.
+5. Write merge artifacts incrementally with `write-artifact` when practical. Use `resolve-ref` and `quote-ref --as-ref` for provenance rather than guessing source ids or writing source-id mapping scripts. Artifact packets should have substantial, narrative-rich sections plus useful discovery metadata such as `type`, `description`, and tags when appropriate. Include candidate disposition accounting: every extraction candidate should be represented by artifact metadata, merged into a broader artifact, deferred, or dropped with a model-authored reason. For substantive imports, include or update a corpus-level `Plot Synopsis` / `Corpus Synopsis`, plus a `Timeline` and `Scene Guide` / `Chapter Guide` / `Episode Guide`, as normal model-authored packets rather than relying on the emitter to summarize the world. Add model-authored `style` artifacts when narrative voice, tone, aphorisms/formulae, parody/poems, or character voice notes are useful for reuse.
 6. Run `coverage-plan` before final emission to inspect group coverage, unit coverage, retained source pages, and candidate accounting. Repair omissions semantically or record model-authored dispositions.
 7. Emit markdown from the artifact packets and expect provenance links to resolve to retained normalized source-unit pages when those pages are available.
 8. Run deterministic `emit-lint-repair-loop` or `lint` plus `repair-summary`. Treat diagnostics as evidence for repair, not ontology: create missing artifacts, fix/remove unresolved links, add candidate dispositions, improve source coverage, or explicitly justify acceptable omissions in metadata/sections. Re-emit and re-lint after repairs.
 9. Run `provenance-audit` before eval or before declaring high-quality success. Clean lint is necessary but not sufficient: heading/title refs can identify story context, but should not be the sole evidence for detailed people/place/thing/fact/style claims. Use `find-text`, `suggest-ref-candidates`, and `quote-ref --as-ref` to add or replace weak refs without blindly rewriting semantic prose.
-10. If a reviewer model is configured, run the eval helper after emission/lint/provenance-audit; otherwise report that reviewer-model scoring was skipped.
-11. Summarize outputs, lint diagnostics, provenance-audit warnings, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
+10. In staged orchestration, the TypeScript runner may insert a focused post-merge review checkpoint before final eval. The checkpoint is reviewer/model-owned and persisted under `stages/checkpoints/`; helpers only persist/route the structured packet. If invoked with `stage: "repair"`, read the checkpoint packet and current `stages/merge`/`world` files, repair only grounded requested actions (for example missing `things`, missing plot surfaces, hidden omissions, or sparse provenance), then re-emit and re-lint. Do not redo the whole import or chase speculative findings.
+11. If a reviewer model is configured, run the final eval helper after emission/lint/provenance-audit and any bounded checkpoint repair; otherwise report that reviewer-model scoring was skipped.
+12. Summarize outputs, lint diagnostics, provenance-audit warnings, checkpoint repair/residual status, candidate dispositions, style-guide coverage, and any uncertainty/disputes preserved in metadata or sections.
 
 When `dryRun` is true, stop after normalization/listing and report whether the helper surface is available.

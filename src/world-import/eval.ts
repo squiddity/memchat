@@ -10,10 +10,11 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson } from "./staging.js";
+import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson, writeStagedReviewCheckpoint } from "./staging.js";
 import { providerAuthEnvKeys, reviewerProvider } from "../local-env.js";
 import { isUsableModel, modelLabel, requireResolvedModel } from "../model-selection.js";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type WorldImportLintResult } from "./types.js";
+import { classifyNarrativeSurface } from "./narrative-surfaces.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportLintResult } from "./types.js";
 
 const groups = [...WORLD_IMPORT_GROUPS];
 
@@ -128,6 +129,58 @@ function hasMarkdownHeadingAnchor(content: string, anchor: string): boolean {
 
 async function readMarkdownSnippet(path: string, maxChars = MAX_MARKDOWN_FILE_CHARS): Promise<string> {
   return (await readFile(path, "utf-8")).slice(0, maxChars);
+}
+
+function isNarrativeCorpus(mergeArtifacts: ArtifactPacket[] | undefined, bodyUnitCount: number): boolean {
+  return bodyUnitCount > 1 && (mergeArtifacts?.length ?? 0) > 0;
+}
+
+function collectNarrativeRiskSignals(artifacts: ArtifactPacket[] | undefined, bodyUnitCount: number): LintDiagnostic[] {
+  if (!isNarrativeCorpus(artifacts, bodyUnitCount)) return [];
+  const items = artifacts ?? [];
+  const byKind = new Set(items.flatMap((artifact) => classifyNarrativeSurface(artifact)));
+  const diagnostics: LintDiagnostic[] = [];
+  if (!byKind.has("synopsis")) diagnostics.push({ code: "missing-plot-synopsis", level: "warning", message: "Narrative import is missing a dedicated plot synopsis/corpus synopsis/world overview artifact." });
+  if (!byKind.has("timeline")) diagnostics.push({ code: "missing-timeline", level: "warning", message: "Narrative import is missing a dedicated timeline or reading-order artifact." });
+  if (!byKind.has("scene-guide")) diagnostics.push({ code: "missing-scene-guide", level: "warning", message: "Narrative import is missing a dedicated scene/chapter/episode guide artifact." });
+  if (!items.some((artifact) => artifact.group === "things")) diagnostics.push({ code: "empty-things-group", level: "warning", message: "Narrative import has no emitted things/object artifacts; check plot-critical object coverage." });
+  return diagnostics;
+}
+
+function isHeadingLikeQuote(quote: string): boolean {
+  const normalized = quote.trim();
+  if (!normalized) return false;
+  const words = normalized.split(/\s+/).length;
+  return words <= 10 && normalized === normalized.toUpperCase();
+}
+
+async function collectProvenanceAuditWarnings(outputRoot: string, artifacts: ArtifactPacket[] | undefined): Promise<LintDiagnostic[]> {
+  const diagnostics: LintDiagnostic[] = [];
+  const items = artifacts ?? [];
+  for (const artifact of items) {
+    const sectionCount = artifact.sections.filter((section) => section.body.trim().length > 0).length;
+    const bodyChars = artifact.sections.reduce((sum, section) => sum + section.body.trim().length, 0);
+    const refCount = artifact.provenance.length;
+    if (sectionCount >= 4 && refCount < 2) diagnostics.push({ code: "single-ref-many-sections", level: "warning", artifactId: artifact.id, message: `${sectionCount} non-empty sections have only ${refCount} provenance ref(s).` });
+    if ((sectionCount >= 4 || bodyChars >= 1600) && (refCount / Math.max(1, sectionCount) < 0.5 || bodyChars / Math.max(1, refCount) > 1200)) diagnostics.push({ code: "sparse-provenance-density", level: "warning", artifactId: artifact.id, message: `${sectionCount} sections, ${bodyChars} body chars, ${refCount} provenance ref(s).` });
+    if (artifact.group === "style" && bodyChars >= 80 && refCount < 3) diagnostics.push({ code: "style-under-cited", level: "warning", artifactId: artifact.id, message: `Substantive style artifact has ${refCount} provenance ref(s); multiple examples are usually needed.` });
+    let headingOnlyRefs = 0;
+    for (const [index, ref] of artifact.provenance.entries()) {
+      let headingLike = isHeadingLikeQuote(ref.quote);
+      try {
+        const unit = await readNormalizedUnit(outputRoot, ref.unitId);
+        const block = unit.blocks.find((item) => item.anchor === ref.startAnchor);
+        if (block?.kind === "heading") headingLike = true;
+      } catch {
+        // fall back to quote heuristic when normalized JSON is unavailable
+      }
+      if (headingLike) {
+        headingOnlyRefs += 1;
+        diagnostics.push({ code: "heading-only-provenance", level: "warning", artifactId: artifact.id, unitId: ref.unitId, path: `artifacts.${artifact.id}.provenance[${index}]`, message: "Citation points to a heading/title-like block; detailed claims usually need narrative evidence." });
+      }
+    }
+  }
+  return diagnostics;
 }
 
 export async function lintWorldImport(outputRoot: string): Promise<WorldImportLintResult> {
@@ -282,9 +335,11 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
   checks.push({ name: "merge stage exists", passed: existsSync(mergedCandidatesPath(outputRoot)) });
 
   let manifestUnits = 0;
+  let bodyUnitCount = 0;
   try {
     const manifest = await readManifest(outputRoot);
     manifestUnits = manifest.units.length;
+    bodyUnitCount = manifest.units.filter((unit) => (unit.role ?? "body") === "body").length;
     checks.push({ name: "manifest has normalized units", passed: manifest.units.length > 0, message: `${manifest.units.length} unit(s)` });
   } catch (error) {
     checks.push({ name: "manifest parses", passed: false, message: error instanceof Error ? error.message : String(error) });
@@ -292,8 +347,10 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
 
   let artifactCount = 0;
   let referencedUnitIds: string[] = [];
+  let mergeArtifacts: ArtifactPacket[] | undefined;
   try {
     const merge = await readMergeStage(outputRoot);
+    mergeArtifacts = merge.artifacts;
     artifactCount = merge.artifacts?.length ?? 0;
     referencedUnitIds = referencedUnitIdsFromArtifacts(merge.artifacts);
     checks.push({ name: "merge has artifact packets", passed: artifactCount > 0, message: `${artifactCount} artifact(s)` });
@@ -364,7 +421,33 @@ export async function deterministicWorldImportChecks(outputRoot: string): Promis
     diagnostics: lint.diagnostics,
   });
 
-  return { passed: checks.every((check) => check.passed), checks, lint };
+  const riskSignals = collectNarrativeRiskSignals(mergeArtifacts, bodyUnitCount);
+  if (riskSignals.length > 0) {
+    checks.push({
+      name: "narrative surface risks",
+      passed: true,
+      message: `${riskSignals.length} warning(s)`,
+      diagnostics: riskSignals,
+    });
+  }
+
+  const provenanceAudit = mergeArtifacts ? {
+    diagnostics: await collectProvenanceAuditWarnings(outputRoot, mergeArtifacts),
+    warnings: 0,
+  } : undefined;
+  if (provenanceAudit) {
+    provenanceAudit.warnings = provenanceAudit.diagnostics.length;
+    if (provenanceAudit.warnings > 0) {
+      checks.push({
+        name: "provenance audit warnings",
+        passed: true,
+        message: `${provenanceAudit.warnings} warning(s)`,
+        diagnostics: provenanceAudit.diagnostics,
+      });
+    }
+  }
+
+  return { passed: checks.every((check) => check.passed), checks, lint, riskSignals, provenanceAudit };
 }
 
 /**
@@ -424,37 +507,122 @@ export async function buildReviewBundle(outputRoot: string): Promise<ReviewBundl
   return { manifest, sources, merge, markdown };
 }
 
-function parseDimensionScores(text: string): ReviewerDimensionScore[] | undefined {
-  // Look for the structured JSON output block
-  const jsonStart = text.lastIndexOf("{");
-  const jsonEnd = text.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd <= jsonStart) return undefined;
-  try {
-    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as { dimensionScores?: ReviewerDimensionScore[] };
-    if (Array.isArray(parsed.dimensionScores) && parsed.dimensionScores.length > 0) {
-      return parsed.dimensionScores.filter(
-        (d) => typeof d.dimension === "string" && typeof d.score === "number" && typeof d.justification === "string"
-      );
+type ReviewerEval = NonNullable<EvaluationResult["reviewer"]>;
+
+type ParsedReviewerOutput = {
+  score?: number;
+  dimensionScores?: ReviewerDimensionScore[];
+  qaResults?: ReviewerEval["qaResults"];
+  parseStatus: NonNullable<ReviewerEval["parseStatus"]>;
+  parseErrors: string[];
+  authoritativeScore: boolean;
+};
+
+const REVIEW_DIMENSIONS = new Set([
+  "entityRecall",
+  "detailRichness",
+  "sourceCoverage",
+  "provenance",
+  "mergeQuality",
+  "answerability",
+  "navigability",
+  "progressiveDisclosure",
+  "plotSynopsisQuality",
+  "timelineCompleteness",
+  "sourceStructureCoverage",
+  "objectPropCoverage",
+  "omissionVisibility",
+  "citationReconstructability",
+  "droppedCandidateRisk",
+  "styleToneCoverage",
+]);
+
+function extractFinalJsonObject(text: string): string | undefined {
+  const fenced = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
+  if (fenced.length > 0) return fenced[fenced.length - 1]?.[1]?.trim();
+
+  let depth = 0;
+  let end = -1;
+  for (let i = text.length - 1; i >= 0; i -= 1) {
+    const char = text[i];
+    if (char === "}") {
+      if (end === -1) end = i;
+      depth += 1;
+    } else if (char === "{") {
+      depth -= 1;
+      if (depth === 0 && end !== -1) return text.slice(i, end + 1);
     }
-  } catch {
-    // Structured parsing is optional; fall through to regex extraction
   }
   return undefined;
 }
 
-type ReviewerEval = NonNullable<EvaluationResult["reviewer"]>;
+export function parseStructuredReviewerOutput(text: string): ParsedReviewerOutput {
+  const jsonText = extractFinalJsonObject(text);
+  if (!jsonText) return { parseStatus: "missing", parseErrors: ["No final JSON object found in reviewer output."], authoritativeScore: false };
 
-function parseQAResults(text: string): ReviewerEval["qaResults"] | undefined {
-  const jsonStart = text.lastIndexOf("{");
-  const jsonEnd = text.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd <= jsonStart) return undefined;
+  let parsed: Record<string, unknown>;
   try {
-    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as { qaResults?: ReviewerEval["qaResults"] };
-    if (Array.isArray(parsed.qaResults) && parsed.qaResults.length > 0) return parsed.qaResults;
-  } catch {
-    // optional
+    parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  } catch (error) {
+    return {
+      parseStatus: "invalid",
+      parseErrors: [`Final JSON could not be parsed: ${error instanceof Error ? error.message : String(error)}`],
+      authoritativeScore: false,
+    };
   }
-  return undefined;
+
+  const parseErrors: string[] = [];
+  const score = typeof parsed.score === "number" ? parsed.score : undefined;
+  if (score === undefined) parseErrors.push("Missing numeric overall score.");
+  else if (score < 1 || score > 5) parseErrors.push(`Overall score ${score} is out of range 1-5.`);
+
+  const rawDimensions = Array.isArray(parsed.dimensionScores) ? parsed.dimensionScores : undefined;
+  const dimensionScores = rawDimensions?.filter((item): item is ReviewerDimensionScore => (
+    item !== null
+    && typeof item === "object"
+    && typeof (item as ReviewerDimensionScore).dimension === "string"
+    && typeof (item as ReviewerDimensionScore).score === "number"
+    && typeof (item as ReviewerDimensionScore).justification === "string"
+  ));
+  if (!rawDimensions) parseErrors.push("Missing dimensionScores array.");
+  else {
+    const seen = new Set<string>();
+    for (const item of dimensionScores ?? []) {
+      if (item.score < 1 || item.score > 5) parseErrors.push(`Dimension ${item.dimension} score ${item.score} is out of range 1-5.`);
+      if (!REVIEW_DIMENSIONS.has(item.dimension)) parseErrors.push(`Unexpected dimension ${item.dimension}.`);
+      seen.add(item.dimension);
+    }
+    for (const dimension of REVIEW_DIMENSIONS) {
+      if (!seen.has(dimension)) parseErrors.push(`Missing dimension ${dimension}.`);
+    }
+  }
+
+  const qaResults = Array.isArray(parsed.qaResults)
+    ? parsed.qaResults.filter((item): item is NonNullable<ReviewerEval["qaResults"]>[number] => (
+      item !== null
+      && typeof item === "object"
+      && typeof item.question === "string"
+      && typeof item.answerable === "boolean"
+      && typeof item.answer === "string"
+      && (item.confidence === "high" || item.confidence === "medium" || item.confidence === "low")
+    ))
+    : undefined;
+  if (!Array.isArray(parsed.qaResults)) parseErrors.push("Missing qaResults array.");
+  else if ((qaResults?.length ?? 0) !== parsed.qaResults.length) parseErrors.push("Some qaResults entries were malformed.");
+
+  const parseStatus: ParsedReviewerOutput["parseStatus"] =
+    parseErrors.length === 0 ? "valid"
+      : (dimensionScores?.length || qaResults?.length || typeof score === "number") ? "partial"
+        : "invalid";
+
+  return {
+    score,
+    dimensionScores,
+    qaResults,
+    parseStatus,
+    parseErrors,
+    authoritativeScore: parseStatus === "valid",
+  };
 }
 
 function parseReconstructionSummary(text: string): string | undefined {
@@ -463,20 +631,6 @@ function parseReconstructionSummary(text: string): string | undefined {
   return match?.[1]?.trim();
 }
 
-function parseReviewerScore(text: string): number | undefined {
-  const jsonStart = text.indexOf("{");
-  const jsonEnd = text.lastIndexOf("}");
-  if (jsonStart !== -1 && jsonEnd > jsonStart) {
-    try {
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as { score?: unknown };
-      if (typeof parsed.score === "number") return parsed.score;
-    } catch {
-      // Reviewer prose is still useful; score is optional.
-    }
-  }
-  const match = text.match(/score\D+(\d+(?:\.\d+)?)/i);
-  return match ? Number(match[1]) : undefined;
-}
 
 /**
  * Build the structured reviewer prompt with:
@@ -536,7 +690,7 @@ ${markdownBlock}
 
 ### Task 1: Reconstruction
 
-Using ONLY the world artifacts above (not the raw source text), write a narrative summary of the source material. Describe the characters, places, events, and plot as they appear in the artifacts. After your reconstruction summary, note what is MISSING or INACCURATE compared to the actual source text above.
+Using ONLY the world artifacts above (not the raw source text), first write an artifact-only reconstruction of the story/world as a reader would understand it from the wiki bundle. Then compare that reconstruction to the raw source text and note what is MISSING, structurally under-covered, or INACCURATE.
 
 ### Task 2: Question Answering
 
@@ -561,12 +715,22 @@ Score the world library 1-5 (5 = best) on each dimension:
 6. **answerability** — Can someone answer substantive questions about the source using only the artifacts?
 7. **navigability** — Do indexes, summaries, and links make the bundle easy to browse?
 8. **progressiveDisclosure** — Do artifacts balance concise top-level summaries with richer detail below?
-9. **duplicateNarrativeControl** — Do entity/place artifacts summarize linked events instead of repeating full event narratives unnecessarily?
-10. **citationReconstructability** — Can a reader follow emitted provenance links to retained source-unit pages inside the bundle?
-11. **droppedCandidateRisk** — Do candidate dispositions and coverage diagnostics make omissions visible, especially major set-pieces that may be missing from the final wiki?
-12. **styleToneCoverage** — When useful for the corpus, do style artifacts capture narrative voice, tone, formulae, parody/poem mechanics, and character voices with source evidence?
+9. **plotSynopsisQuality** — Is there a useful start-here synopsis/corpus overview that helps a reader understand the plot without browsing every entity page?
+10. **timelineCompleteness** — Does the bundle expose the story's sequence of events in source order well enough to reconstruct major plot beats?
+11. **sourceStructureCoverage** — Does the bundle surface the source structure (scene/chapter/episode/act guide) and preserve major units or omission reasons?
+12. **objectPropCoverage** — Are plot-critical objects/props/documents captured as durable artifacts when they materially affect the story?
+13. **omissionVisibility** — If important narrative surfaces, objects, or set-pieces are missing, is that obvious from the bundle and review data rather than hidden behind structurally clean output?
+14. **citationReconstructability** — Can a reader follow emitted provenance links to retained source-unit pages inside the bundle?
+15. **droppedCandidateRisk** — Do candidate dispositions and coverage diagnostics make omissions visible, especially major set-pieces that may be missing from the final wiki?
+16. **styleToneCoverage** — When useful for the corpus, do style artifacts capture narrative voice, tone, formulae, parody/poem mechanics, and character voices with source evidence?
 
-For Alice-like fiction, specifically note whether the artifacts support reconstructing major set-pieces such as the Caucus-Race, White Rabbit's house, Caterpillar conversation, Mad Tea-Party, croquet game, Mock Turtle story, Lobster Quadrille, trial, and dream frame.
+Score caps / hard rubric:
+- If the bundle lacks a usable plot synopsis/corpus synopsis, overall score must be **3 or lower**.
+- If the bundle lacks both a timeline and a scene/chapter/episode guide for a multi-unit narrative source, overall score must be **2 or lower**.
+- If major plot-critical objects or source-structure omissions are hard to discover from the wiki, omissionVisibility and objectPropCoverage must be **2 or lower**, and the overall score must not exceed **3**.
+- Do not award a high overall score merely because frontmatter, links, or provenance structure are clean.
+
+For narrative fiction or drama, specifically note whether the artifacts let a reader walk the story in order, identify major set-pieces, and find plot-critical objects without reading every character page.
 
 Provide evidence from the artifacts and source text for each score.
 
@@ -588,7 +752,11 @@ Return your results as a JSON object at the very end of your response with this 
     {"dimension": "answerability", "score": <1-5>, "justification": "..."},
     {"dimension": "navigability", "score": <1-5>, "justification": "..."},
     {"dimension": "progressiveDisclosure", "score": <1-5>, "justification": "..."},
-    {"dimension": "duplicateNarrativeControl", "score": <1-5>, "justification": "..."},
+    {"dimension": "plotSynopsisQuality", "score": <1-5>, "justification": "..."},
+    {"dimension": "timelineCompleteness", "score": <1-5>, "justification": "..."},
+    {"dimension": "sourceStructureCoverage", "score": <1-5>, "justification": "..."},
+    {"dimension": "objectPropCoverage", "score": <1-5>, "justification": "..."},
+    {"dimension": "omissionVisibility", "score": <1-5>, "justification": "..."},
     {"dimension": "citationReconstructability", "score": <1-5>, "justification": "..."},
     {"dimension": "droppedCandidateRisk", "score": <1-5>, "justification": "..."},
     {"dimension": "styleToneCoverage", "score": <1-5>, "justification": "..."}
@@ -605,40 +773,354 @@ Return your results as a JSON object at the very end of your response with this 
  * Generate a diverse set of questions from the source text for QA evaluation.
  * Questions target characters, places, events, and narrative details.
  */
-function generateQaQuestions(sources: ReviewBundle["sources"]): string[] {
-  const allText = sources.map((s) => s.content).join("\n\n");
-  const words = allText.split(/\s+/).filter(Boolean);
+const STAGED_REVIEW_SEVERITIES = new Set(["info", "warning", "repair", "critical"] as const);
+const STAGED_REVIEW_ACTION_TYPES = new Set(["add-artifact", "strengthen-artifact", "add-narrative-surface", "record-omission", "strengthen-provenance", "repair-candidate-disposition", "other"] as const);
+const STAGED_REVIEW_CATEGORIES = new Set(["narrative-surface", "object-coverage", "omission-visibility", "provenance", "candidate-disposition", "other"] as const);
+const STAGED_REVIEW_CONFIDENCES = new Set(["low", "medium", "high"] as const);
 
-  // Extract candidate person-like names (capitalized words that appear multiple times, not at sentence start)
-  const wordFreq = new Map<string, number>();
-  for (const word of words) {
-    const cleaned = word.replace(/[^a-zA-Z]/g, "");
-    if (cleaned.length >= 2 && cleaned[0] === cleaned[0].toUpperCase() && cleaned[1] === cleaned[1].toLowerCase()) {
-      wordFreq.set(cleaned, (wordFreq.get(cleaned) || 0) + 1);
+type StagedReviewCategory = StagedReviewFinding["category"];
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asSetValue<T extends string>(value: unknown, allowed: ReadonlySet<T>, fallback: T): T {
+  return typeof value === "string" && allowed.has(value as T) ? value as T : fallback;
+}
+
+function asSeverity(value: unknown): StagedReviewFindingSeverity {
+  return asSetValue(value, STAGED_REVIEW_SEVERITIES, "warning");
+}
+
+function asActionType(value: unknown): StagedReviewActionType {
+  return asSetValue(value, STAGED_REVIEW_ACTION_TYPES, "other");
+}
+
+function asCategory(value: unknown): StagedReviewCategory {
+  return asSetValue(value, STAGED_REVIEW_CATEGORIES, "other");
+}
+
+function asConfidence(value: unknown): StagedReviewRequestedAction["confidence"] {
+  return typeof value === "string" && STAGED_REVIEW_CONFIDENCES.has(value as NonNullable<StagedReviewRequestedAction["confidence"]>) ? value as NonNullable<StagedReviewRequestedAction["confidence"]> : undefined;
+}
+
+function parseSourceRefs(value: unknown): StagedReviewRequestedAction["sourceRefs"] {
+  if (!Array.isArray(value)) return undefined;
+  const refs = value.filter((item): item is NonNullable<StagedReviewRequestedAction["sourceRefs"]>[number] => (
+    item !== null
+    && typeof item === "object"
+    && typeof item.sourceId === "string"
+    && typeof item.unitId === "string"
+    && typeof item.startAnchor === "string"
+    && typeof item.endAnchor === "string"
+    && typeof item.quote === "string"
+  ));
+  return refs.length > 0 ? refs : undefined;
+}
+
+export type ParsedPostMergeReviewOutput = Pick<StagedReviewCheckpoint, "repairRecommended" | "findings" | "requestedActions"> & {
+  parseStatus: StagedReviewParseStatus;
+  parseErrors: string[];
+};
+
+export function parseStructuredPostMergeReviewOutput(text: string): ParsedPostMergeReviewOutput {
+  const jsonText = extractFinalJsonObject(text);
+  if (!jsonText) return { repairRecommended: false, findings: [], requestedActions: [], parseStatus: "missing", parseErrors: ["No final JSON object found in post-merge review output."] };
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  } catch (error) {
+    return { repairRecommended: false, findings: [], requestedActions: [], parseStatus: "invalid", parseErrors: [`Final JSON could not be parsed: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+
+  const parseErrors: string[] = [];
+  const rawActions = Array.isArray(parsed.requestedActions) ? parsed.requestedActions : [];
+  if (!Array.isArray(parsed.requestedActions)) parseErrors.push("Missing requestedActions array.");
+  const requestedActions: StagedReviewRequestedAction[] = rawActions.flatMap((item, index) => {
+    if (!item || typeof item !== "object") {
+      parseErrors.push(`requestedActions[${index}] is malformed.`);
+      return [];
     }
+    const record = item as Record<string, unknown>;
+    const summary = asString(record.summary);
+    if (!summary) {
+      parseErrors.push(`requestedActions[${index}].summary is required.`);
+      return [];
+    }
+    return [{
+      id: asString(record.id) ?? `action-${index + 1}`,
+      type: asActionType(record.type),
+      severity: asSeverity(record.severity),
+      summary,
+      rationale: asString(record.rationale),
+      targetArtifactId: asString(record.targetArtifactId),
+      targetArtifactPath: asString(record.targetArtifactPath),
+      candidateId: asString(record.candidateId),
+      unitId: asString(record.unitId),
+      sourceRefs: parseSourceRefs(record.sourceRefs),
+      confidence: asConfidence(record.confidence),
+      rereadSource: typeof record.rereadSource === "boolean" ? record.rereadSource : undefined,
+    }];
+  });
+
+  const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  if (!Array.isArray(parsed.findings)) parseErrors.push("Missing findings array.");
+  const findings: StagedReviewFinding[] = rawFindings.flatMap((item, index) => {
+    if (!item || typeof item !== "object") {
+      parseErrors.push(`findings[${index}] is malformed.`);
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const summary = asString(record.summary);
+    if (!summary) {
+      parseErrors.push(`findings[${index}].summary is required.`);
+      return [];
+    }
+    return [{
+      id: asString(record.id) ?? `finding-${index + 1}`,
+      severity: asSeverity(record.severity),
+      category: asCategory(record.category),
+      summary,
+      evidence: asString(record.evidence),
+      targetArtifactId: asString(record.targetArtifactId),
+      targetArtifactPath: asString(record.targetArtifactPath),
+      candidateId: asString(record.candidateId),
+      unitId: asString(record.unitId),
+      sourceRefs: parseSourceRefs(record.sourceRefs),
+      requestedActionIds: Array.isArray(record.requestedActionIds) ? record.requestedActionIds.filter((value): value is string => typeof value === "string") : undefined,
+    }];
+  });
+
+  const repairRecommended = typeof parsed.repairRecommended === "boolean" ? parsed.repairRecommended : requestedActions.length > 0;
+  if (typeof parsed.repairRecommended !== "boolean") parseErrors.push("Missing boolean repairRecommended.");
+  const parseStatus: StagedReviewParseStatus = parseErrors.length === 0 ? "valid" : (findings.length > 0 || requestedActions.length > 0 ? "partial" : "invalid");
+  return { repairRecommended: parseStatus === "invalid" ? false : repairRecommended, findings, requestedActions, parseStatus, parseErrors };
+}
+
+export function buildPostMergeReviewPrompt(bundle: ReviewBundle, options: { checkpointId: string; iteration: number }): string {
+  const markdownBlock = Object.entries(bundle.markdown).map(([path, content]) => `--- ${path} ---\n${content}`).join("\n\n") || "(no markdown artifacts)";
+  const artifactSummary = (bundle.merge.artifacts ?? []).map((artifact) => `- ${artifact.id} (${artifact.group}): ${artifact.title}; provenance=${artifact.provenance.length}; sections=${artifact.sections.map((section) => section.heading).join(", ")}`).join("\n") || "(no merge artifacts)";
+  const dispositions = (bundle.merge.candidateDispositions ?? []).map((item) => `- ${item.unitId ?? "?"}:${item.candidateId} -> ${item.disposition}${item.artifactId ? ` (${item.artifactId})` : ""}${item.reason ? `: ${item.reason}` : ""}`).join("\n") || "(no candidate dispositions)";
+  const sourceSample = bundle.sources.map((source) => `=== UNIT: ${source.title || source.unitId} (order ${source.order}) ===\n${source.content}`).join("\n\n");
+
+  return `You are a focused world-import intermediate reviewer for checkpoint ${options.checkpointId}, iteration ${options.iteration}.
+
+Review the post-merge/emitted world bundle before final eval. Stay focused on repairable semantic gaps that a bounded repair model can address from the persisted source and merge artifacts. Do not rewrite artifacts yourself.
+
+## Source sample
+
+${sourceSample}
+
+## Merge artifacts
+
+${artifactSummary}
+
+## Candidate dispositions
+
+${dispositions}
+
+## Emitted markdown
+
+${markdownBlock}
+
+## Focus rubric
+
+Look only for high-value, actionable gaps:
+- missing narrative surfaces such as synopsis, timeline, or scene/chapter/act guide;
+- missing plot-critical objects, props, letters, weapons, documents, or durable thing pages;
+- important omissions hidden from candidate dispositions or coverage views;
+- sparse or weak provenance on synthesis pages whose claims need source grounding.
+
+Recommend repair only when the requested action is grounded, bounded, and likely to improve the current bundle before final eval. If the bundle is good enough or findings are speculative, set repairRecommended to false and leave requestedActions empty.
+
+Return a JSON object at the very end of your response with this exact structure:
+
+\`\`\`json
+{
+  "repairRecommended": true,
+  "findings": [
+    {
+      "id": "finding-1",
+      "severity": "warning|repair|critical|info",
+      "category": "narrative-surface|object-coverage|omission-visibility|provenance|candidate-disposition|other",
+      "summary": "Missing durable thing artifact for a plot-critical letter.",
+      "evidence": "Brief evidence from source/artifacts.",
+      "targetArtifactId": "optional-existing-id",
+      "targetArtifactPath": "optional/path.md",
+      "candidateId": "optional-candidate-id",
+      "unitId": "optional-unit-id",
+      "sourceRefs": [{"sourceId":"s","unitId":"u","startAnchor":"b0001","endAnchor":"b0002","quote":"short source quote"}],
+      "requestedActionIds": ["action-1"]
+    }
+  ],
+  "requestedActions": [
+    {
+      "id": "action-1",
+      "type": "add-artifact|strengthen-artifact|add-narrative-surface|record-omission|strengthen-provenance|repair-candidate-disposition|other",
+      "severity": "repair",
+      "summary": "Add a things artifact for the letter and cite the source span.",
+      "rationale": "Why this is repairable and important.",
+      "targetArtifactId": "optional-existing-or-proposed-id",
+      "targetArtifactPath": "optional/path.md",
+      "candidateId": "optional-candidate-id",
+      "unitId": "optional-unit-id",
+      "sourceRefs": [{"sourceId":"s","unitId":"u","startAnchor":"b0001","endAnchor":"b0002","quote":"short source quote"}],
+      "confidence": "low|medium|high",
+      "rereadSource": true
+    }
+  ]
+}
+\`\`\`
+`;
+}
+
+export async function writePostMergeReviewResult(outputRoot: string, checkpoint: Omit<StagedReviewCheckpoint, "version" | "kind" | "createdAt" | "outputRoot"> & { createdAt?: string }): Promise<StagedReviewCheckpoint> {
+  const result: StagedReviewCheckpoint = {
+    version: 1,
+    kind: "post-merge-review",
+    createdAt: checkpoint.createdAt ?? new Date().toISOString(),
+    outputRoot,
+    ...checkpoint,
+  };
+  await writeStagedReviewCheckpoint(outputRoot, result);
+  return result;
+}
+
+export function generateQaQuestions(sources: ReviewBundle["sources"]): string[] {
+  const allText = sources.map((s) => s.content).join("\n\n");
+  const stopwords = new Set([
+    "The", "And", "But", "For", "With", "From", "Into", "Over", "Under", "After", "Before", "Then", "When", "Where", "What", "Why", "How", "Act", "Scene", "Chapter", "Book", "Part", "Volume", "Mr", "Mrs", "Miss", "Sir",
+  ]);
+  const stageDirectionWords = new Set([
+    "Enter", "Exit", "Exeunt", "Reenter", "Within", "Aside", "Alarum", "Flourish", "Sennet", "Trumpet", "Drum", "Drums", "Music", "Song", "Songs", "Knocking",
+  ]);
+  const blockedWords = new Set([...stopwords, ...stageDirectionWords]);
+  const wordFreq = new Map<string, number>();
+  for (const match of allText.matchAll(/\b[A-Z][a-z]{2,}\b/g)) {
+    const word = match[0];
+    if (blockedWords.has(word)) continue;
+    wordFreq.set(word, (wordFreq.get(word) ?? 0) + 1);
   }
   const topNames = [...wordFreq.entries()]
-    .filter(([, count]) => count >= 3)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 4)
     .map(([name]) => name);
 
-  // Build a diverse set of questions
   const questions: string[] = [];
+  if (topNames.length >= 1) questions.push(`Describe ${topNames[0]}. Who are they, what role do they play, and what key events involve them?`);
+  if (topNames.length >= 2) questions.push(`How do ${topNames[0]} and ${topNames[1]} relate to each other, and what plot events connect them?`);
+  questions.push("Walk through the major plot events in source order. What happens first, what turning points follow, and how does the story progress?");
+  questions.push("How is the source structured (for example scenes, chapters, acts, or episodes), and what major events happen in those units?");
+  questions.push("What important objects, props, letters, weapons, documents, or other things materially affect the plot, and why do they matter?");
+  return [...new Set(questions)].slice(0, QA_QUESTION_COUNT);
+}
 
-  if (topNames.length >= 1) {
-    questions.push(`Describe ${topNames[0]}. Who are they, what are their characteristics, what role do they play, and what key events are they involved in?`);
+export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptions & { checkpointId?: string; iteration?: number }): Promise<StagedReviewCheckpoint> {
+  const checkpointId = options.checkpointId ?? "post-merge";
+  const iteration = options.iteration ?? 1;
+  reviewerStatus(options, `post-merge checkpoint=${checkpointId}; iteration=${iteration}; output=${resolve(options.outputRoot)}`);
+  if (!options.reviewerModel) {
+    return writePostMergeReviewResult(options.outputRoot, {
+      checkpointId,
+      iteration,
+      status: "skipped",
+      repairRecommended: false,
+      findings: [],
+      requestedActions: [],
+      reviewer: { skipped: true, reason: "no reviewer model configured" },
+    });
   }
-  if (topNames.length >= 2) {
-    questions.push(`What is the relationship between ${topNames[0]} and ${topNames[1]}? What events connect them?`);
+
+  const cwd = resolve(options.cwd ?? process.cwd());
+  const agentDir = getAgentDir();
+  const authPath = resolve(agentDir, "auth.json");
+  const modelsPath = resolve(agentDir, "models.json");
+  const authStorage = AuthStorage.create(authPath);
+  const modelRegistry = ModelRegistry.create(authStorage, modelsPath);
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } });
+  const bundle = await buildReviewBundle(options.outputRoot);
+  reviewerStatus(options, `post-merge bundle=${bundle.sources.length} source unit(s), ${bundle.merge.artifacts?.length ?? 0} artifact(s), ${Object.keys(bundle.markdown).length} markdown file(s)`);
+
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    noContextFiles: true,
+    systemPrompt: "You are a focused world-import intermediate reviewer. Return structured JSON repair findings only; do not rewrite semantic artifacts.",
+  });
+  await resourceLoader.reload();
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir,
+    authStorage,
+    modelRegistry,
+    resourceLoader,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(cwd),
+    noTools: "builtin",
+    thinkingLevel: "off",
+  });
+  let notes = "";
+  let thinkingStarted = false;
+  try {
+    await session.setModel(requireResolvedModel(options.reviewerModel, session.modelRegistry));
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_update") {
+        const messageEvent = event.assistantMessageEvent;
+        if (messageEvent.type === "text_delta") notes += messageEvent.delta;
+        else if (messageEvent.type === "thinking_delta" && options.debug?.showThinking) {
+          if (!thinkingStarted) {
+            thinkingStarted = true;
+            options.onThinking?.("\n[world-import post-merge review thinking]\n");
+          }
+          options.onThinking?.(messageEvent.delta);
+        }
+      }
+      if (options.debug?.enabled && event.type === "tool_execution_start") options.onToolEvent?.(`\n[world-import post-merge review tool/start] ${event.toolName} ${stringifyForLog(event.args)}\n`);
+      if (options.debug?.enabled && options.debug?.showToolUpdates && event.type === "tool_execution_update") options.onToolEvent?.(`\n[world-import post-merge review tool/update] ${stringifyForLog(eventRecord(event))}\n`);
+      if (options.debug?.enabled && event.type === "tool_execution_end") {
+        const record = eventRecord(event);
+        options.onToolEvent?.(`\n[world-import post-merge review tool/end] ${event.toolName} ${event.isError ? "error" : "ok"} ${stringifyForLog(record.details ?? record.result ?? record, 8000)}\n`);
+      }
+    });
+    try {
+      await session.prompt(buildPostMergeReviewPrompt(bundle, { checkpointId, iteration }));
+    } finally {
+      unsubscribe();
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return writePostMergeReviewResult(options.outputRoot, {
+      checkpointId,
+      iteration,
+      status: "skipped",
+      repairRecommended: false,
+      findings: [],
+      requestedActions: [],
+      reviewer: { model: options.reviewerModel, skipped: true, reason },
+    });
+  } finally {
+    session.dispose();
   }
 
-  questions.push("What is the setting or locations where the narrative takes place? Describe each location's significance.");
-  questions.push("What are the key events or plot points that drive the narrative forward? List them in sequence.");
-  questions.push("What important objects, items, or things appear in the narrative and what is their significance?");
-
-  // Trim to QA_QUESTION_COUNT
-  return questions.slice(0, QA_QUESTION_COUNT);
+  const parsed = parseStructuredPostMergeReviewOutput(notes);
+  const status = parsed.repairRecommended && parsed.requestedActions.length > 0 ? "repair-requested" : "no-action";
+  return writePostMergeReviewResult(options.outputRoot, {
+    checkpointId,
+    iteration,
+    status,
+    repairRecommended: parsed.repairRecommended,
+    findings: parsed.findings,
+    requestedActions: parsed.requestedActions,
+    reviewer: {
+      model: options.reviewerModel,
+      parseStatus: parsed.parseStatus,
+      parseErrors: parsed.parseErrors.length > 0 ? parsed.parseErrors : undefined,
+      notes: notes.trim(),
+    },
+  });
 }
 
 export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions): Promise<EvaluationResult> {
@@ -737,18 +1219,19 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
   }
 
   // Parse structured results from reviewer output
-  const dimensionScores = parseDimensionScores(notes);
-  const qaResults = parseQAResults(notes);
+  const parsed = parseStructuredReviewerOutput(notes);
   const reconstructionSummary = parseReconstructionSummary(notes);
-  const score = parseReviewerScore(notes);
-  reviewerStatus(options, `parsed review result: score=${score ?? "none"}, dimensions=${dimensionScores?.length ?? 0}, qaResults=${qaResults?.length ?? 0}`);
+  reviewerStatus(options, `parsed review result: status=${parsed.parseStatus}, score=${parsed.score ?? "none"}, dimensions=${parsed.dimensionScores?.length ?? 0}, qaResults=${parsed.qaResults?.length ?? 0}`);
 
   return writeEvaluationResult(options.outputRoot, {
     model: options.reviewerModel,
-    score,
-    dimensionScores,
-    qaResults,
+    score: parsed.score,
+    dimensionScores: parsed.dimensionScores,
+    qaResults: parsed.qaResults,
     reconstructionSummary,
+    parseStatus: parsed.parseStatus,
+    parseErrors: parsed.parseErrors.length > 0 ? parsed.parseErrors : undefined,
+    authoritativeScore: parsed.authoritativeScore,
     notes: notes.trim(),
   });
 }

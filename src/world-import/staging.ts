@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type WorldImportGroup } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedReviewCheckpoint, type WorldImportGroup } from "./types.js";
 
 const validGroups = [...WORLD_IMPORT_GROUPS];
 
@@ -19,6 +19,18 @@ export function extractionDir(outputRoot: string): string {
 
 export function mergeDir(outputRoot: string): string {
   return join(outputRoot, "stages", "merge");
+}
+
+export function checkpointsDir(outputRoot: string): string {
+  return join(outputRoot, "stages", "checkpoints");
+}
+
+export function checkpointReviewPath(outputRoot: string, checkpointId: string, iteration: number): string {
+  return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.review.json`);
+}
+
+export function checkpointRepairPath(outputRoot: string, checkpointId: string, iteration: number): string {
+  return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.repair.json`);
 }
 
 export function manifestPath(outputRoot: string): string {
@@ -41,6 +53,7 @@ export async function ensureWorldImportDirs(outputRoot: string): Promise<void> {
   await mkdir(normalizedDir(outputRoot), { recursive: true });
   await mkdir(extractionDir(outputRoot), { recursive: true });
   await mkdir(mergeDir(outputRoot), { recursive: true });
+  await mkdir(checkpointsDir(outputRoot), { recursive: true });
 }
 
 export async function writeJson(path: string, value: unknown): Promise<void> {
@@ -85,6 +98,18 @@ export async function writeMergeStage(outputRoot: string, stage: StageEnvelope):
 
 export async function readMergeStage(outputRoot: string): Promise<StageEnvelope> {
   return JSON.parse(await readFile(mergedCandidatesPath(outputRoot), "utf-8")) as StageEnvelope;
+}
+
+export async function writeStagedReviewCheckpoint(outputRoot: string, checkpoint: StagedReviewCheckpoint): Promise<string> {
+  const path = checkpointReviewPath(outputRoot, checkpoint.checkpointId, checkpoint.iteration);
+  await writeJson(path, checkpoint);
+  return path;
+}
+
+export async function writeStagedRepairSummary(outputRoot: string, summary: StagedRepairSummary): Promise<string> {
+  const path = checkpointRepairPath(outputRoot, summary.checkpointId, summary.iteration);
+  await writeJson(path, summary);
+  return path;
 }
 
 export function diagnostic(level: ManifestDiagnostic["level"], message: string, path?: string): ManifestDiagnostic {

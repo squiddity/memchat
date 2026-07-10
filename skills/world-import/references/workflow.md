@@ -6,7 +6,8 @@ Optional stage hints set stopping points without moving semantic ownership into 
 
 - `full` or omitted — run the whole workflow in one session.
 - `extract` — complete normalization and extraction stage writing, then stop.
-- `merge` — inspect normalized sources, extraction stages, and existing world state; merge, emit, lint, repair, then stop.
+- `merge` — inspect normalized sources, extraction stages, and existing world state; merge, emit, lint, repair, then stop before orchestrator-owned checkpoint review/eval.
+- `repair` — read the orchestrator-provided `reviewPacket` for `checkpointId`/`iteration`, repair only grounded requested actions, re-emit/lint, and stop.
 - `review` — inspect the emitted bundle, run/coordinate eval, and summarize findings.
 
 ## 0. Determine whether this is a new world or a maintained world
@@ -125,7 +126,10 @@ Example good extraction (rich) vs poor extraction (too brief):
 - Emitted provenance will point to retained normalized source-unit markdown pages in the bundle. Preserve accurate `SourceSpanRef` data so those links can resolve cleanly. Use `resolve-ref` and `quote-ref --as-ref`; do not guess source ids or source hashes.
 - For maintained worlds, enrich existing artifacts when identity continuity is supported instead of cloning near-duplicates. If identity is uncertain, keep the ambiguity visible rather than forcing a merge.
 - For maintained worlds, preserve prior provenance and make retcons/conflicts explicit in sections or metadata. Do not silently drop older evidence just because newer material exists.
-- For substantive imports, include or update a `World Overview` / `Corpus Synopsis` artifact as a normal `facts` artifact. Revise it from prior overview + affected artifacts + new evidence, not from new input alone.
+- For substantive imports, include or update first-class narrative surfaces as normal `facts` artifacts: a `Plot Synopsis` / `Corpus Synopsis`, a `Timeline`, and a `Scene Guide` / `Chapter Guide` / `Episode Guide` when the source has that structure. Revise them from prior overview + affected artifacts + new evidence, not from new input alone.
+- Preserve source order in timelines and scene/chapter/episode guides.
+- Give major scenes/chapters/episodes durable fact coverage or an explicit omission/disposition reason rather than leaving them only implied by entity pages.
+- Give plot-critical objects durable `things` artifacts or an explicit omission/disposition reason rather than silently flattening them into character summaries.
 - Account for every extraction candidate through merge: list represented candidate ids on artifacts, or add a merge-level disposition of `represented`, `merged`, `deferred`, or `dropped`. Deferred/dropped candidates need a model-authored reason so omissions remain auditable.
 - Add model-authored `style` artifacts when voice, tone, aphorisms/formulae, parody/poem mechanics, or character voice guidance would help future reuse. Cite source spans for style claims like any other artifact.
 - Before finalizing, check whether every major source set-piece needed for reconstruction has a durable fact/event artifact or an explicit, reviewable omission reason.
@@ -199,7 +203,26 @@ npm run world-import-helper -- suggest-ref-candidates \
 
 Then generate exact refs with `quote-ref --as-ref` and repair provenance using `patch-merge` or `write-artifact`. Do not blindly rewrite artifact prose just to satisfy audit density; better provenance means claim-supporting evidence, not maximum citation count.
 
-## 6. Helper anti-patterns
+## 6. Staged post-merge checkpoint repair
+
+In staged mode, the TypeScript runner can run a focused post-merge review after `merge` and before final eval. It persists packets such as:
+
+- `stages/checkpoints/post-merge-01.review.json`
+- `stages/checkpoints/post-merge-01.repair.json`
+
+The review packet may request bounded repairs for missing narrative surfaces, plot-critical object/prop pages, hidden candidate omissions, or weak provenance. Treat those requests as model-owned semantic guidance, not helper decisions.
+
+When invoked as `stage: "repair"`:
+
+1. Read the provided `reviewPacket` and current `stages/merge/merged-candidates.json` plus emitted `world/` pages.
+2. Address only grounded `requestedActions`; do not redo extraction or the whole merge.
+3. Use source-reading helpers (`read-slice`, `find-text`, `suggest-ref-candidates`, `quote-ref --as-ref`) when the packet says to reread source or when evidence is insufficient.
+4. Update merge artifacts with `write-artifact`/`patch-merge` or `write-merge` only as needed, preserving candidate accounting and provenance.
+5. Re-emit and run lint/repair-summary. Report which requested actions were attempted and which remain residual.
+
+The orchestrator owns loop bounds and final status. The repair model must not start another unbounded review/repair loop.
+
+## 7. Helper anti-patterns
 
 If you find yourself doing any of these, stop and use `references/helper-tools.md`:
 

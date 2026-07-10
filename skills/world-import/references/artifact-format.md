@@ -10,7 +10,7 @@ The merge model emits artifact packets. The deterministic emitter renders them w
 - `world/facts/`
 - `world/style/`
 
-The `group` field chooses the directory. The emitter does not decide whether the group is semantically correct. A corpus-level `World Overview` / `Corpus Synopsis` is still a normal model-authored artifact and can live under `world/facts/`. Style pages are also normal model-authored artifacts; TypeScript routes and validates them but does not generate voice/tone analysis.
+The `group` field chooses the directory. The emitter does not decide whether the group is semantically correct. Corpus-level narrative surfaces such as `Plot Synopsis`, `Corpus Synopsis`, `Timeline`, `Scene Guide`, `Chapter Guide`, `Episode Guide`, and `World Overview` are still normal model-authored artifacts and can live under `world/facts/`. Style pages are also normal model-authored artifacts; TypeScript routes and validates them but does not generate voice/tone analysis.
 
 ## Markdown shape
 
@@ -132,6 +132,34 @@ Recommended sections:
 - **Open Questions and Conflicts** — visible contradictions, retcons, or unresolved continuity
 - **Provenance Notes** — optional notes on how older and newer evidence interact
 
+### Plot synopsis / corpus synopsis
+
+Recommended sections:
+- **Summary** — quick start for browsing the story
+- **Plot Synopsis** — model-authored story reconstruction in readable order
+- **Major Characters** — linked summaries of central people
+- **Major Places** — linked summaries of major settings
+- **Reading Order** — where to go next: timeline, scene guide, major event pages
+- **Open Questions and Conflicts** — unresolved ambiguities, contradictions, or gaps
+
+### Timeline
+
+Recommended sections:
+- **Summary**
+- **Ordered Timeline** — major beats in source order
+- **Major Turning Points** — the consequential inflection points
+- **Related People and Places** — links out to supporting artifacts
+- **Provenance Notes**
+
+### Scene guide / chapter guide / episode guide
+
+Recommended sections:
+- **Summary**
+- **Structure Overview** — the top-level act/chapter/episode layout
+- **Scene/Chapter/Episode Entries** — one entry per major structural unit in source order
+- **Related Artifacts** — links to facts, people, places, things, and style pages
+- **Provenance Notes**
+
 ## Detail principle
 
 **Progressive disclosure + cross-references for deduplication.** These artifacts are designed for vector search retrieval, but also for humans browsing the world library.
@@ -143,6 +171,9 @@ Recommended sections:
 - Keep sections substantive — a one-sentence section is a sign of over-summary.
 - Cross-reference in both directions when helpful: fact artifacts should reference which characters/places were involved.
 - A `World Overview` / `Corpus Synopsis` should link out to the detailed entity/event artifacts it summarizes; it is not a replacement for them.
+- For substantive narrative imports, expose first-class `Plot Synopsis`, `Timeline`, and `Scene Guide` / `Chapter Guide` / `Episode Guide` pages as normal browseable artifacts rather than burying plot reconstruction only inside an overview.
+- Preserve source order in timelines and scene/chapter/episode guides.
+- Plot-critical objects should usually receive durable `things` artifacts; if they do not, preserve an explicit omission/disposition reason in the merge stage.
 
 ## Provenance
 
