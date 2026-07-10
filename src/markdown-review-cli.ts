@@ -141,8 +141,8 @@ export async function runReview(
     const report = (chunk: Buffer) => {
       const text = chunk.toString();
       stderr.write(text);
-      startup += text;
       if (!announced) {
+        startup += text;
         const url = tailscaleUrlFromStartup(startup, tailscale.dnsName);
         if (url) {
           announced = true;
