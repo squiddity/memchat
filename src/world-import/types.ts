@@ -114,6 +114,92 @@ export type StageEnvelope = {
   metadata?: Record<string, unknown>;
 };
 
+export type StagedReviewFindingSeverity = "info" | "warning" | "repair" | "critical";
+
+export type StagedReviewActionType =
+  | "add-artifact"
+  | "strengthen-artifact"
+  | "add-narrative-surface"
+  | "record-omission"
+  | "strengthen-provenance"
+  | "repair-candidate-disposition"
+  | "other";
+
+export type StagedReviewRequestedAction = {
+  id: string;
+  type: StagedReviewActionType;
+  severity: StagedReviewFindingSeverity;
+  summary: string;
+  rationale?: string;
+  targetArtifactId?: string;
+  targetArtifactPath?: string;
+  candidateId?: string;
+  unitId?: string;
+  sourceRefs?: SourceSpanRef[];
+  confidence?: "low" | "medium" | "high";
+  rereadSource?: boolean;
+};
+
+export type StagedReviewFinding = {
+  id: string;
+  severity: StagedReviewFindingSeverity;
+  category: "narrative-surface" | "object-coverage" | "omission-visibility" | "provenance" | "candidate-disposition" | "other";
+  summary: string;
+  evidence?: string;
+  targetArtifactId?: string;
+  targetArtifactPath?: string;
+  candidateId?: string;
+  unitId?: string;
+  sourceRefs?: SourceSpanRef[];
+  requestedActionIds?: string[];
+};
+
+export type StagedReviewStatus = "no-action" | "repair-requested" | "repair-attempted" | "verified-repaired" | "residual" | "skipped";
+
+export type StagedReviewParseStatus = "valid" | "partial" | "missing" | "invalid";
+
+export type StagedReviewCheckpoint = {
+  version: 1;
+  kind: "post-merge-review";
+  checkpointId: string;
+  iteration: number;
+  createdAt: string;
+  outputRoot: string;
+  status: StagedReviewStatus;
+  repairRecommended: boolean;
+  findings: StagedReviewFinding[];
+  requestedActions: StagedReviewRequestedAction[];
+  reviewer?: {
+    model?: string;
+    skipped?: boolean;
+    reason?: string;
+    parseStatus?: StagedReviewParseStatus;
+    parseErrors?: string[];
+    notes?: string;
+  };
+};
+
+export type StagedRepairSummary = {
+  version: 1;
+  kind: "post-merge-repair";
+  checkpointId: string;
+  iteration: number;
+  createdAt: string;
+  outputRoot: string;
+  status: Exclude<StagedReviewStatus, "repair-requested" | "skipped" | "no-action">;
+  reviewPacketPath: string;
+  requestedActionIds: string[];
+  responseText?: string;
+  outputSummary?: {
+    manifestExists: boolean;
+    normalizedUnits: number;
+    extractionStages: number;
+    mergeStageExists: boolean;
+    worldMarkdownFiles: number;
+  };
+  residualFindings?: StagedReviewFinding[];
+};
+
 export type MarkdownSection = {
   heading: string;
   body: string;

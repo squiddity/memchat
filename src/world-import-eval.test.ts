@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, generateQaQuestions, lintWorldImport, parseStructuredReviewerOutput, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
+import { buildPostMergeReviewPrompt, buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, generateQaQuestions, lintWorldImport, parseStructuredPostMergeReviewOutput, parseStructuredReviewerOutput, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
 import { writeExtractionStage, writeManifest, writeMergeStage } from "./world-import/staging.js";
 
 async function createReviewableWorldOutput(options: { includeSourcePage?: boolean } = {}): Promise<string> {
@@ -167,6 +167,33 @@ test("reviewer prompt JSON example includes all scored dimensions", async () => 
   ]) {
     assert.match(prompt, new RegExp(`"dimension": "${dimension}"`));
   }
+});
+
+test("post-merge review prompt focuses repairable semantic gaps", async () => {
+  const output = await createReviewableWorldOutput();
+  const prompt = buildPostMergeReviewPrompt(await buildReviewBundle(output), { checkpointId: "post-merge", iteration: 1 });
+  assert.match(prompt, /focused world-import intermediate reviewer/);
+  assert.match(prompt, /plot-critical objects/);
+  assert.match(prompt, /omission/);
+  assert.match(prompt, /"repairRecommended"/);
+  assert.match(prompt, /"requestedActions"/);
+});
+
+test("post-merge review parser accepts Romeo-like object repair requests", () => {
+  const parsed = parseStructuredPostMergeReviewOutput(`Notes\n\n\`\`\`json
+{"repairRecommended":true,"findings":[{"id":"finding-1","severity":"repair","category":"object-coverage","summary":"The Friar Lawrence letter is plot-critical but has no durable thing artifact.","evidence":"The failed delivery changes the ending.","requestedActionIds":["action-1"]}],"requestedActions":[{"id":"action-1","type":"add-artifact","severity":"repair","summary":"Add a things artifact for Friar Lawrence's letter.","rationale":"The letter materially affects the plot and should be findable.","targetArtifactId":"friar-lawrence-letter","confidence":"high","rereadSource":true}]}
+\`\`\``);
+  assert.equal(parsed.parseStatus, "valid");
+  assert.equal(parsed.repairRecommended, true);
+  assert.equal(parsed.requestedActions[0].type, "add-artifact");
+  assert.equal(parsed.requestedActions[0].targetArtifactId, "friar-lawrence-letter");
+});
+
+test("post-merge review parser does not trigger repairs for malformed output", () => {
+  const parsed = parseStructuredPostMergeReviewOutput("The bundle might need work, but no JSON follows.");
+  assert.equal(parsed.parseStatus, "missing");
+  assert.equal(parsed.repairRecommended, false);
+  assert.deepEqual(parsed.requestedActions, []);
 });
 
 test("lint reports unresolved related ids and wikilinks", async () => {

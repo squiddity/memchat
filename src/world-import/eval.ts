@@ -10,11 +10,11 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson } from "./staging.js";
+import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson, writeStagedReviewCheckpoint } from "./staging.js";
 import { providerAuthEnvKeys, reviewerProvider } from "../local-env.js";
 import { isUsableModel, modelLabel, requireResolvedModel } from "../model-selection.js";
 import { classifyNarrativeSurface } from "./narrative-surfaces.js";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type WorldImportLintResult } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportLintResult } from "./types.js";
 
 const groups = [...WORLD_IMPORT_GROUPS];
 
@@ -773,6 +773,220 @@ Return your results as a JSON object at the very end of your response with this 
  * Generate a diverse set of questions from the source text for QA evaluation.
  * Questions target characters, places, events, and narrative details.
  */
+const STAGED_REVIEW_SEVERITIES = new Set(["info", "warning", "repair", "critical"] as const);
+const STAGED_REVIEW_ACTION_TYPES = new Set(["add-artifact", "strengthen-artifact", "add-narrative-surface", "record-omission", "strengthen-provenance", "repair-candidate-disposition", "other"] as const);
+const STAGED_REVIEW_CATEGORIES = new Set(["narrative-surface", "object-coverage", "omission-visibility", "provenance", "candidate-disposition", "other"] as const);
+const STAGED_REVIEW_CONFIDENCES = new Set(["low", "medium", "high"] as const);
+
+type StagedReviewCategory = StagedReviewFinding["category"];
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asSetValue<T extends string>(value: unknown, allowed: ReadonlySet<T>, fallback: T): T {
+  return typeof value === "string" && allowed.has(value as T) ? value as T : fallback;
+}
+
+function asSeverity(value: unknown): StagedReviewFindingSeverity {
+  return asSetValue(value, STAGED_REVIEW_SEVERITIES, "warning");
+}
+
+function asActionType(value: unknown): StagedReviewActionType {
+  return asSetValue(value, STAGED_REVIEW_ACTION_TYPES, "other");
+}
+
+function asCategory(value: unknown): StagedReviewCategory {
+  return asSetValue(value, STAGED_REVIEW_CATEGORIES, "other");
+}
+
+function asConfidence(value: unknown): StagedReviewRequestedAction["confidence"] {
+  return typeof value === "string" && STAGED_REVIEW_CONFIDENCES.has(value as NonNullable<StagedReviewRequestedAction["confidence"]>) ? value as NonNullable<StagedReviewRequestedAction["confidence"]> : undefined;
+}
+
+function parseSourceRefs(value: unknown): StagedReviewRequestedAction["sourceRefs"] {
+  if (!Array.isArray(value)) return undefined;
+  const refs = value.filter((item): item is NonNullable<StagedReviewRequestedAction["sourceRefs"]>[number] => (
+    item !== null
+    && typeof item === "object"
+    && typeof item.sourceId === "string"
+    && typeof item.unitId === "string"
+    && typeof item.startAnchor === "string"
+    && typeof item.endAnchor === "string"
+    && typeof item.quote === "string"
+  ));
+  return refs.length > 0 ? refs : undefined;
+}
+
+export type ParsedPostMergeReviewOutput = Pick<StagedReviewCheckpoint, "repairRecommended" | "findings" | "requestedActions"> & {
+  parseStatus: StagedReviewParseStatus;
+  parseErrors: string[];
+};
+
+export function parseStructuredPostMergeReviewOutput(text: string): ParsedPostMergeReviewOutput {
+  const jsonText = extractFinalJsonObject(text);
+  if (!jsonText) return { repairRecommended: false, findings: [], requestedActions: [], parseStatus: "missing", parseErrors: ["No final JSON object found in post-merge review output."] };
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  } catch (error) {
+    return { repairRecommended: false, findings: [], requestedActions: [], parseStatus: "invalid", parseErrors: [`Final JSON could not be parsed: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+
+  const parseErrors: string[] = [];
+  const rawActions = Array.isArray(parsed.requestedActions) ? parsed.requestedActions : [];
+  if (!Array.isArray(parsed.requestedActions)) parseErrors.push("Missing requestedActions array.");
+  const requestedActions: StagedReviewRequestedAction[] = rawActions.flatMap((item, index) => {
+    if (!item || typeof item !== "object") {
+      parseErrors.push(`requestedActions[${index}] is malformed.`);
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const summary = asString(record.summary);
+    if (!summary) {
+      parseErrors.push(`requestedActions[${index}].summary is required.`);
+      return [];
+    }
+    return [{
+      id: asString(record.id) ?? `action-${index + 1}`,
+      type: asActionType(record.type),
+      severity: asSeverity(record.severity),
+      summary,
+      rationale: asString(record.rationale),
+      targetArtifactId: asString(record.targetArtifactId),
+      targetArtifactPath: asString(record.targetArtifactPath),
+      candidateId: asString(record.candidateId),
+      unitId: asString(record.unitId),
+      sourceRefs: parseSourceRefs(record.sourceRefs),
+      confidence: asConfidence(record.confidence),
+      rereadSource: typeof record.rereadSource === "boolean" ? record.rereadSource : undefined,
+    }];
+  });
+
+  const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
+  if (!Array.isArray(parsed.findings)) parseErrors.push("Missing findings array.");
+  const findings: StagedReviewFinding[] = rawFindings.flatMap((item, index) => {
+    if (!item || typeof item !== "object") {
+      parseErrors.push(`findings[${index}] is malformed.`);
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const summary = asString(record.summary);
+    if (!summary) {
+      parseErrors.push(`findings[${index}].summary is required.`);
+      return [];
+    }
+    return [{
+      id: asString(record.id) ?? `finding-${index + 1}`,
+      severity: asSeverity(record.severity),
+      category: asCategory(record.category),
+      summary,
+      evidence: asString(record.evidence),
+      targetArtifactId: asString(record.targetArtifactId),
+      targetArtifactPath: asString(record.targetArtifactPath),
+      candidateId: asString(record.candidateId),
+      unitId: asString(record.unitId),
+      sourceRefs: parseSourceRefs(record.sourceRefs),
+      requestedActionIds: Array.isArray(record.requestedActionIds) ? record.requestedActionIds.filter((value): value is string => typeof value === "string") : undefined,
+    }];
+  });
+
+  const repairRecommended = typeof parsed.repairRecommended === "boolean" ? parsed.repairRecommended : requestedActions.length > 0;
+  if (typeof parsed.repairRecommended !== "boolean") parseErrors.push("Missing boolean repairRecommended.");
+  const parseStatus: StagedReviewParseStatus = parseErrors.length === 0 ? "valid" : (findings.length > 0 || requestedActions.length > 0 ? "partial" : "invalid");
+  return { repairRecommended: parseStatus === "invalid" ? false : repairRecommended, findings, requestedActions, parseStatus, parseErrors };
+}
+
+export function buildPostMergeReviewPrompt(bundle: ReviewBundle, options: { checkpointId: string; iteration: number }): string {
+  const markdownBlock = Object.entries(bundle.markdown).map(([path, content]) => `--- ${path} ---\n${content}`).join("\n\n") || "(no markdown artifacts)";
+  const artifactSummary = (bundle.merge.artifacts ?? []).map((artifact) => `- ${artifact.id} (${artifact.group}): ${artifact.title}; provenance=${artifact.provenance.length}; sections=${artifact.sections.map((section) => section.heading).join(", ")}`).join("\n") || "(no merge artifacts)";
+  const dispositions = (bundle.merge.candidateDispositions ?? []).map((item) => `- ${item.unitId ?? "?"}:${item.candidateId} -> ${item.disposition}${item.artifactId ? ` (${item.artifactId})` : ""}${item.reason ? `: ${item.reason}` : ""}`).join("\n") || "(no candidate dispositions)";
+  const sourceSample = bundle.sources.map((source) => `=== UNIT: ${source.title || source.unitId} (order ${source.order}) ===\n${source.content}`).join("\n\n");
+
+  return `You are a focused world-import intermediate reviewer for checkpoint ${options.checkpointId}, iteration ${options.iteration}.
+
+Review the post-merge/emitted world bundle before final eval. Stay focused on repairable semantic gaps that a bounded repair model can address from the persisted source and merge artifacts. Do not rewrite artifacts yourself.
+
+## Source sample
+
+${sourceSample}
+
+## Merge artifacts
+
+${artifactSummary}
+
+## Candidate dispositions
+
+${dispositions}
+
+## Emitted markdown
+
+${markdownBlock}
+
+## Focus rubric
+
+Look only for high-value, actionable gaps:
+- missing narrative surfaces such as synopsis, timeline, or scene/chapter/act guide;
+- missing plot-critical objects, props, letters, weapons, documents, or durable thing pages;
+- important omissions hidden from candidate dispositions or coverage views;
+- sparse or weak provenance on synthesis pages whose claims need source grounding.
+
+Recommend repair only when the requested action is grounded, bounded, and likely to improve the current bundle before final eval. If the bundle is good enough or findings are speculative, set repairRecommended to false and leave requestedActions empty.
+
+Return a JSON object at the very end of your response with this exact structure:
+
+\`\`\`json
+{
+  "repairRecommended": true,
+  "findings": [
+    {
+      "id": "finding-1",
+      "severity": "warning|repair|critical|info",
+      "category": "narrative-surface|object-coverage|omission-visibility|provenance|candidate-disposition|other",
+      "summary": "Missing durable thing artifact for a plot-critical letter.",
+      "evidence": "Brief evidence from source/artifacts.",
+      "targetArtifactId": "optional-existing-id",
+      "targetArtifactPath": "optional/path.md",
+      "candidateId": "optional-candidate-id",
+      "unitId": "optional-unit-id",
+      "sourceRefs": [{"sourceId":"s","unitId":"u","startAnchor":"b0001","endAnchor":"b0002","quote":"short source quote"}],
+      "requestedActionIds": ["action-1"]
+    }
+  ],
+  "requestedActions": [
+    {
+      "id": "action-1",
+      "type": "add-artifact|strengthen-artifact|add-narrative-surface|record-omission|strengthen-provenance|repair-candidate-disposition|other",
+      "severity": "repair",
+      "summary": "Add a things artifact for the letter and cite the source span.",
+      "rationale": "Why this is repairable and important.",
+      "targetArtifactId": "optional-existing-or-proposed-id",
+      "targetArtifactPath": "optional/path.md",
+      "candidateId": "optional-candidate-id",
+      "unitId": "optional-unit-id",
+      "sourceRefs": [{"sourceId":"s","unitId":"u","startAnchor":"b0001","endAnchor":"b0002","quote":"short source quote"}],
+      "confidence": "low|medium|high",
+      "rereadSource": true
+    }
+  ]
+}
+\`\`\`
+`;
+}
+
+export async function writePostMergeReviewResult(outputRoot: string, checkpoint: Omit<StagedReviewCheckpoint, "version" | "kind" | "createdAt" | "outputRoot"> & { createdAt?: string }): Promise<StagedReviewCheckpoint> {
+  const result: StagedReviewCheckpoint = {
+    version: 1,
+    kind: "post-merge-review",
+    createdAt: checkpoint.createdAt ?? new Date().toISOString(),
+    outputRoot,
+    ...checkpoint,
+  };
+  await writeStagedReviewCheckpoint(outputRoot, result);
+  return result;
+}
+
 export function generateQaQuestions(sources: ReviewBundle["sources"]): string[] {
   const allText = sources.map((s) => s.content).join("\n\n");
   const stopwords = new Set([
@@ -801,6 +1015,112 @@ export function generateQaQuestions(sources: ReviewBundle["sources"]): string[] 
   questions.push("How is the source structured (for example scenes, chapters, acts, or episodes), and what major events happen in those units?");
   questions.push("What important objects, props, letters, weapons, documents, or other things materially affect the plot, and why do they matter?");
   return [...new Set(questions)].slice(0, QA_QUESTION_COUNT);
+}
+
+export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptions & { checkpointId?: string; iteration?: number }): Promise<StagedReviewCheckpoint> {
+  const checkpointId = options.checkpointId ?? "post-merge";
+  const iteration = options.iteration ?? 1;
+  reviewerStatus(options, `post-merge checkpoint=${checkpointId}; iteration=${iteration}; output=${resolve(options.outputRoot)}`);
+  if (!options.reviewerModel) {
+    return writePostMergeReviewResult(options.outputRoot, {
+      checkpointId,
+      iteration,
+      status: "skipped",
+      repairRecommended: false,
+      findings: [],
+      requestedActions: [],
+      reviewer: { skipped: true, reason: "no reviewer model configured" },
+    });
+  }
+
+  const cwd = resolve(options.cwd ?? process.cwd());
+  const agentDir = getAgentDir();
+  const authPath = resolve(agentDir, "auth.json");
+  const modelsPath = resolve(agentDir, "models.json");
+  const authStorage = AuthStorage.create(authPath);
+  const modelRegistry = ModelRegistry.create(authStorage, modelsPath);
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } });
+  const bundle = await buildReviewBundle(options.outputRoot);
+  reviewerStatus(options, `post-merge bundle=${bundle.sources.length} source unit(s), ${bundle.merge.artifacts?.length ?? 0} artifact(s), ${Object.keys(bundle.markdown).length} markdown file(s)`);
+
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    noContextFiles: true,
+    systemPrompt: "You are a focused world-import intermediate reviewer. Return structured JSON repair findings only; do not rewrite semantic artifacts.",
+  });
+  await resourceLoader.reload();
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir,
+    authStorage,
+    modelRegistry,
+    resourceLoader,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(cwd),
+    noTools: "builtin",
+    thinkingLevel: "off",
+  });
+  let notes = "";
+  let thinkingStarted = false;
+  try {
+    await session.setModel(requireResolvedModel(options.reviewerModel, session.modelRegistry));
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_update") {
+        const messageEvent = event.assistantMessageEvent;
+        if (messageEvent.type === "text_delta") notes += messageEvent.delta;
+        else if (messageEvent.type === "thinking_delta" && options.debug?.showThinking) {
+          if (!thinkingStarted) {
+            thinkingStarted = true;
+            options.onThinking?.("\n[world-import post-merge review thinking]\n");
+          }
+          options.onThinking?.(messageEvent.delta);
+        }
+      }
+      if (options.debug?.enabled && event.type === "tool_execution_start") options.onToolEvent?.(`\n[world-import post-merge review tool/start] ${event.toolName} ${stringifyForLog(event.args)}\n`);
+      if (options.debug?.enabled && options.debug?.showToolUpdates && event.type === "tool_execution_update") options.onToolEvent?.(`\n[world-import post-merge review tool/update] ${stringifyForLog(eventRecord(event))}\n`);
+      if (options.debug?.enabled && event.type === "tool_execution_end") {
+        const record = eventRecord(event);
+        options.onToolEvent?.(`\n[world-import post-merge review tool/end] ${event.toolName} ${event.isError ? "error" : "ok"} ${stringifyForLog(record.details ?? record.result ?? record, 8000)}\n`);
+      }
+    });
+    try {
+      await session.prompt(buildPostMergeReviewPrompt(bundle, { checkpointId, iteration }));
+    } finally {
+      unsubscribe();
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return writePostMergeReviewResult(options.outputRoot, {
+      checkpointId,
+      iteration,
+      status: "skipped",
+      repairRecommended: false,
+      findings: [],
+      requestedActions: [],
+      reviewer: { model: options.reviewerModel, skipped: true, reason },
+    });
+  } finally {
+    session.dispose();
+  }
+
+  const parsed = parseStructuredPostMergeReviewOutput(notes);
+  const status = parsed.repairRecommended && parsed.requestedActions.length > 0 ? "repair-requested" : "no-action";
+  return writePostMergeReviewResult(options.outputRoot, {
+    checkpointId,
+    iteration,
+    status,
+    repairRecommended: parsed.repairRecommended,
+    findings: parsed.findings,
+    requestedActions: parsed.requestedActions,
+    reviewer: {
+      model: options.reviewerModel,
+      parseStatus: parsed.parseStatus,
+      parseErrors: parsed.parseErrors.length > 0 ? parsed.parseErrors : undefined,
+      notes: notes.trim(),
+    },
+  });
 }
 
 export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions): Promise<EvaluationResult> {

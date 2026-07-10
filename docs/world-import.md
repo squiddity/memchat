@@ -128,7 +128,10 @@ npm run world-import-run -- \
   stages/
     extraction/<unit-id>.json   # model-authored candidates
     merge/merged-candidates.json
-    review.json                 # optional evaluation result
+    checkpoints/
+      post-merge-01.review.json # optional staged intermediate review packet
+      post-merge-01.repair.json # optional bounded repair summary
+    review.json                 # final evaluation result
   world/
     index.md                    # root wiki index
     log.md                      # deterministic update log
@@ -154,6 +157,7 @@ npm run world-import-run -- \
 echo "--- manifest units ---"; node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/world-out/sources/manifest.json','utf8')).units.length)"
 echo "--- extraction stages ---"; find /tmp/world-out/stages/extraction -name '*.json' 2>/dev/null | wc -l
 echo "--- merge stage ---"; ls /tmp/world-out/stages/merge/merged-candidates.json 2>/dev/null && echo "yes" || echo "no"
+echo "--- staged checkpoints ---"; find /tmp/world-out/stages/checkpoints -name '*.json' 2>/dev/null | sort
 echo "--- world markdown files ---"; find /tmp/world-out/world -name '*.md' 2>/dev/null | wc -l
 echo "--- root index ---"; test -f /tmp/world-out/world/index.md && echo yes || echo no
 echo "--- source-unit pages ---"; find /tmp/world-out/world/sources/units -name '*.md' 2>/dev/null | wc -l
@@ -171,13 +175,15 @@ npm run world-import-helper -- lint --output /tmp/world-out
 
 Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps.
 
+In staged CLI runs with a reviewer model, the runner first writes a focused post-merge checkpoint under `stages/checkpoints/`. The initial MVP checkpoint is `post-merge-01`: it runs after merge/emission and before final eval. `post-merge-01.review.json` records structured findings, requested actions, status (`no-action`, `repair-requested`, `repair-attempted`, `residual`, or `skipped`), and reviewer parse state. If actionable findings are present, the runner invokes one bounded `stage: "repair"` model pass and writes `post-merge-01.repair.json` with attempted action ids and residual findings. Single-session mode records a skipped checkpoint because it has no orchestrator-visible merge boundary.
+
 Then run eval — it embeds the same lint result in `stages/review.json` with optional reviewer-model scoring:
 
 ```bash
 npm run world-import-helper -- eval --output /tmp/world-out --reviewer-model openrouter/google/gemma-4-31b-it:free
 ```
 
-Omit `--reviewer-model` for deterministic checks only. Reviewer prompts include artifact-only plot reconstruction, plot-surface quality gates, dropped-candidate risk, source-structure coverage, object/prop coverage, omission visibility, and style/tone usefulness checks.
+Omit `--reviewer-model` for deterministic checks only. Reviewer prompts include artifact-only plot reconstruction, plot-surface quality gates, dropped-candidate risk, source-structure coverage, object/prop coverage, omission visibility, and style/tone usefulness checks. Intermediate checkpoint reviews are not replacements for this final eval; they are bounded repair aids whose artifacts remain inspectable under `stages/checkpoints/`.
 
 `stages/review.json` now carries more than a single score. Inspect at least:
 
@@ -246,7 +252,7 @@ Inspect whether lint catches unresolved links, candidate dispositions explain dr
 | `--output` | | output root |
 | `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` | | model used by the skill |
 | `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` | | optional stronger reviewer model; omit to use active model; `off` or `--no-reviewer` to disable |
-| `--session-strategy single\|staged` | | single session or staged extract/merge/review (default: `single`) |
+| `--session-strategy single\|staged` | | single session or staged extract/merge/post-merge-review/repair/review (default: `single`) |
 | `--thinking` | | pi thinking level (default: `low`; `off` to disable) |
 | `--dry-run` | | validate without semantic extraction |
 | `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` | | startup, paths, model selection, prompt, tool call diagnostics to stderr (default: on; `0` to silence) |
@@ -292,7 +298,7 @@ When importing additional source into an existing output root, treat the wiki as
 
 ### Debugging
 
-Use `--debug --show-tool-updates` for exploratory runs or retries after a no-output run. The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, thinking deltas, session-strategy/stage summaries, and a final output summary. In staged mode, it also reports extract/merge/review session boundaries explicitly.
+Use `--debug --show-tool-updates` for exploratory runs or retries after a no-output run. The CLI prints status lines for argument resolution, pi auth/model paths, skill loading, active model, the `/skill:world-import` prompt, tool calls, thinking deltas, session-strategy/stage summaries, and a final output summary. In staged mode, it also reports extract/merge/post-merge-review/repair/review session boundaries explicitly.
 
 ### Related
 

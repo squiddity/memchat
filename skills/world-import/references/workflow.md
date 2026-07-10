@@ -6,7 +6,8 @@ Optional stage hints set stopping points without moving semantic ownership into 
 
 - `full` or omitted — run the whole workflow in one session.
 - `extract` — complete normalization and extraction stage writing, then stop.
-- `merge` — inspect normalized sources, extraction stages, and existing world state; merge, emit, lint, repair, then stop.
+- `merge` — inspect normalized sources, extraction stages, and existing world state; merge, emit, lint, repair, then stop before orchestrator-owned checkpoint review/eval.
+- `repair` — read the orchestrator-provided `reviewPacket` for `checkpointId`/`iteration`, repair only grounded requested actions, re-emit/lint, and stop.
 - `review` — inspect the emitted bundle, run/coordinate eval, and summarize findings.
 
 ## 0. Determine whether this is a new world or a maintained world
@@ -202,7 +203,26 @@ npm run world-import-helper -- suggest-ref-candidates \
 
 Then generate exact refs with `quote-ref --as-ref` and repair provenance using `patch-merge` or `write-artifact`. Do not blindly rewrite artifact prose just to satisfy audit density; better provenance means claim-supporting evidence, not maximum citation count.
 
-## 6. Helper anti-patterns
+## 6. Staged post-merge checkpoint repair
+
+In staged mode, the TypeScript runner can run a focused post-merge review after `merge` and before final eval. It persists packets such as:
+
+- `stages/checkpoints/post-merge-01.review.json`
+- `stages/checkpoints/post-merge-01.repair.json`
+
+The review packet may request bounded repairs for missing narrative surfaces, plot-critical object/prop pages, hidden candidate omissions, or weak provenance. Treat those requests as model-owned semantic guidance, not helper decisions.
+
+When invoked as `stage: "repair"`:
+
+1. Read the provided `reviewPacket` and current `stages/merge/merged-candidates.json` plus emitted `world/` pages.
+2. Address only grounded `requestedActions`; do not redo extraction or the whole merge.
+3. Use source-reading helpers (`read-slice`, `find-text`, `suggest-ref-candidates`, `quote-ref --as-ref`) when the packet says to reread source or when evidence is insufficient.
+4. Update merge artifacts with `write-artifact`/`patch-merge` or `write-merge` only as needed, preserving candidate accounting and provenance.
+5. Re-emit and run lint/repair-summary. Report which requested actions were attempted and which remain residual.
+
+The orchestrator owns loop bounds and final status. The repair model must not start another unbounded review/repair loop.
+
+## 7. Helper anti-patterns
 
 If you find yourself doing any of these, stop and use `references/helper-tools.md`:
 
