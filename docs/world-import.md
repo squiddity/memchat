@@ -228,7 +228,7 @@ Inspect whether lint catches unresolved links, candidate dispositions explain dr
 | `--output` | | output root |
 | `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` | | model used by the skill |
 | `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` | | optional stronger reviewer model; omit to use active model; `off` or `--no-reviewer` to disable |
-| `--session-strategy single\|staged` | | single session or staged extract/merge/post-merge-review/repair/review (default: `single`) |
+| `--session-strategy single\|staged` | | staged extract/merge/post-merge-review/repair/review or single session (default: `staged`) |
 | `--thinking` | | pi thinking level (default: `low`; `off` to disable) |
 | `--dry-run` | | validate without semantic extraction |
 | `--debug` / `MEMCHAT_WORLD_IMPORT_DEBUG=1` | | startup, paths, model selection, prompt, tool call diagnostics to stderr (default: on; `0` to silence) |
