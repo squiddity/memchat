@@ -15,9 +15,14 @@ npm install
 npm run build
 ```
 
-The CLI runs under `tsx`; build is only needed for the installed binary. Auth/model settings use pi SDK files (`~/.pi/agent/auth.json`, `~/.pi/agent/models.json`) plus repo `.env`. Or set provider env vars directly:
+The CLI runs under `tsx`; build is only needed for the installed binary. Every embedded pi session is hermetic: it loads models and optional local credentials only from `<working-directory>/.memchat/pi/`, and never loads account-level pi skills, extensions, prompts, settings, models, or `AGENTS.md`.
+
+Place project-specific custom model definitions in `.memchat/pi/models.json`. Credentials default to `.memchat/pi/auth.json`. To deliberately reuse another credentials file (such as an account-level pi auth file), opt in explicitly with `--auth-file` or `MEMCHAT_PI_AUTH_FILE`; this imports credentials only, not any other pi configuration. Provider environment variables also work directly:
 
 ```bash
+MEMCHAT_PI_AUTH_FILE="$HOME/.pi/agent/auth.json" \
+  npm run world-import-run -- --input ./sources --output /tmp/world
+# or
 export OPENROUTER_API_KEY="sk-or-..."
 ```
 
@@ -253,6 +258,7 @@ Inspect whether lint catches unresolved links, candidate dispositions explain dr
 | `--input` | | HTML/XHTML directory, `.zip`, or `.epub` archive |
 | `--output` | | output root |
 | `--model` / `MEMCHAT_WORLD_IMPORT_MODEL` | | model used by the skill |
+| `--auth-file` / `MEMCHAT_PI_AUTH_FILE` | | optional path to an `auth.json` credential file; does not import other pi configuration |
 | `--reviewer-model` / `MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL` | | optional stronger reviewer model; omit to use active model; `off` or `--no-reviewer` to disable |
 | `--session-strategy single\|staged` | | staged extract/merge/post-merge-review/repair/review or single session (default: `staged`) |
 | `--thinking` | | pi thinking level (default: `low`; `off` to disable) |

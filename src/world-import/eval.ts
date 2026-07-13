@@ -5,7 +5,6 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  getAgentDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -13,6 +12,7 @@ import {
 import { extractionStagePath, manifestPath, mergedCandidatesPath, readExtractionStages, readManifest, readMergeStage, readNormalizedUnit, writeJson, writeStagedReviewCheckpoint } from "./staging.js";
 import { providerAuthEnvKeys, reviewerProvider } from "../local-env.js";
 import { isUsableModel, modelLabel, requireResolvedModel } from "../model-selection.js";
+import { resolvePiRuntimePaths } from "../pi-runtime.js";
 import { classifyNarrativeSurface } from "./narrative-surfaces.js";
 import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StageEnvelope, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportLintResult } from "./types.js";
 
@@ -34,6 +34,7 @@ type ReviewerEvalRunOptions = {
   outputRoot: string;
   reviewerModel?: string;
   cwd?: string;
+  authFile?: string;
   debug?: ReviewerEvalDebugOptions;
   onStatus?: (text: string) => void;
   onThinking?: (text: string) => void;
@@ -1139,9 +1140,7 @@ export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptio
   }
 
   const cwd = resolve(options.cwd ?? process.cwd());
-  const agentDir = getAgentDir();
-  const authPath = resolve(agentDir, "auth.json");
-  const modelsPath = resolve(agentDir, "models.json");
+  const { agentDir, authPath, modelsPath } = resolvePiRuntimePaths({ cwd, authFile: options.authFile });
   const authStorage = AuthStorage.create(authPath);
   const modelRegistry = ModelRegistry.create(authStorage, modelsPath);
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } });
@@ -1152,6 +1151,10 @@ export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptio
     cwd,
     agentDir,
     settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
     noContextFiles: true,
     systemPrompt: "You are a focused world-import intermediate reviewer. Return structured JSON repair findings only; do not rewrite semantic artifacts.",
   });
@@ -1237,9 +1240,7 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
   if (!deterministic.passed) return writeEvaluationResult(options.outputRoot, { model: options.reviewerModel, skipped: true, reason: "deterministic checks failed" });
 
   const cwd = resolve(options.cwd ?? process.cwd());
-  const agentDir = getAgentDir();
-  const authPath = resolve(agentDir, "auth.json");
-  const modelsPath = resolve(agentDir, "models.json");
+  const { agentDir, authPath, modelsPath } = resolvePiRuntimePaths({ cwd, authFile: options.authFile });
   reviewerStatus(options, `cwd=${cwd}`);
   reviewerStatus(options, `agentDir=${agentDir}`);
   reviewerStatus(options, `authPath=${authPath} (${existsSync(authPath) ? "exists" : "missing"})`);
@@ -1261,6 +1262,10 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
     cwd,
     agentDir,
     settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
     noContextFiles: true,
     systemPrompt: "You are a world-import reviewer. Score semantic output quality against source/provenance evidence. Return structured JSON with dimension scores, QA results, and a reconstruction summary.",
   });

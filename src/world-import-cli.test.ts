@@ -13,6 +13,11 @@ test("parseArgs accepts single session strategy", () => {
   assert.equal(options.sessionStrategy, "single");
 });
 
+test("parseArgs accepts an explicit credentials file without changing model configuration", () => {
+  const options = parseArgs(["--input", "./in", "--output", "./out", "--auth-file", "../credentials/auth.json"]);
+  assert.equal(options.authFile, "../credentials/auth.json");
+});
+
 test("parseArgs supports explicit reviewer disable", () => {
   const noReviewer = parseArgs(["--input", "./in", "--output", "./out", "--model", "openai/gpt-4o", "--no-reviewer"]);
   assert.equal(noReviewer.reviewerModel, undefined);

@@ -6,7 +6,6 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  getAgentDir,
   loadSkillsFromDir,
   ModelRegistry,
   SessionManager,
@@ -14,6 +13,7 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import { isUsableModel, modelLabel, requireResolvedModel, type ThinkingLevel } from "../model-selection.js";
+import { resolvePiRuntimePaths } from "../pi-runtime.js";
 import { lintWorldImport, runPostMergeReviewEvaluation, runReviewerModelEvaluation, writePostMergeReviewResult } from "./eval.js";
 import { checkpointReviewPath, readMergeStage, writeStagedRepairSummary, writeStagedRepairVerification } from "./staging.js";
 import type { EvaluationResult, StagedRepairVerification, StagedReviewActionVerification, StagedReviewCheckpoint, StagedReviewRequestedAction } from "./types.js";
@@ -39,6 +39,8 @@ export type WorldImportStageName = WorldImportSkillStage | "post-merge-review" |
 export type WorldImportRunOptions = {
   cwd?: string;
   packageRoot?: string;
+  /** Optional credentials file; account-level pi config is never otherwise inherited. */
+  authFile?: string;
   input: string;
   outputRoot: string;
   model?: string;
@@ -88,8 +90,8 @@ type WorldImportModelPromptResult = Pick<WorldImportRunResult, "responseText" | 
 
 type WorldImportRunnerDeps = {
   runModelPrompt: (options: WorldImportModelPromptOptions) => Promise<WorldImportModelPromptResult>;
-  runPostMergeReview?: (options: Pick<WorldImportRunOptions, "cwd" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent"> & { checkpointId: string; iteration: number }) => Promise<StagedReviewCheckpoint>;
-  runReviewerEvaluation: (options: Pick<WorldImportRunOptions, "cwd" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent">) => Promise<EvaluationResult>;
+  runPostMergeReview?: (options: Pick<WorldImportRunOptions, "cwd" | "authFile" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent"> & { checkpointId: string; iteration: number }) => Promise<StagedReviewCheckpoint>;
+  runReviewerEvaluation: (options: Pick<WorldImportRunOptions, "cwd" | "authFile" | "outputRoot" | "reviewerModel" | "debug" | "onStatus" | "onThinking" | "onToolEvent">) => Promise<EvaluationResult>;
 };
 
 const defaultRunnerDeps: WorldImportRunnerDeps = {
@@ -290,15 +292,13 @@ export async function runWorldImportModelPrompt(options: WorldImportModelPromptO
   const cwd = resolve(options.cwd ?? process.cwd());
   const packageRoot = resolve(options.packageRoot ?? defaultPackageRoot());
   const helperCommand = helperCommandFor(cwd, packageRoot);
-  const agentDir = getAgentDir();
+  const { agentDir, authPath, modelsPath } = resolvePiRuntimePaths({ cwd, authFile: options.authFile });
   status(options, `cwd=${cwd}`);
   status(options, `packageRoot=${packageRoot}`);
   status(options, `input=${resolve(options.input)}`);
   status(options, `output=${resolve(options.outputRoot)}`);
   status(options, `agentDir=${agentDir}`);
   status(options, `helperCommand=${helperCommand}`);
-  const authPath = resolve(agentDir, "auth.json");
-  const modelsPath = resolve(agentDir, "models.json");
   status(options, `authPath=${authPath} (${existsSync(authPath) ? "exists" : "missing"})`);
   status(options, `modelsPath=${modelsPath} (${existsSync(modelsPath) ? "exists" : "missing"})`);
   const authStorage = AuthStorage.create(authPath);
@@ -311,6 +311,10 @@ export async function runWorldImportModelPrompt(options: WorldImportModelPromptO
     cwd,
     agentDir,
     settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
     noContextFiles: true,
     skillsOverride: (current) => ({ skills: [...current.skills, skill], diagnostics: current.diagnostics }),
   });
@@ -446,6 +450,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     status(options, "starting post-merge review checkpoint");
     checkpoint = await (deps.runPostMergeReview ?? runPostMergeReviewEvaluation)({
       cwd: options.cwd,
+      authFile: options.authFile,
       outputRoot: options.outputRoot,
       reviewerModel: options.reviewerModel,
       debug: options.debug,
@@ -501,6 +506,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
   status(options, "starting stage review session");
   const review = await deps.runReviewerEvaluation({
     cwd: options.cwd,
+    authFile: options.authFile,
     outputRoot: options.outputRoot,
     reviewerModel: options.reviewerModel,
     debug: options.debug,

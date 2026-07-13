@@ -10,7 +10,6 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  getAgentDir,
   loadSkillsFromDir,
   ModelRegistry,
   type PackageSource,
@@ -21,9 +20,9 @@ import { createMemoryBackend, isMemoryModeId, memoryModeIds, resolveMemoryMode, 
 import { isThinkingLevel, isUsableModel, modelLabel, resolveModel, validThinkingLevels, type PiModel, type ThinkingLevel } from "./model-selection.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Skill } from "@earendil-works/pi-coding-agent";
+import { resolvePiRuntimePaths } from "./pi-runtime.js";
 
 const cwd = process.cwd();
-const agentDir = getAgentDir();
 const requireFromHere = createRequire(import.meta.url);
 
 type CliOptions = {
@@ -35,6 +34,7 @@ type CliOptions = {
   memoryDir?: string;
   memoryDebug: boolean;
   summarizerModel?: string;
+  authFile?: string;
 };
 
 class InlineSpinner {
@@ -219,6 +219,8 @@ function parseCliOptions(args: string[]): CliOptions {
       options.memoryDir = args[++i];
     } else if (arg === "--summarizer-model" && args[i + 1]) {
       options.summarizerModel = args[++i];
+    } else if (arg === "--auth-file" && args[i + 1]) {
+      options.authFile = args[++i];
     } else if (arg === "--memory-debug") {
       options.memoryDebug = true;
     } else if (arg === "--no-memory-debug") {
@@ -241,6 +243,7 @@ function parseCliOptions(args: string[]): CliOptions {
   options.memory ??= "none";
   options.memoryDir ??= process.env.MEMCHAT_MEMORY_DIR;
   options.summarizerModel ??= process.env.MEMCHAT_SUMMARIZER_MODEL;
+  options.authFile ??= process.env.MEMCHAT_PI_AUTH_FILE;
   options.memoryDebug ??= truthyEnv(process.env.MEMCHAT_MEMORY_DEBUG);
   return options as CliOptions;
 }
@@ -467,7 +470,7 @@ function printHelp() {
       `  /memory index        Initialize/reindex memory files\n` +
       `  /plugins             Show npm-managed local pi packages configured for this run\n` +
       `  /exit                End the chat\n\n` +
-      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --summarizer-model, --memory-debug, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR, MEMCHAT_SUMMARIZER_MODEL, MEMCHAT_MEMORY_DEBUG.\n` +
+      `Startup options/env: --model, --provider, --thinking, --memory, --memory-dir, --summarizer-model, --auth-file, --memory-debug, --list-models; MEMCHAT_MODEL, MEMCHAT_PROVIDER, MEMCHAT_THINKING, MEMCHAT_MEMORY, MEMCHAT_MEMORY_DIR, MEMCHAT_SUMMARIZER_MODEL, MEMCHAT_PI_AUTH_FILE, MEMCHAT_MEMORY_DEBUG.\n` +
       `Configure local pi packages with package.json memchat.piPackages or MEMCHAT_PI_PACKAGES.\n\n`,
   );
 }
@@ -481,8 +484,10 @@ async function main() {
   let memory: MemoryBackend;
   let synthesisProvider: MemorySynthesisProvider | undefined;
   const memorySkills = getMemorySkills(memoryMode);
-  const authStorage = AuthStorage.create(resolve(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.create(authStorage, resolve(agentDir, "models.json"));
+  const piRuntime = resolvePiRuntimePaths({ cwd, authFile: cliOptions.authFile });
+  const { agentDir, authPath, modelsPath } = piRuntime;
+  const authStorage = AuthStorage.create(authPath);
+  const modelRegistry = ModelRegistry.create(authStorage, modelsPath);
 
   const initialThinking = cliOptions.thinking ?? "off";
 
@@ -497,6 +502,9 @@ async function main() {
     settingsManager,
     additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
     noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
     noContextFiles: true,
     systemPrompt: chatSystemPrompt(cliOptions.memoryDebug, memoryMode.skills.includes("qmd")),
     skillsOverride: (current) => ({
@@ -556,6 +564,9 @@ async function main() {
       settingsManager,
       additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
       noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
       noContextFiles: true,
       systemPrompt: memorySynthesisSystemPrompt,
     });
@@ -595,6 +606,9 @@ async function main() {
           settingsManager,
           additionalExtensionPaths: [resolve(cwd, "extensions/lemonade-provider.ts")],
           noExtensions: true,
+          noSkills: true,
+          noPromptTemplates: true,
+          noThemes: true,
           noContextFiles: true,
           systemPrompt,
         });

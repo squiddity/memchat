@@ -33,6 +33,8 @@ npm install
 npm run dev
 ```
 
+Embedded pi sessions use a project-local `.memchat/pi/` runtime and do not inherit account-level pi instructions or resources. Put custom models and optional credentials there, or explicitly provide an external credential file with `MEMCHAT_PI_AUTH_FILE=/path/to/auth.json` (credentials only).
+
 Useful variants:
 
 ```bash

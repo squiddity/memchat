@@ -16,6 +16,7 @@ export type CliOptions = {
   output?: string;
   model?: string;
   reviewerModel?: string;
+  authFile?: string;
   thinking?: ThinkingLevel;
   dryRun?: boolean;
   debug: boolean;
@@ -31,6 +32,7 @@ export function usage(): string {
     `Options:\n` +
     `  --model <provider/model>          Extraction and merge model for the world-import skill\n` +
     `  --reviewer-model <provider/model> Reviewer model passed through to the skill/eval workflow (defaults to --model)\n` +
+    `  --auth-file <path>               Opt into credentials from this auth.json (default: .memchat/pi/auth.json)\n` +
     `  --no-reviewer                     Disable reviewer-model scoring explicitly\n` +
     `  --session-strategy <single|staged> Run staged extract/merge/review sessions or one full session (default: staged)\n` +
     `  --thinking <level>                off|minimal|low|medium|high|xhigh (default: low)\n` +
@@ -75,6 +77,7 @@ export function parseArgs(args: string[]): CliOptions {
     else if (arg === "--output" && next) options.output = args[++i];
     else if (arg === "--model" && next) options.model = args[++i];
     else if (arg === "--reviewer-model" && next) options.reviewerModel = args[++i];
+    else if (arg === "--auth-file" && next) options.authFile = args[++i];
     else if (arg === "--session-strategy" && next) {
       const value = args[++i] as WorldImportSessionStrategy;
       if (!sessionStrategies.has(value)) throw new Error(`Invalid --session-strategy value "${value}".`);
@@ -86,6 +89,7 @@ export function parseArgs(args: string[]): CliOptions {
     } else throw new Error(`Unknown or incomplete option: ${arg}`);
   }
   options.model ??= process.env.MEMCHAT_WORLD_IMPORT_MODEL ?? process.env.MEMCHAT_MODEL;
+  options.authFile ??= process.env.MEMCHAT_PI_AUTH_FILE;
   options.reviewerModel = resolveReviewerModel({
     explicitReviewerModel: options.reviewerModel ?? process.env.MEMCHAT_WORLD_IMPORT_REVIEWER_MODEL,
     importModel: options.model,
@@ -108,6 +112,7 @@ export async function main(args = argv.slice(2)): Promise<void> {
     outputRoot: resolve(options.output),
     model: options.model,
     reviewerModel: options.reviewerModel,
+    authFile: options.authFile,
     thinking: options.thinking,
     dryRun: options.dryRun,
     sessionStrategy: options.sessionStrategy,

@@ -7,7 +7,9 @@ npm install
 npm run dev
 ```
 
-The CLI uses the pi SDK with memchat's vendored extensions and, unless a mode requires it, disables built-in coding tools.
+The CLI uses the pi SDK with memchat's vendored extensions and, unless a mode requires it, disables built-in coding tools. Embedded sessions are hermetic: their pi runtime lives in `.memchat/pi/` below the working directory and does not inherit account-level pi skills, extensions, prompts, settings, models, or `AGENTS.md`.
+
+Custom models belong in `.memchat/pi/models.json`; credentials default to `.memchat/pi/auth.json`. To reuse another `auth.json`, opt in with `--auth-file <path>` or `MEMCHAT_PI_AUTH_FILE`. This reads only that credential file, not the source directory's other pi configuration. Provider API-key environment variables remain supported.
 
 ## Common startup flags
 
@@ -26,6 +28,7 @@ Supported env/flag families:
 - memory root: `--memory-dir`, `MEMCHAT_MEMORY_DIR`
 - summarizer model: `--summarizer-model`, `MEMCHAT_SUMMARIZER_MODEL`
 - memory debug: `--memory-debug`, `MEMCHAT_MEMORY_DEBUG=1`
+- optional external credentials file: `--auth-file <path>`, `MEMCHAT_PI_AUTH_FILE`
 
 ## Useful interactive commands
 

@@ -27,6 +27,17 @@ test("local world-import skill is package-loadable independent of runtime cwd", 
   assert.equal(resolve(skill.filePath), resolve("skills/world-import/SKILL.md"));
 });
 
+test("world-import skill keeps process supervision outside the runner model", async () => {
+  const skill = worldImportSkill(defaultPackageRoot());
+  const [instructions, helperReference] = await Promise.all([
+    readFile(skill.filePath, "utf-8"),
+    readFile(join(skill.baseDir, "references", "helper-tools.md"), "utf-8"),
+  ]);
+
+  assert.doesNotMatch(instructions, /herdr\s+pane/i);
+  assert.doesNotMatch(helperReference, /herdr\s+pane/i);
+});
+
 test("world import model runner renders structured skill invocation", () => {
   const prompt = renderWorldImportSkillInvocation({ input: "/in", outputRoot: "/out", reviewerModel: "openai/gpt-4o", dryRun: true });
   assert.match(prompt, /^\/skill:world-import /);
