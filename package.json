@@ -24,7 +24,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.1",
+    "@earendil-works/pi-coding-agent": "^0.80.6",
     "@tobilu/qmd": "2.5.3",
     "mdts": "0.20.3"
   },
