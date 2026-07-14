@@ -29,7 +29,7 @@ Selector alternatives:
 --source <source-id> [--unit-index <n>]
 ```
 
-Use this when you know the source span but need correct `sourceId` / `unitId` values.
+Use this when you know the source span but need correct `sourceId` / `unitId` values. `--order` is the manifest's complete source order, not a chapter number; title/frontmatter units may precede Chapter I.
 
 ### `quote-ref`
 
@@ -49,7 +49,7 @@ Options:
 - `--max-chars <n>` trims long quotes.
 - `--plain` strips block markers if present.
 
-Use this to avoid placeholder quotes like `[Source span b0001-b0003]`. For final artifacts, prefer exact, claim-supporting quotes over coarse story-heading refs.
+Use this to avoid placeholder quotes like `[Source span b0001-b0003]`. Anchors are local to the supplied `unit-id`: never transfer a `bNNNN` value between units or generate chapter-to-unit anchor loops. If this command rejects a span, discard it and re-read/list that exact unit; do not shift it to an adjacent unit. For final artifacts, prefer exact, claim-supporting quotes over coarse story-heading refs.
 
 ## Artifact authoring
 

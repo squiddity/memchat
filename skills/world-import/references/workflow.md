@@ -41,6 +41,10 @@ For each unit:
 npm run world-import-helper -- read-unit --output <output> --unit <unit-id>
 ```
 
+### Unit-local anchor rule
+
+`bNNNN` anchors belong only to the `unit-id` that returned them. Do not treat them as document-global or infer them from a chapter number. The manifest's `order` includes frontmatter/title/contents units, so Chapter I may not be order 1. Never write a `chapter -> order -> unit` map or a batch of guessed anchor ranges. Select a unit from `list-units`, inspect that same unit's anchors, and generate each final span through a successful helper call. If `quote-ref` rejects a span, discard it and re-read that unit rather than shifting it to an adjacent unit or suppressing the error.
+
 Use deterministic helpers for provenance spans:
 
 ```bash
@@ -228,6 +232,8 @@ If you find yourself doing any of these, stop and use `references/helper-tools.m
 
 - writing Python or shell functions named `sid`, `uid`, or `ref`;
 - hard-coding source-hash maps from manifest rows;
+- mapping chapter numbers to manifest orders or using precomputed cross-unit anchor ranges;
+- suppressing `quote-ref`/`resolve-ref` failures in a batch loop instead of correcting the specific unit/span;
 - using placeholder quote text in final artifacts;
 - rewriting the entire merge stage to fix one provenance reference;
 - declaring success without lint/coverage checks.
