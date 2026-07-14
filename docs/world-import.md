@@ -144,7 +144,25 @@ herdr pane rename "$review_pane" "review"
 herdr pane run "$review_pane" "npm run markdown-review"
 ```
 
-Keep the primary tab available for chat. Report the emitted `Markdown review URL` (the Tailscale DNS URL with its actual selected port), not the bind address or other process details. For an explicitly requested, repository-contained alternate tree, start a separate `mdts` tab rather than widening the default viewer:
+Keep the primary tab available for chat. Report the emitted `Markdown review URL` (the Tailscale DNS URL with its actual selected port), not the bind address or other process details.
+
+#### Find, verify, or restart an existing viewer
+
+The review server runs in the current workspace's `mdts` tab, not in the primary agent pane. When asked whether it is running, use `herdr tab list` to find that tab, then `herdr pane list` to find its `review` pane. Inspect its retained terminal output:
+
+```bash
+herdr pane read <review-pane-id> --source recent-unwrapped --lines 120
+```
+
+It is active only if the current run printed `Markdown review URL: <tailscale-url>` and the pane has not returned to a shell prompt. Open that exact URL from an authorized Tailscale browser to confirm the viewer responds. A stale URL in old scrollback, a shell prompt, or an unreachable URL means the viewer is inactive.
+
+If no `mdts` tab or `review` pane exists, create it with the commands above. If the pane exists but the viewer is inactive, reuse that same pane rather than creating a duplicate server:
+
+```bash
+herdr pane run <review-pane-id> "npm run markdown-review"
+```
+
+For an explicitly requested, repository-contained alternate tree, create a separate `mdts` tab rather than widening the default viewer:
 
 ```bash
 herdr pane run "$review_pane" "npm run markdown-review storyboards"

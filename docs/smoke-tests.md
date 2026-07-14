@@ -191,7 +191,7 @@ node --import tsx --test src/markdown-review-cli.test.ts
 npm run markdown-review -- --help
 ```
 
-For the required remote smoke, first ensure an emitted Markdown tree exists under `world-output/`. From an authorized Tailscale browser, have the agent create a dedicated `mdts` Herdr tab, launch `npm run markdown-review` in its named, supervised pane, and open the emitted `Markdown review URL`. Verify the tree is visible, then close that exact pane and confirm the URL is unreachable. This validates tailnet access and shutdown only; do not test or configure public reachability.
+For the required remote smoke, first ensure an emitted Markdown tree exists under `world-output/`. From an authorized Tailscale browser, have the agent find or create the current workspace's dedicated `mdts` Herdr tab and its `review` pane. Inspect it with `herdr pane read <review-pane-id> --source recent-unwrapped --lines 120`: an active viewer has a current `Markdown review URL` and no returned shell prompt. If it is absent or inactive, launch or relaunch `npm run markdown-review` in that pane with `herdr pane run <review-pane-id> "npm run markdown-review"`, then open the newly emitted URL. Verify the tree is visible, then close that exact pane and confirm the URL is unreachable. This validates tailnet access and shutdown only; do not test or configure public reachability.
 
 To review an explicitly requested alternate root, use a separate `mdts` tab and a repository-contained directory such as:
 
