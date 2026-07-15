@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { emitWorldLibrary, renderArtifactMarkdown } from "./world-import/emit.js";
-import { writeMergeStage } from "./world-import/staging.js";
+import { writeImportRun, writeMergeStage } from "./world-import/staging.js";
 import type { ArtifactPacket } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -97,6 +97,30 @@ test("emits artifact packets into group directories with portable related links"
   assert.match(peopleIndex, /\[Ada of the Glass Tower\]\(ada-glass-tower\.md\)/);
   const log = await readFile(join(output, "world", "log.md"), "utf-8");
   assert.match(log, /# World Update Log/);
+});
+
+test("renders a compact portable import audit in the update log", async () => {
+  const output = await tempDir();
+  await writeMergeStage(output, { version: 1, kind: "merge", artifacts: [artifact] });
+  await writeImportRun(output, {
+    version: 1, kind: "world-import-run", runId: "run-1", status: "completed", startedAt: "2026-07-15T00:00:00.000Z", completedAt: "2026-07-15T00:01:00.000Z",
+    source: { name: "alice.epub", contentHash: "sha256:source", normalizedUnits: 2 },
+    workflow: { sessionStrategy: "staged", dryRun: false, maxRepairIterations: 1 },
+    software: { packageVersion: "0.1.0", promptContractVersion: 1 }, credentials: { configuration: "explicit-auth-file" },
+    invocations: [
+      { id: "invocation-01", purpose: "extract", stage: "extract", requestedModel: "provider/requested", resolvedModel: "provider/resolved", thinking: "high", status: "completed", startedAt: "2026-07-15T00:00:00.000Z", invocation: { kind: "world-import-skill", canonical: "/skill", promptSha256: "sha256:prompt", promptChars: 12 } },
+      { id: "invocation-02", purpose: "final-review", stage: "review", requestedModel: "provider/reviewer", resolvedModel: "provider/reviewer", thinking: "off", status: "completed", startedAt: "2026-07-15T00:00:30.000Z", invocation: { kind: "generated-review", promptBuilder: "world-import-final-review-v1", promptSha256: "sha256:review", promptChars: 12 } },
+    ],
+    result: { stageSequence: ["extract", "review"], outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: true, worldMarkdownFiles: 8 }, deterministicPassed: true, reviewerScore: 5 },
+  });
+  await emitWorldLibrary(output);
+  const log = await readFile(join(output, "world", "log.md"), "utf-8");
+  assert.match(log, /## Import Details/);
+  assert.match(log, /alice\.epub/);
+  assert.match(log, /`provider\/resolved`/);
+  assert.match(log, /Final review/);
+  assert.match(log, /reviewer score 5/);
+  assert.match(log, /\]\(\.\.\/stages\/import-run\.json\)/);
 });
 
 test("adds a summary fallback from description when short sections are missing", () => {

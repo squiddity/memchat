@@ -102,6 +102,62 @@ export type CandidateDisposition = {
   reason?: string;
 };
 
+export type WorldImportInvocationPrompt = {
+  kind: "world-import-skill" | "generated-review";
+  canonical?: string;
+  promptBuilder?: string;
+  promptSha256: string;
+  promptChars: number;
+};
+
+export type WorldImportInvocationStatus = "running" | "completed" | "failed" | "skipped";
+
+export type WorldImportInvocation = {
+  id: string;
+  purpose: "full" | "extract" | "merge" | "merge-readiness-repair" | "post-merge-review" | "semantic-repair" | "final-review";
+  stage: string;
+  checkpointId?: string;
+  iteration?: number;
+  requestedModel?: string;
+  resolvedModel?: string;
+  thinking?: string;
+  status: WorldImportInvocationStatus;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  invocation: WorldImportInvocationPrompt;
+  responseSha256?: string;
+  responseChars?: number;
+  outputSummaryBefore?: { manifestExists: boolean; normalizedUnits: number; extractionStages: number; mergeStageExists: boolean; worldMarkdownFiles: number };
+  outputSummaryAfter?: { manifestExists: boolean; normalizedUnits: number; extractionStages: number; mergeStageExists: boolean; worldMarkdownFiles: number };
+  affectedPaths?: string[];
+  error?: string;
+};
+
+export type WorldImportRunStatus = "running" | "completed" | "dry-run-completed" | "failed";
+
+export type WorldImportRunAudit = {
+  version: 1;
+  kind: "world-import-run";
+  runId: string;
+  status: WorldImportRunStatus;
+  startedAt: string;
+  completedAt?: string;
+  source: { name: string; contentHash?: string; normalizedUnits?: number };
+  workflow: { sessionStrategy: "single" | "staged"; dryRun: boolean; maxRepairIterations: number };
+  software: { packageVersion?: string; gitRevision?: string; worldImportSkillHash?: string; promptContractVersion: 1 };
+  credentials: { configuration: "explicit-auth-file" | "project-default" };
+  invocations: WorldImportInvocation[];
+  result?: {
+    stageSequence: string[];
+    outputSummary: { manifestExists: boolean; normalizedUnits: number; extractionStages: number; mergeStageExists: boolean; worldMarkdownFiles: number };
+    checkpointStatus?: string;
+    deterministicPassed?: boolean;
+    reviewerScore?: number;
+  };
+  error?: string;
+};
+
 export type StageEnvelope = {
   version: 1;
   kind: "extraction" | "merge" | "review";

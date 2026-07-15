@@ -15,11 +15,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { isUsableModel, modelLabel, requireResolvedModel, type ThinkingLevel } from "../model-selection.js";
 import { resolvePiRuntimePaths } from "../pi-runtime.js";
-import { emitWorldLibrary } from "./emit.js";
-import { lintWorldImport, runPostMergeReviewEvaluation, runReviewerModelEvaluation, writePostMergeReviewResult } from "./eval.js";
+import { emitWorldLibrary, refreshWorldImportLog } from "./emit.js";
+import { FINAL_REVIEW_THINKING, lintWorldImport, runPostMergeReviewEvaluation, runReviewerModelEvaluation, writePostMergeReviewResult } from "./eval.js";
 import { buildCoveragePlan, buildRepairSummary, writeRepairSummaryFile } from "./helper-tools.js";
-import { checkpointReviewPath, readMergeStage, writeStagedRepairSummary, writeStagedRepairVerification } from "./staging.js";
-import type { ArtifactPacket, EvaluationResult, SourceSpanRef, StagedRepairVerification, StagedReviewActionVerification, StagedReviewCheckpoint, StagedReviewRequestedAction } from "./types.js";
+import { checkpointReviewPath, readMergeStage, writeImportRun, writeStagedRepairSummary, writeStagedRepairVerification } from "./staging.js";
+import { beginInvocation, finishInvocation, generatedPromptDescriptor, initialImportRunAudit, manifestSourceIdentity, packageAuditMetadata, sanitizeAuditText, skillPromptDescriptor, terminalAuditStatus } from "./run-audit.js";
+import type { ArtifactPacket, EvaluationResult, SourceSpanRef, StagedRepairVerification, StagedReviewActionVerification, StagedReviewCheckpoint, StagedReviewRequestedAction, WorldImportInvocation, WorldImportInvocationPrompt, WorldImportRunAudit } from "./types.js";
 
 export type WorldImportDebugOptions = {
   enabled?: boolean;
@@ -62,6 +63,12 @@ export type WorldImportRunOptions = {
   onToolEvent?: (text: string) => void;
 };
 
+export type WorldImportInvocationDetail = {
+  prompt: WorldImportInvocationPrompt;
+  resolvedModel?: string;
+  thinking?: string;
+};
+
 export type WorldImportStageResult = {
   stage: WorldImportStageName;
   model?: string;
@@ -71,6 +78,7 @@ export type WorldImportStageResult = {
   checkpoint?: StagedReviewCheckpoint;
   verification?: StagedRepairVerification;
   deterministicPassed?: boolean;
+  invocation?: WorldImportInvocationDetail;
 };
 
 export type WorldImportRunResult = {
@@ -89,7 +97,7 @@ type WorldImportModelPromptOptions = WorldImportRunOptions & {
   iteration?: number;
 };
 
-type WorldImportModelPromptResult = Pick<WorldImportRunResult, "responseText" | "model" | "outputRoot" | "outputSummary">;
+type WorldImportModelPromptResult = Pick<WorldImportRunResult, "responseText" | "model" | "outputRoot" | "outputSummary"> & { invocation?: WorldImportInvocationDetail };
 
 export type MergeReadinessAssessment = {
   ready: boolean;
@@ -549,8 +557,14 @@ export async function runWorldImportModelPrompt(options: WorldImportModelPromptO
         options.onToolEvent?.(`\n[world-import tool/end] ${event.toolName} ${event.isError ? "error" : "ok"} ${stringifyForLog(record.details ?? record.result ?? record, 8000)}\n`);
       }
     });
+    let invocation: WorldImportInvocationDetail | undefined;
     try {
       const prompt = renderWorldImportSkillInvocation({ ...options, helperCommand, stage: options.stage ?? "full" });
+      invocation = {
+        prompt: skillPromptDescriptor(prompt, { input: options.input, reviewerModel: options.reviewerModel, dryRun: options.dryRun, stage: options.stage ?? "full", checkpointId: options.checkpointId, iteration: options.iteration }),
+        resolvedModel: modelLabel(session.model),
+        thinking: session.thinkingLevel,
+      };
       status(options, `prompt=${prompt}`);
       status(options, `invoking ${stageLabel(options.stage ?? "full")} model/skill`);
       await session.prompt(prompt);
@@ -560,7 +574,7 @@ export async function runWorldImportModelPrompt(options: WorldImportModelPromptO
     }
     const outputSummary = await inspectWorldImportOutput(options.outputRoot);
     status(options, `output summary=${JSON.stringify(outputSummary)}`);
-    return { responseText, model: modelLabel(session.model), outputRoot: options.outputRoot, outputSummary };
+    return { responseText, model: modelLabel(session.model), outputRoot: options.outputRoot, outputSummary, invocation };
   } finally {
     status(options, `disposing ${stageLabel(options.stage ?? "full")} session`);
     session.dispose();
@@ -569,37 +583,133 @@ export async function runWorldImportModelPrompt(options: WorldImportModelPromptO
 
 export async function runWorldImportSkillWithRunners(options: WorldImportRunOptions, deps: WorldImportRunnerDeps = defaultRunnerDeps): Promise<WorldImportRunResult> {
   const sessionStrategy = options.sessionStrategy ?? "staged";
+  const maxRepairIterations = options.stagedReview?.maxRepairIterations ?? 1;
+  const packageRoot = resolve(options.packageRoot ?? defaultPackageRoot());
+  const software = await packageAuditMetadata(packageRoot);
+  const audit = initialImportRunAudit({ input: options.input, sessionStrategy, dryRun: options.dryRun, maxRepairIterations, authFile: options.authFile, ...software });
   const stages: WorldImportStageResult[] = [];
+  const persistAudit = async (): Promise<void> => {
+    audit.source = { ...audit.source, ...await manifestSourceIdentity(options.outputRoot) };
+    await writeImportRun(options.outputRoot, audit);
+  };
+  const failAudit = async (error: unknown, outputSummary?: WorldImportOutputSummary): Promise<void> => {
+    const effectiveOutputSummary = outputSummary ?? await inspectWorldImportOutput(options.outputRoot);
+    audit.status = "failed";
+    audit.completedAt = new Date().toISOString();
+    audit.error = sanitizeAuditText(error instanceof Error ? error.message : String(error));
+    audit.result = { stageSequence: stages.map((stage) => stage.stage), outputSummary: effectiveOutputSummary };
+    await persistAudit();
+    if (effectiveOutputSummary.mergeStageExists && effectiveOutputSummary.worldMarkdownFiles > 0 && existsSync(join(options.outputRoot, "stages", "merge", "merged-candidates.json"))) await refreshWorldImportLog(options.outputRoot);
+  };
+  const stagePurpose = (stage: WorldImportSkillStage, checkpointId?: string): WorldImportInvocation["purpose"] => {
+    if (stage === "full" || stage === "extract" || stage === "merge") return stage;
+    return checkpointId === "merge-readiness" ? "merge-readiness-repair" : "semantic-repair";
+  };
+  const runAuditedModelPrompt = async (promptOptions: WorldImportModelPromptOptions): Promise<WorldImportModelPromptResult> => {
+    const stage = promptOptions.stage ?? "full";
+    const fallbackPrompt = renderWorldImportSkillInvocation({ ...promptOptions, stage });
+    const invocation = beginInvocation(audit, {
+      purpose: stagePurpose(stage, promptOptions.checkpointId),
+      stage,
+      ...(promptOptions.checkpointId ? { checkpointId: promptOptions.checkpointId } : {}),
+      ...(promptOptions.iteration !== undefined ? { iteration: promptOptions.iteration } : {}),
+      ...(promptOptions.model ? { requestedModel: promptOptions.model } : {}),
+      thinking: promptOptions.thinking ?? "low",
+      invocation: skillPromptDescriptor(fallbackPrompt, { input: promptOptions.input, reviewerModel: promptOptions.reviewerModel, dryRun: promptOptions.dryRun, stage, checkpointId: promptOptions.checkpointId, iteration: promptOptions.iteration }),
+      outputSummaryBefore: await inspectWorldImportOutput(options.outputRoot),
+      affectedPaths: stage === "repair" && promptOptions.checkpointId ? [`stages/checkpoints/${promptOptions.checkpointId}-${String(promptOptions.iteration ?? 1).padStart(2, "0")}.review.json`] : undefined,
+    });
+    await persistAudit();
+    try {
+      const result = await deps.runModelPrompt(promptOptions);
+      invocation.invocation = result.invocation?.prompt ?? invocation.invocation;
+      finishInvocation(invocation, { status: "completed", resolvedModel: result.invocation?.resolvedModel ?? result.model, thinking: result.invocation?.thinking ?? invocation.thinking, responseText: result.responseText, outputSummaryAfter: result.outputSummary });
+      await persistAudit();
+      return result;
+    } catch (error) {
+      finishInvocation(invocation, { status: "failed", error: error instanceof Error ? error.message : String(error), outputSummaryAfter: await inspectWorldImportOutput(options.outputRoot) });
+      await persistAudit();
+      throw error;
+    }
+  };
+  const runAuditedReviewer = async <T extends { reviewer?: EvaluationResult["reviewer"] }>(purpose: Extract<WorldImportInvocation["purpose"], "post-merge-review" | "final-review">, stage: WorldImportStageName, invoke: () => Promise<T>): Promise<T> => {
+    const invocation = beginInvocation(audit, {
+      purpose,
+      stage,
+      ...(purpose === "post-merge-review" ? { checkpointId: "post-merge", iteration: 1 } : {}),
+      ...(options.reviewerModel ? { requestedModel: options.reviewerModel } : {}),
+      thinking: purpose === "post-merge-review" ? "off" : FINAL_REVIEW_THINKING,
+      invocation: generatedPromptDescriptor(purpose === "post-merge-review" ? "world-import-post-merge-review-v1" : "world-import-final-review-v1", ""),
+      outputSummaryBefore: await inspectWorldImportOutput(options.outputRoot),
+      affectedPaths: purpose === "post-merge-review" ? ["stages/checkpoints/post-merge-01.review.json"] : ["stages/review.json"],
+    });
+    await persistAudit();
+    try {
+      const result = await invoke();
+      const resultAudit = (result as T & { invocationAudit?: WorldImportInvocationDetail }).invocationAudit;
+      const responseText = result.reviewer?.notes;
+      invocation.invocation = resultAudit?.prompt ?? invocation.invocation;
+      finishInvocation(invocation, { status: result.reviewer?.skipped ? "skipped" : "completed", resolvedModel: resultAudit?.resolvedModel ?? result.reviewer?.model ?? options.reviewerModel, thinking: resultAudit?.thinking ?? invocation.thinking, responseText, outputSummaryAfter: await inspectWorldImportOutput(options.outputRoot) });
+      await persistAudit();
+      return result;
+    } catch (error) {
+      const outputSummary = await inspectWorldImportOutput(options.outputRoot);
+      finishInvocation(invocation, { status: "failed", error: error instanceof Error ? error.message : String(error), outputSummaryAfter: outputSummary });
+      await persistAudit();
+      await failAudit(error, outputSummary);
+      throw error;
+    }
+  };
+  const completeAudit = async (result: Pick<WorldImportRunResult, "outputSummary">, failed = false): Promise<void> => {
+    audit.status = terminalAuditStatus({ dryRun: options.dryRun, failed });
+    audit.completedAt = new Date().toISOString();
+    audit.result = {
+      stageSequence: stages.map((stage) => stage.stage),
+      outputSummary: result.outputSummary,
+      ...(stages.find((stage) => stage.stage === "post-merge-review")?.checkpoint ? { checkpointStatus: stages.find((stage) => stage.stage === "post-merge-review")?.checkpoint?.status } : {}),
+      ...(stages.find((stage) => stage.stage === "review")?.deterministicPassed !== undefined ? { deterministicPassed: stages.find((stage) => stage.stage === "review")?.deterministicPassed } : {}),
+      ...(stages.find((stage) => stage.stage === "review")?.reviewer?.score !== undefined ? { reviewerScore: stages.find((stage) => stage.stage === "review")?.reviewer?.score } : {}),
+    };
+    await persistAudit();
+    if (result.outputSummary.mergeStageExists && result.outputSummary.worldMarkdownFiles > 0 && existsSync(join(options.outputRoot, "stages", "merge", "merged-candidates.json"))) await refreshWorldImportLog(options.outputRoot);
+  };
+  await persistAudit();
 
   if (sessionStrategy === "single") {
     status(options, "starting full session");
-    const full = await deps.runModelPrompt({ ...options, stage: "full" });
+    const full = await runAuditedModelPrompt({ ...options, stage: "full" });
     stages.push({ stage: "full", model: full.model, responseText: full.responseText, outputSummary: full.outputSummary });
     status(options, `full session completed; worldMarkdownFiles=${full.outputSummary.worldMarkdownFiles}`);
     const checkpoint = await writeSkippedPostMergeCheckpoint(options.outputRoot, "single-session mode has no orchestrator-visible merge boundary");
     stages.push({ stage: "post-merge-review", checkpoint });
-    return { ...full, sessionStrategy, stages };
+    const result = { ...full, sessionStrategy, stages };
+    await completeAudit(result);
+    return result;
   }
 
   status(options, "starting stage extract session");
-  const extract = await deps.runModelPrompt({ ...options, stage: "extract" });
+  const extract = await runAuditedModelPrompt({ ...options, stage: "extract" });
   stages.push({ stage: "extract", model: extract.model, responseText: extract.responseText, outputSummary: extract.outputSummary });
   status(options, `extract session completed; extractionStages=${extract.outputSummary.extractionStages}; normalizedUnits=${extract.outputSummary.normalizedUnits}`);
 
   if (options.dryRun) {
     status(options, "dry-run requested; stopping after extract stage");
-    return { ...extract, sessionStrategy, stages };
+    const result = { ...extract, sessionStrategy, stages };
+    await completeAudit(result);
+    return result;
   }
 
   if (extract.outputSummary.extractionStages === 0) {
-    throw new Error("extract session completed but produced no extraction stage files");
+    const error = new Error("extract session completed but produced no extraction stage files");
+    await failAudit(error, extract.outputSummary);
+    throw error;
   }
 
   status(options, "starting stage merge session");
   let latestOutput: WorldImportModelPromptResult;
   let mergeWorkerError: unknown;
   try {
-    const merge = await deps.runModelPrompt({ ...options, stage: "merge" });
+    const merge = await runAuditedModelPrompt({ ...options, stage: "merge" });
     latestOutput = merge;
     stages.push({ stage: "merge", model: merge.model, responseText: merge.responseText, outputSummary: merge.outputSummary });
     status(options, `merge session completed; worldMarkdownFiles=${merge.outputSummary.worldMarkdownFiles}; mergeStageExists=${merge.outputSummary.mergeStageExists}`);
@@ -612,7 +722,6 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
   }
 
   const stagedReviewEnabled = options.stagedReview?.enabled ?? true;
-  const maxRepairIterations = options.stagedReview?.maxRepairIterations ?? 1;
   const readinessAssessor = deps.assessMergeReadiness ?? (async (outputRoot: string, iteration: number, reportedSummary?: WorldImportOutputSummary): Promise<MergeReadinessAssessment> => {
     const outputSummary = reportedSummary ?? await inspectWorldImportOutput(outputRoot);
     const ready = outputSummary.mergeStageExists && outputSummary.worldMarkdownFiles > 0;
@@ -638,7 +747,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     status(options, `merge is not ready; starting bounded recovery ${recoveryAttempts + 1}/${maxRepairIterations}; packet=${reviewPacket}`);
     let repair: WorldImportModelPromptResult;
     try {
-      repair = await deps.runModelPrompt({ ...options, stage: "repair", checkpointId: "merge-readiness", reviewPacket, iteration: readinessIteration });
+      repair = await runAuditedModelPrompt({ ...options, stage: "repair", checkpointId: "merge-readiness", reviewPacket, iteration: readinessIteration });
       lastWorkerError = undefined;
     } catch (error) {
       lastWorkerError = error;
@@ -655,13 +764,17 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     latestOutput = { ...latestOutput, outputSummary: readiness.outputSummary };
     if (!readiness.ready && readiness.fingerprint === previousFingerprint) {
       const cause = lastWorkerError ? `; last worker error: ${lastWorkerError instanceof Error ? lastWorkerError.message : String(lastWorkerError)}` : "";
-      throw new Error(`merge stalled after recovery attempt ${recoveryAttempts}: deterministic readiness diagnostics did not change (fingerprint ${readiness.fingerprint})${cause}`);
+      const error = new Error(`merge stalled after recovery attempt ${recoveryAttempts}: deterministic readiness diagnostics did not change (fingerprint ${readiness.fingerprint})${cause}`);
+      await failAudit(error, readiness.outputSummary);
+      throw error;
     }
     previousFingerprint = readiness.fingerprint;
   }
   if (!readiness.ready) {
     const cause = lastWorkerError ? `; last worker error: ${lastWorkerError instanceof Error ? lastWorkerError.message : String(lastWorkerError)}` : "";
-    throw new Error(`merge is not ready after ${recoveryAttempts + 1} model attempt(s); deterministic recovery budget exhausted${cause}`);
+    const error = new Error(`merge is not ready after ${recoveryAttempts + 1} model attempt(s); deterministic recovery budget exhausted${cause}`);
+    await failAudit(error, readiness.outputSummary);
+    throw error;
   }
   status(options, `merge readiness passed after ${recoveryAttempts + 1} model attempt(s)`);
   const checkpointId = "post-merge";
@@ -672,7 +785,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     checkpoint = await writeSkippedPostMergeCheckpoint(options.outputRoot, "no reviewer model configured");
   } else {
     status(options, "starting post-merge review checkpoint");
-    checkpoint = await (deps.runPostMergeReview ?? runPostMergeReviewEvaluation)({
+    checkpoint = await runAuditedReviewer("post-merge-review", "post-merge-review", () => (deps.runPostMergeReview ?? runPostMergeReviewEvaluation)({
       cwd: options.cwd,
       authFile: options.authFile,
       outputRoot: options.outputRoot,
@@ -683,7 +796,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
       onToolEvent: options.onToolEvent,
       checkpointId,
       iteration: 1,
-    });
+    }));
   }
   const checkpointWithBaselines = await attachPreRepairArtifactHashes(options.outputRoot, checkpoint);
   if (checkpointWithBaselines !== checkpoint) checkpoint = await writePostMergeReviewResult(options.outputRoot, checkpointWithBaselines);
@@ -702,7 +815,7 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
       let repair: WorldImportModelPromptResult;
       let semanticRepairWorkerError: unknown;
       try {
-        repair = await deps.runModelPrompt({ ...options, stage: "repair", checkpointId, reviewPacket, iteration: checkpoint.iteration });
+        repair = await runAuditedModelPrompt({ ...options, stage: "repair", checkpointId, reviewPacket, iteration: checkpoint.iteration });
       } catch (error) {
         semanticRepairWorkerError = error;
         const outputSummary = await inspectWorldImportOutput(options.outputRoot);
@@ -731,7 +844,9 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
       latestOutput = { ...latestOutput, outputSummary: postRepairReadiness.outputSummary };
       if (!postRepairReadiness.ready) {
         const cause = semanticRepairWorkerError ? `; worker error: ${semanticRepairWorkerError instanceof Error ? semanticRepairWorkerError.message : String(semanticRepairWorkerError)}` : "";
-        throw new Error(`post-merge semantic repair left deterministic blockers (fingerprint ${postRepairReadiness.fingerprint})${cause}`);
+        const error = new Error(`post-merge semantic repair left deterministic blockers (fingerprint ${postRepairReadiness.fingerprint})${cause}`);
+        await failAudit(error, postRepairReadiness.outputSummary);
+        throw error;
       }
       const verification = await verifyPostMergeRepair(options.outputRoot, checkpoint);
       await writeStagedRepairVerification(options.outputRoot, verification);
@@ -744,11 +859,13 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
 
   if (!options.reviewerModel) {
     status(options, "final review stage skipped; reviewer model disabled");
-    return { ...latestOutput, sessionStrategy, stages };
+    const result = { ...latestOutput, sessionStrategy, stages };
+    await completeAudit(result);
+    return result;
   }
 
   status(options, "starting stage review session");
-  const review = await deps.runReviewerEvaluation({
+  const review = await runAuditedReviewer("final-review", "review", () => deps.runReviewerEvaluation({
     cwd: options.cwd,
     authFile: options.authFile,
     outputRoot: options.outputRoot,
@@ -757,11 +874,13 @@ export async function runWorldImportSkillWithRunners(options: WorldImportRunOpti
     onStatus: options.onStatus,
     onThinking: options.onThinking,
     onToolEvent: options.onToolEvent,
-  });
+  }));
   stages.push({ stage: "review", reviewer: review.reviewer, deterministicPassed: review.deterministic.passed });
   status(options, `review session completed; ${summarizeReviewResult(review)}`);
 
-  return { ...latestOutput, sessionStrategy, stages };
+  const result = { ...latestOutput, sessionStrategy, stages };
+  await completeAudit(result);
+  return result;
 }
 
 export async function runWorldImportSkill(options: WorldImportRunOptions): Promise<WorldImportRunResult> {

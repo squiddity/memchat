@@ -109,6 +109,7 @@ npm run world-import-run -- \
   stages/
     extraction/<unit-id>.json   # model-authored candidates
     merge/merged-candidates.json
+    import-run.json                # portable/redacted orchestrator invocation audit
     checkpoints/
       merge-readiness-01.review.json # deterministic merge/lint/coverage gate
       merge-readiness-02.review.json # optional bounded recovery reassessment
@@ -184,6 +185,7 @@ This is an on-demand, read-only browser review surface, not a public documentati
 echo "--- manifest units ---"; node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/world-out/sources/manifest.json','utf8')).units.length)"
 echo "--- extraction stages ---"; find /tmp/world-out/stages/extraction -name '*.json' 2>/dev/null | wc -l
 echo "--- merge stage ---"; ls /tmp/world-out/stages/merge/merged-candidates.json 2>/dev/null && echo "yes" || echo "no"
+echo "--- import audit ---"; jq '{status,source,workflow,invocations,result}' /tmp/world-out/stages/import-run.json
 echo "--- staged checkpoints ---"; find /tmp/world-out/stages/checkpoints -name '*.json' 2>/dev/null | sort
 echo "--- world markdown files ---"; find /tmp/world-out/world -name '*.md' 2>/dev/null | wc -l
 echo "--- root index ---"; test -f /tmp/world-out/world/index.md && echo yes || echo no
@@ -191,6 +193,12 @@ echo "--- source-unit pages ---"; find /tmp/world-out/world/sources/units -name 
 ```
 
 A healthy bundle includes concept pages under `world/people`, `world/places`, `world/things`, `world/facts`, `world/index.md`, group/source indexes, `world/log.md`, `world/coverage.md`, retained source-unit pages, optional style guides, and — for substantive narrative corpora — first-class plot surfaces such as a `Plot Synopsis` / `Corpus Synopsis`, `Timeline`, and `Scene Guide` / `Chapter Guide` / `Episode Guide` as normal emitted artifacts.
+
+### Import invocation audit
+
+Orchestrated imports also write `stages/import-run.json`, an atomic, TypeScript-owned record of the run and each actual model invocation. It records requested/resolved model ids, effective thinking level, stage/checkpoint context, timings, outcomes, compact prompt descriptors and hashes, response hashes/counts, and final verification/reviewer results. `world/log.md` projects a concise Import Details section and Model Invocations table after orchestration completes.
+
+The audit intentionally retains a source basename and content-derived identity only. It does **not** retain local input/output/cwd/auth paths, account names, tokens, environment values, full prompts, model thinking, or full import-model responses. Generated reviewer prompts are identified by a versioned builder id plus hash and size rather than duplicated. The JSON ledger is authoritative; the log is a reader-friendly summary.
 
 ### Inline artifact links
 

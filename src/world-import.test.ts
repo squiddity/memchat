@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { writeArtifact } from "./world-import/helper-tools.js";
 import { artifactPacketHash, assessMergeReadiness, attachPreRepairArtifactHashes, defaultPackageRoot, finalizeAssistantMessageForCli, inspectWorldImportOutput, renderWorldImportSkillInvocation, runWorldImportSkillWithRunners, verifyPostMergeRepair, worldImportSkill } from "./world-import/model-runner.js";
-import { writeExtractionStage, writeJson } from "./world-import/staging.js";
+import { readImportRun, writeExtractionStage, writeJson } from "./world-import/staging.js";
 import type { EvaluationResult } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -75,27 +75,28 @@ test("extraction stage rejects candidates without operational provenance envelop
 });
 
 test("world import runner defaults to staged orchestration", async () => {
+  const output = await tempDir();
   const calls: string[] = [];
   const reviewResult: EvaluationResult = {
     version: 1,
     createdAt: new Date().toISOString(),
-    outputRoot: "/out",
+    outputRoot: output,
     deterministic: { passed: true, checks: [] },
     reviewer: { model: "openai/gpt-4o", score: 4 },
   };
   const result = await runWorldImportSkillWithRunners({
     input: "/in",
-    outputRoot: "/out",
+    outputRoot: output,
     reviewerModel: "openai/gpt-4o",
   }, {
     runModelPrompt: async (options) => {
       calls.push(options.stage ?? "full");
-      if (options.stage === "extract") return { responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: false, worldMarkdownFiles: 0 } };
-      return { responseText: "merge ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: true, worldMarkdownFiles: 3 } };
+      if (options.stage === "extract") return { responseText: "extract ok", model: "m", outputRoot: output, outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: false, worldMarkdownFiles: 0 } };
+      return { responseText: "merge ok", model: "m", outputRoot: output, outputSummary: { manifestExists: true, normalizedUnits: 2, extractionStages: 2, mergeStageExists: true, worldMarkdownFiles: 3 } };
     },
     runPostMergeReview: async (options) => {
       calls.push("post-merge-review");
-      return { version: 1, kind: "post-merge-review", checkpointId: options.checkpointId, iteration: options.iteration, createdAt: new Date().toISOString(), outputRoot: "/out", status: "no-action", repairRecommended: false, findings: [], requestedActions: [], reviewer: { model: options.reviewerModel, parseStatus: "valid" } };
+      return { version: 1, kind: "post-merge-review", checkpointId: options.checkpointId, iteration: options.iteration, createdAt: new Date().toISOString(), outputRoot: output, status: "no-action", repairRecommended: false, findings: [], requestedActions: [], reviewer: { model: options.reviewerModel, parseStatus: "valid" } };
     },
     runReviewerEvaluation: async () => {
       calls.push("review");
@@ -105,6 +106,15 @@ test("world import runner defaults to staged orchestration", async () => {
   assert.deepEqual(calls, ["extract", "merge", "post-merge-review", "review"]);
   assert.equal(result.sessionStrategy, "staged");
   assert.deepEqual(result.stages.map((stage) => stage.stage), ["extract", "merge", "merge-readiness", "post-merge-review", "review"]);
+  const audit = await readImportRun(output);
+  assert.equal(audit?.status, "completed");
+  assert.deepEqual(audit?.invocations.map((item) => item.purpose), ["extract", "merge", "post-merge-review", "final-review"]);
+  assert.ok(audit?.invocations.every((item) => item.status === "completed"));
+  assert.equal(audit?.invocations[0].invocation.kind, "world-import-skill");
+  assert.equal(audit?.invocations.at(-1)?.purpose, "final-review");
+  assert.equal(audit?.invocations.at(-1)?.thinking, "low");
+  assert.match(audit?.invocations[0].invocation.canonical ?? "", /"output":"<output-root>"/);
+  assert.doesNotMatch(JSON.stringify(audit), /\/tmp\/memchat-world-router/);
 });
 
 test("staged orchestration routes actionable post-merge review into one repair pass", async () => {
@@ -239,11 +249,12 @@ test("staged orchestration records skipped checkpoint when reviewer config is ab
 });
 
 test("staged dry-run stops after extract", async () => {
+  const output = await tempDir();
   const calls: string[] = [];
-  const result = await runWorldImportSkillWithRunners({ input: "/in", outputRoot: "/out", sessionStrategy: "staged", dryRun: true }, {
+  const result = await runWorldImportSkillWithRunners({ input: "/in", outputRoot: output, sessionStrategy: "staged", dryRun: true }, {
     runModelPrompt: async (options) => {
       calls.push(options.stage ?? "full");
-      return { responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 0, mergeStageExists: false, worldMarkdownFiles: 0 } };
+      return { responseText: "extract ok", model: "m", outputRoot: output, outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 0, mergeStageExists: false, worldMarkdownFiles: 0 } };
     },
     runReviewerEvaluation: async () => {
       calls.push("review");
@@ -255,10 +266,14 @@ test("staged dry-run stops after extract", async () => {
 });
 
 test("staged orchestration fails fast when extract writes no stages", async () => {
-  await assert.rejects(() => runWorldImportSkillWithRunners({ input: "/in", outputRoot: "/out", sessionStrategy: "staged" }, {
-    runModelPrompt: async () => ({ responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 0, mergeStageExists: false, worldMarkdownFiles: 0 } }),
-    runReviewerEvaluation: async () => ({ version: 1, createdAt: new Date().toISOString(), outputRoot: "/out", deterministic: { passed: true, checks: [] } }),
+  const output = await tempDir();
+  await assert.rejects(() => runWorldImportSkillWithRunners({ input: "/in", outputRoot: output, sessionStrategy: "staged" }, {
+    runModelPrompt: async () => ({ responseText: "extract ok", model: "m", outputRoot: output, outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 0, mergeStageExists: false, worldMarkdownFiles: 0 } }),
+    runReviewerEvaluation: async () => ({ version: 1, createdAt: new Date().toISOString(), outputRoot: output, deterministic: { passed: true, checks: [] } }),
   }), /produced no extraction stage files/);
+  const audit = await readImportRun(output);
+  assert.equal(audit?.status, "failed");
+  assert.equal(audit?.invocations[0].status, "completed");
 });
 
 test("staged orchestration routes zero-output merge through bounded readiness recovery", async () => {
@@ -283,12 +298,13 @@ test("staged orchestration routes zero-output merge through bounded readiness re
 });
 
 test("staged orchestration fails explicitly when readiness diagnostics do not change", async () => {
+  const output = await tempDir();
   const calls: string[] = [];
-  await assert.rejects(() => runWorldImportSkillWithRunners({ input: "/in", outputRoot: "/out", sessionStrategy: "staged" }, {
+  await assert.rejects(() => runWorldImportSkillWithRunners({ input: "/in", outputRoot: output, sessionStrategy: "staged" }, {
     runModelPrompt: async (options) => {
       calls.push(options.stage ?? "full");
-      if (options.stage === "extract") return { responseText: "extract ok", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 1, mergeStageExists: false, worldMarkdownFiles: 0 } };
-      return { responseText: "no progress", model: "m", outputRoot: "/out", outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 1, mergeStageExists: false, worldMarkdownFiles: 0 } };
+      if (options.stage === "extract") return { responseText: "extract ok", model: "m", outputRoot: output, outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 1, mergeStageExists: false, worldMarkdownFiles: 0 } };
+      return { responseText: "no progress", model: "m", outputRoot: output, outputSummary: { manifestExists: true, normalizedUnits: 1, extractionStages: 1, mergeStageExists: false, worldMarkdownFiles: 0 } };
     },
     runReviewerEvaluation: async () => { throw new Error("review should not run"); },
   }), /merge stalled/);

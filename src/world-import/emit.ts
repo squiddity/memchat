@@ -3,7 +3,8 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type MarkdownSection, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type WorldImportGroup } from "./types.js";
 import { classifyNarrativeSurface } from "./narrative-surfaces.js";
-import { readManifest, readMergeStage, readNormalizedUnit, validateStageEnvelope } from "./staging.js";
+import { readImportRun, readManifest, readMergeStage, readNormalizedUnit, validateStageEnvelope } from "./staging.js";
+import type { WorldImportRunAudit } from "./types.js";
 
 const groups = [...WORLD_IMPORT_GROUPS];
 const defaultTypes: Record<WorldImportGroup, string> = {
@@ -291,7 +292,36 @@ function renderRootIndex(groupEntries: IndexEntry[], narrativeEntries: IndexEntr
   ].join("\n");
 }
 
-function renderLog(createdAt: string, artifacts: ArtifactPacket[], sourceCount: number, degradedCitationCount: number): string {
+function auditPurposeLabel(purpose: WorldImportRunAudit["invocations"][number]["purpose"]): string {
+  return ({ full: "Full import", extract: "Extract", merge: "Merge", "merge-readiness-repair": "Readiness repair", "post-merge-review": "Post-merge review", "semantic-repair": "Semantic repair", "final-review": "Final review" })[purpose];
+}
+
+function renderAuditLog(audit: WorldImportRunAudit | undefined): string[] {
+  if (!audit) return [];
+  const importModels = [...new Set(audit.invocations.filter((item) => item.purpose !== "post-merge-review" && item.purpose !== "final-review").map((item) => item.resolvedModel ?? item.requestedModel).filter((item): item is string => Boolean(item)))];
+  const reviewerModels = [...new Set(audit.invocations.filter((item) => item.purpose === "post-merge-review" || item.purpose === "final-review").map((item) => item.resolvedModel ?? item.requestedModel).filter((item): item is string => Boolean(item)))];
+  const result = audit.result;
+  const status = audit.status === "completed" ? `completed${result?.deterministicPassed ? "; deterministic checks passed" : ""}${result?.reviewerScore !== undefined ? `; reviewer score ${result.reviewerScore}` : ""}` : audit.status;
+  return [
+    "## Import Details",
+    "",
+    `- **Source:** \`${audit.source.name}\``,
+    `- **Workflow:** ${audit.workflow.sessionStrategy}${audit.workflow.dryRun ? " (dry run)" : ""}`,
+    ...(importModels.length > 0 ? [`- **Import model${importModels.length === 1 ? "" : "s"}:** ${importModels.map((model) => `\`${model}\``).join(", ")}`] : []),
+    ...(reviewerModels.length > 0 ? [`- **Reviewer model${reviewerModels.length === 1 ? "" : "s"}:** ${reviewerModels.map((model) => `\`${model}\``).join(", ")}`] : []),
+    `- **Result:** ${status}`,
+    "- **Audit record:** [`stages/import-run.json`](../stages/import-run.json)",
+    "",
+    "## Model Invocations",
+    "",
+    "| # | Purpose | Model | Thinking | Outcome |",
+    "|---|---|---|---|---|",
+    ...audit.invocations.map((item, index) => `| ${index + 1} | ${auditPurposeLabel(item.purpose)} | \`${item.resolvedModel ?? item.requestedModel ?? "unresolved"}\` | ${item.thinking ?? "unknown"} | ${item.status}${item.purpose === "final-review" && result?.reviewerScore !== undefined ? `; score ${result.reviewerScore}` : ""} |`),
+    "",
+  ];
+}
+
+function renderLog(createdAt: string, artifacts: ArtifactPacket[], sourceCount: number, degradedCitationCount: number, audit?: WorldImportRunAudit): string {
   const date = createdAt.slice(0, 10);
   const groupCounts = groups.map((group) => `${group}: ${artifacts.filter((artifact) => artifact.group === group).length}`).join(", ");
   return [
@@ -302,6 +332,7 @@ function renderLog(createdAt: string, artifacts: ArtifactPacket[], sourceCount: 
     `* **Sources**: Retained ${sourceCount} source-unit page(s) for provenance inspection.`,
     `* **Citations**: ${degradedCitationCount === 0 ? "All emitted provenance links resolved within the bundle." : `${degradedCitationCount} provenance citation(s) were degraded because source targets were unavailable.`}`,
     "",
+    ...renderAuditLog(audit),
   ].join("\n");
 }
 
@@ -465,8 +496,19 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
 
   const degradedCitationCount = artifacts.reduce((count, artifact) => count + artifact.provenance.filter((ref) => !sourceTargets.has(ref.unitId)).length, 0);
   const logPath = join(worldRoot, "log.md");
-  await writeFile(logPath, renderLog(manifest?.createdAt ?? new Date().toISOString(), artifacts, sourceEntries.length, degradedCitationCount), "utf-8");
+  await writeFile(logPath, renderLog(manifest?.createdAt ?? new Date().toISOString(), artifacts, sourceEntries.length, degradedCitationCount, await readImportRun(outputRoot)), "utf-8");
   written.push(logPath);
 
   return written;
+}
+
+/** Refresh only execution metadata after orchestration; concept pages are not re-emitted. */
+export async function refreshWorldImportLog(outputRoot: string): Promise<void> {
+  const merge = await readMergeStage(outputRoot);
+  const manifest = await loadManifestIfPresent(outputRoot);
+  const artifacts = merge.artifacts ?? [];
+  const referencedUnitIds = new Set(artifacts.flatMap((artifact) => artifact.provenance.map((ref) => ref.unitId)));
+  const sourceCount = manifest?.units.filter((unit) => referencedUnitIds.has(unit.unitId)).length ?? 0;
+  const degradedCitationCount = manifest ? artifacts.reduce((count, artifact) => count + artifact.provenance.filter((ref) => !manifest.units.some((unit) => unit.unitId === ref.unitId)).length, 0) : artifacts.flatMap((artifact) => artifact.provenance).length;
+  await writeFile(join(outputRoot, "world", "log.md"), renderLog(manifest?.createdAt ?? new Date().toISOString(), artifacts, sourceCount, degradedCitationCount, await readImportRun(outputRoot)), "utf-8");
 }

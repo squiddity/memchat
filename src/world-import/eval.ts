@@ -14,7 +14,13 @@ import { providerAuthEnvKeys, reviewerProvider } from "../local-env.js";
 import { isUsableModel, modelLabel, requireResolvedModel } from "../model-selection.js";
 import { resolvePiRuntimePaths } from "../pi-runtime.js";
 import { classifyNarrativeSurface } from "./narrative-surfaces.js";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StageEnvelope, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportLintResult } from "./types.js";
+import { generatedPromptDescriptor } from "./run-audit.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type EvaluationResult, type LintDiagnostic, type ReviewBundle, type ReviewerDimensionScore, type StageEnvelope, type StagedReviewActionType, type StagedReviewCheckpoint, type StagedReviewFinding, type StagedReviewFindingSeverity, type StagedReviewParseStatus, type StagedReviewRequestedAction, type WorldImportInvocationPrompt, type WorldImportLintResult } from "./types.js";
+
+export type ReviewerInvocationAudit = { prompt: WorldImportInvocationPrompt; resolvedModel?: string; thinking?: string };
+
+/** Final review benefits from modest reasoning while the bounded repair checkpoint stays direct. */
+export const FINAL_REVIEW_THINKING = "low";
 
 const groups = [...WORLD_IMPORT_GROUPS];
 
@@ -1195,7 +1201,8 @@ export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptio
       }
     });
     try {
-      await session.prompt(buildPostMergeReviewPrompt(bundle, { checkpointId, iteration }));
+      const prompt = buildPostMergeReviewPrompt(bundle, { checkpointId, iteration });
+      await session.prompt(prompt);
     } finally {
       unsubscribe();
     }
@@ -1216,7 +1223,7 @@ export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptio
 
   const parsed = parseStructuredPostMergeReviewOutput(notes);
   const status = parsed.repairRecommended && parsed.requestedActions.length > 0 ? "repair-requested" : "no-action";
-  return writePostMergeReviewResult(options.outputRoot, {
+  const result = await writePostMergeReviewResult(options.outputRoot, {
     checkpointId,
     iteration,
     status,
@@ -1230,6 +1237,8 @@ export async function runPostMergeReviewEvaluation(options: ReviewerEvalRunOptio
       notes: notes.trim(),
     },
   });
+  const prompt = buildPostMergeReviewPrompt(bundle, { checkpointId, iteration });
+  return Object.assign(result, { invocationAudit: { prompt: generatedPromptDescriptor("world-import-post-merge-review-v1", prompt), resolvedModel: isUsableModel(session.model) ? modelLabel(session.model) : options.reviewerModel, thinking: session.thinkingLevel } satisfies ReviewerInvocationAudit });
 }
 
 export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions): Promise<EvaluationResult> {
@@ -1281,7 +1290,7 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
     noTools: "builtin",
-    thinkingLevel: "off",
+    thinkingLevel: FINAL_REVIEW_THINKING,
   });
   let notes = "";
   let thinkingStarted = false;
@@ -1315,7 +1324,8 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
     });
     try {
       reviewerStatus(options, "invoking reviewer model");
-      await session.prompt(buildReviewerPrompt(bundle));
+      const prompt = buildReviewerPrompt(bundle);
+      await session.prompt(prompt);
       reviewerStatus(options, `reviewer model completed; responseChars=${notes.length}`);
     } finally {
       unsubscribe();
@@ -1334,7 +1344,7 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
   const reconstructionSummary = parseReconstructionSummary(notes);
   reviewerStatus(options, `parsed review result: status=${parsed.parseStatus}, score=${parsed.score ?? "none"}, dimensions=${parsed.dimensionScores?.length ?? 0}, qaResults=${parsed.qaResults?.length ?? 0}`);
 
-  return writeEvaluationResult(options.outputRoot, {
+  const result = await writeEvaluationResult(options.outputRoot, {
     model: options.reviewerModel,
     score: parsed.score,
     dimensionScores: parsed.dimensionScores,
@@ -1345,6 +1355,8 @@ export async function runReviewerModelEvaluation(options: ReviewerEvalRunOptions
     authoritativeScore: parsed.authoritativeScore,
     notes: notes.trim(),
   });
+  const prompt = buildReviewerPrompt(bundle);
+  return Object.assign(result, { invocationAudit: { prompt: generatedPromptDescriptor("world-import-final-review-v1", prompt), resolvedModel: isUsableModel(session.model) ? modelLabel(session.model) : options.reviewerModel, thinking: session.thinkingLevel } satisfies ReviewerInvocationAudit });
 }
 
 export async function writeEvaluationResult(outputRoot: string, reviewer?: EvaluationResult["reviewer"]): Promise<EvaluationResult> {

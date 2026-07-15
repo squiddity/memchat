@@ -180,7 +180,8 @@ Expected:
 - Emit tests confirm narrative-surface promotion appears in `world/index.md` only when declared artifacts exist and model-authored inline artifact markers resolve to portable cross-group Markdown links without rewriting code or existing links.
 - Eval tests confirm reviewer prompt dimensions include plot synopsis / timeline / source-structure / object coverage / omission visibility, post-merge review packets can request Romeo-like object repairs, parser status is explicit, prose-only score mentions are non-authoritative, and deterministic narrative risk signals remain non-failing warnings.
 - Inline-link review covers at least one entity page as well as synopsis/timeline pages; `Related` links do not substitute for traversable references in authored prose.
-- Orchestration tests confirm staged post-merge checkpoints, skipped-review reasons, repair-stage invocation fields, and bounded repair attempts remain wired.
+- Orchestration tests confirm staged post-merge checkpoints, skipped-review reasons, repair-stage invocation fields, bounded repair attempts, and portable/redacted `stages/import-run.json` invocation records remain wired.
+- Emit tests confirm `world/log.md` projects the completed audit without duplicating prompt or credential data.
 - Provenance-tool tests confirm provenance-audit warnings still surface heading-only and sparse-citation risks.
 
 ## 10. Markdown review command smoke test

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedRepairVerification, type StagedReviewCheckpoint, type WorldImportGroup } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedRepairVerification, type StagedReviewCheckpoint, type WorldImportGroup, type WorldImportRunAudit } from "./types.js";
 
 const validGroups = [...WORLD_IMPORT_GROUPS];
 
@@ -39,6 +39,10 @@ export function checkpointVerifyPath(outputRoot: string, checkpointId: string, i
 
 export function manifestPath(outputRoot: string): string {
   return join(sourcesDir(outputRoot), "manifest.json");
+}
+
+export function importRunPath(outputRoot: string): string {
+  return join(outputRoot, "stages", "import-run.json");
 }
 
 export function normalizedUnitPath(outputRoot: string, unitId: string): string {
@@ -86,6 +90,15 @@ export async function writeManifest(manifest: SourceManifest): Promise<void> {
 
 export async function readManifest(outputRoot: string): Promise<SourceManifest> {
   return JSON.parse(await readFile(manifestPath(outputRoot), "utf-8")) as SourceManifest;
+}
+
+export async function writeImportRun(outputRoot: string, audit: WorldImportRunAudit): Promise<void> {
+  await writeJson(importRunPath(outputRoot), audit);
+}
+
+export async function readImportRun(outputRoot: string): Promise<WorldImportRunAudit | undefined> {
+  if (!existsSync(importRunPath(outputRoot))) return undefined;
+  return JSON.parse(await readFile(importRunPath(outputRoot), "utf-8")) as WorldImportRunAudit;
 }
 
 export async function writeNormalizedUnit(outputRoot: string, unit: NormalizedSourceUnit): Promise<void> {
