@@ -175,6 +175,16 @@ Recommended sections:
 - Preserve source order in timelines and scene/chapter/episode guides.
 - Plot-critical objects should usually receive durable `things` artifacts; if they do not, preserve an explicit omission/disposition reason in the merge stage.
 
+## Inline artifact links
+
+Use model-authored markers in every concept page's section prose when a clear mention refers to another emitted artifact:
+
+```md
+[[victor-frankenstein|Victor]] visits [[ingolstadt|the University of Ingolstadt]] and later confronts [[the-creature|the creature]].
+```
+
+The id is exact and the label is reader-facing Markdown text. This syntax works across people, places, things, facts, and style pages, including entity pages as well as synopsis/timeline/scene-guide surfaces. The emitter converts known markers to portable relative Markdown links using the final artifact paths. Keep `related` for structured navigation, but do not rely on it instead of inline links. Do not link pronouns or ambiguous common nouns, self-link the current page, or place markers inside existing links, URLs, code, or provenance quotes. Unknown markers are intentionally preserved for lint to report; do not replace them with guessed paths or silently remove them.
+
 ## Provenance
 
 Every artifact needs at least one provenance ref. Prefer short quotes that establish the claim. When an artifact combines multiple sources, include multiple refs. Quote accuracy matters for the provenance dimension of evaluation.

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedRepairVerification, type StagedReviewCheckpoint, type WorldImportGroup } from "./types.js";
 
@@ -61,8 +61,22 @@ export async function ensureWorldImportDirs(outputRoot: string): Promise<void> {
 }
 
 export async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(temporaryPath, "wx", 0o600);
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf-8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporaryPath, path);
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function writeManifest(manifest: SourceManifest): Promise<void> {

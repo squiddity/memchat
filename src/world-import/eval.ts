@@ -798,7 +798,7 @@ Score the world library 1-5 (5 = best) on each dimension:
 4. **provenance** — Are source span references and quotes accurate and useful?
 5. **mergeQuality** — Are aliases handled? Is detail preserved rather than over-summarized across sources?
 6. **answerability** — Can someone answer substantive questions about the source using only the artifacts?
-7. **navigability** — Do indexes, summaries, and links make the bundle easy to browse?
+7. **navigability** — Do indexes, summaries, and links make the bundle easy to browse? Check all concept-page groups, not only synopsis pages: important named references in entity, place, thing, fact, and style prose should use resolved inline links where identity is clear, rather than relying only on a bottom Related list. Do not penalize genuinely ambiguous mentions or plain text that has no emitted artifact.
 8. **progressiveDisclosure** — Do artifacts balance concise top-level summaries with richer detail below?
 9. **plotSynopsisQuality** — Is there a useful start-here synopsis/corpus overview that helps a reader understand the plot without browsing every entity page?
 10. **timelineCompleteness** — Does the bundle expose the story's sequence of events in source order well enough to reconstruct major plot beats?
@@ -1034,7 +1034,8 @@ Look only for high-value, actionable gaps:
 - existing narrative surfaces that need strengthening rather than replacement;
 - missing plot-critical objects, props, letters, weapons, documents, or durable thing pages;
 - important omissions hidden from candidate dispositions or coverage views;
-- sparse or weak provenance on synthesis pages whose claims need source grounding.
+- sparse or weak provenance on synthesis pages whose claims need source grounding;
+- conspicuous missing inline traversal links in any sampled concept page when the prose clearly names an emitted artifact. Treat Related links as complementary rather than a replacement for links in the prose. Do not infer that every plain-text name must link when identity is ambiguous.
 
 Use the most precise requested action type: add-narrative-surface only for an actually missing surface, strengthen-artifact for a present but weak surface, record-omission for a documented decision, and strengthen-provenance for evidence gaps.
 

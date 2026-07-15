@@ -18,6 +18,7 @@ type EmitContext = {
   relatedTargets: Record<string, string>;
   sourceTargets: Record<string, string>;
   currentRelativePath: string;
+  currentArtifactId?: string;
 };
 
 type IndexEntry = {
@@ -93,6 +94,112 @@ function renderRelated(related: string[] | undefined, context: EmitContext): str
   return `${lines.join("\n")}\n\n`;
 }
 
+function findProtectedMarkdownEnd(text: string, start: number): number | undefined {
+  let depth = 0;
+  for (let index = start; index < text.length && text[index] !== "\n"; index += 1) {
+    if (text[index] === "[") depth += 1;
+    else if (text[index] === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        if (text[index + 1] !== "(") return undefined;
+        const end = text.indexOf(")", index + 2);
+        return end === -1 ? undefined : end + 1;
+      }
+    }
+  }
+  return undefined;
+}
+
+function findInlineCodeEnd(text: string, start: number): number | undefined {
+  let runLength = 0;
+  while (text[start + runLength] === "`") runLength += 1;
+  const fence = "`".repeat(runLength);
+  const end = text.indexOf(fence, start + runLength);
+  return end === -1 ? undefined : end + runLength;
+}
+
+function findBareUrlEnd(text: string, start: number): number | undefined {
+  if (!/^https?:\/\//i.test(text.slice(start))) return undefined;
+  if (start > 0 && /[A-Za-z0-9_]/.test(text[start - 1])) return undefined;
+  let end = start;
+  while (end < text.length && !/\s/.test(text[end])) end += 1;
+  return end;
+}
+
+function renderInlineArtifactLinks(text: string, context: EmitContext): string {
+  let output = "";
+  let index = 0;
+  let inFence: string | undefined;
+
+  while (index < text.length) {
+    if (index === 0 || text[index - 1] === "\n") {
+      const fenceMatch = text.slice(index).match(/^ {0,3}(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        const fence = fenceMatch[1];
+        if (!inFence) inFence = fence[0];
+        else if (fence[0] === inFence) inFence = undefined;
+        const lineEnd = text.indexOf("\n", index);
+        const end = lineEnd === -1 ? text.length : lineEnd + 1;
+        output += text.slice(index, end);
+        index = end;
+        continue;
+      }
+    }
+
+    if (inFence) {
+      output += text[index++];
+      continue;
+    }
+
+    if (text[index] === "`") {
+      const end = findInlineCodeEnd(text, index);
+      if (end !== undefined) {
+        output += text.slice(index, end);
+        index = end;
+        continue;
+      }
+    }
+
+    const urlEnd = findBareUrlEnd(text, index);
+    if (urlEnd !== undefined) {
+      output += text.slice(index, urlEnd);
+      index = urlEnd;
+      continue;
+    }
+
+    if (text.startsWith("[[", index)) {
+      const end = text.indexOf("]]", index + 2);
+      if (end !== -1) {
+        const marker = text.slice(index + 2, end);
+        const separator = marker.indexOf("|");
+        const targetId = (separator === -1 ? marker : marker.slice(0, separator)).trim();
+        const label = (separator === -1 ? targetId : marker.slice(separator + 1)).trim();
+        const targetPath = context.relatedTargets[targetId];
+        if (targetId && label && targetPath) {
+          output += context.currentArtifactId === targetId
+            ? label
+            : `[${label}](${relativeLink(context.currentRelativePath, targetPath)})`;
+          index = end + 2;
+          continue;
+        }
+      }
+    }
+
+    if (text[index] === "[") {
+      const end = findProtectedMarkdownEnd(text, index);
+      if (end !== undefined) {
+        output += text.slice(index, end);
+        index = end;
+        continue;
+      }
+    }
+
+    output += text[index++];
+  }
+
+  return output;
+}
+
 function provenanceLabel(ref: SourceSpanRef): string {
   return `${ref.sourceId}/${ref.unitId}#${ref.startAnchor}-${ref.endAnchor}`;
 }
@@ -114,12 +221,15 @@ function renderProvenance(artifact: ArtifactPacket, context: EmitContext): strin
 }
 
 export function renderArtifactMarkdown(artifact: ArtifactPacket, context?: EmitContext): string {
-  const sections = withSummaryFallback(artifact).map((section) => `## ${section.heading}\n\n${section.body.trim()}\n\n`).join("");
   const safeContext = context ?? {
     relatedTargets: {},
     sourceTargets: {},
     currentRelativePath: `${artifact.group}/${slugify(artifact.id || artifact.title)}.md`,
+    currentArtifactId: artifact.id,
   };
+  const sections = withSummaryFallback(artifact)
+    .map((section) => `## ${section.heading}\n\n${renderInlineArtifactLinks(section.body.trim(), { ...safeContext, currentArtifactId: artifact.id })}\n\n`)
+    .join("");
   return `${frontmatter(artifact)}\n\n# ${artifact.title}\n\n${sections}${renderRelated(artifact.related, safeContext)}${renderProvenance(artifact, safeContext)}`;
 }
 
@@ -298,7 +408,7 @@ export async function emitWorldLibrary(outputRoot: string): Promise<string[]> {
 
   const artifactEntriesByGroup = new Map<WorldImportGroup, IndexEntry[]>();
   for (const entry of artifactFiles) {
-    await writeFile(entry.file, renderArtifactMarkdown(entry.artifact, { ...baseContext, currentRelativePath: entry.relativePath }), "utf-8");
+    await writeFile(entry.file, renderArtifactMarkdown(entry.artifact, { ...baseContext, currentRelativePath: entry.relativePath, currentArtifactId: entry.artifact.id }), "utf-8");
     const groupEntries = artifactEntriesByGroup.get(entry.artifact.group) ?? [];
     groupEntries.push({
       title: entry.artifact.title,

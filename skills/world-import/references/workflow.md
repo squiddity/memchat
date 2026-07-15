@@ -124,6 +124,7 @@ Example good extraction (rich) vs poor extraction (too brief):
 - **Combine all evidence** — when merging multiple candidates about the same entity, preserve all useful detail from every candidate. Do not condense.
 - **Progressive disclosure:** every emitted artifact should support a one-line description plus a short summary/capsule at the top, then richer sections below.
 - **Standalone summaries + cross-references for full detail.** Each artifact should have enough context to be useful when retrieved alone (via vector search), but use `related` links to avoid duplicating full event narratives across multiple entities. The full event blow-by-blow lives in a `facts` artifact — character and place artifacts summarize and link.
+- **Inline traversal links on every concept page.** In every authored section body, mark each unambiguous mention of a durable emitted artifact with `[[artifact-id|reader-facing label]]`, including people, places, things, facts, and style pages. Use exact artifact ids, not paths. Preserve natural aliases and possessives in the label; do not link pronouns or ambiguous mentions, self-link the current artifact, or place markers inside existing Markdown links, URLs, code, or provenance quotes. The emitter resolves known ids to final relative Markdown links; unknown markers must remain visible for lint.
 - Think of `related` as the deduplication mechanism: the croquet game gets one detailed fact artifact; Alice's entry links to it rather than retelling the entire scene.
 - Prefer useful discovery metadata in the merge packet: `type`, a concise `description`, and tags when they materially help indexing.
 - Preserve multiple provenance refs after merge. Use heading/title refs only as broad context; detailed people/place/thing/fact/style claims should have exact source evidence when possible.
@@ -137,17 +138,33 @@ Example good extraction (rich) vs poor extraction (too brief):
 - Account for every extraction candidate through merge: list represented candidate ids on artifacts, or add a merge-level disposition of `represented`, `merged`, `deferred`, or `dropped`. Deferred/dropped candidates need a model-authored reason so omissions remain auditable.
 - Add model-authored `style` artifacts when voice, tone, aphorisms/formulae, parody/poem mechanics, or character voice guidance would help future reuse. Cite source spans for style claims like any other artifact.
 - Before finalizing, check whether every major source set-piece needed for reconstruction has a durable fact/event artifact or an explicit, reviewable omission reason.
+- Apply inline artifact markers to clear mentions in entity, place, object, event, synopsis, timeline, guide, and style prose; `related` lists complement these links and do not replace them.
 - Use `read-slice` for targeted rereads only when candidate evidence is insufficient.
 - Do not invent facts to fill a taxonomy.
 
 ## 3. Merge writing and coverage planning
 
-Prefer incremental artifact writing instead of giant merge JSON heredocs:
+### Persist-first merge protocol
+
+A merge session must create durable progress before it spends substantial time on synopsis prose, full-source rereads, or automation design:
+
+1. Inspect complete extraction payloads once in manifest source order (never lexicographic shell-glob order) and choose canonical ids/identity consolidations.
+2. If a merge stage already exists, treat it as the resume checkpoint; preserve valid artifacts and identify only unfinished groups/candidates.
+3. Write the first bounded artifact batch promptly. Continue in batches of roughly 5-12 model-authored packets.
+4. Build core people, places, things, facts, and style coverage plus candidate accounting before polishing synopsis/timeline/guide surfaces.
+5. Run coverage after durable batches and use its compact counts to choose the next batch.
+
+Use atomic batch writes instead of giant merge JSON heredocs or executable generators:
 
 ```bash
+npm run world-import-helper -- write-artifacts --output <output> --mode upsert --file artifacts.json
 npm run world-import-helper -- validate-artifact --output <output> --file artifact.json
 npm run world-import-helper -- write-artifact --output <output> --mode upsert --file artifact.json
 ```
+
+`artifacts.json` is a JSON array. All ids in the batch are treated as planned targets during validation, so cross-links within the batch do not require a huge `--planned-ids` argument. The helper writes nothing unless every packet validates. It does not choose ids, merge identities, groups, prose, links, or dispositions.
+
+Do not write JavaScript/Python/shell programs that embed artifact prose, and do not postpone all persistence until one monolithic packet is complete. If a later batch fails, keep and resume from earlier valid batches.
 
 Before final emission, inspect deterministic coverage:
 
@@ -207,9 +224,17 @@ npm run world-import-helper -- suggest-ref-candidates \
 
 Then generate exact refs with `quote-ref --as-ref` and repair provenance using `patch-merge` or `write-artifact`. Do not blindly rewrite artifact prose just to satisfy audit density; better provenance means claim-supporting evidence, not maximum citation count.
 
-## 6. Staged post-merge checkpoint repair
+## 6. Staged readiness and post-merge checkpoint repair
 
-In staged mode, the TypeScript runner can run a focused post-merge review after `merge` and before final eval. It persists packets such as:
+In staged mode, the TypeScript runner first assesses deterministic merge readiness. A merge is not ready merely because one Markdown file exists: the merge must be non-empty and parseable, emission and lint must pass, and coverage/candidate accounting must have no errors. The runner persists bounded diagnostic packets such as:
+
+- `stages/checkpoints/merge-readiness-01.review.json`
+- `stages/checkpoints/merge-readiness-02.review.json`
+- `stages/repair-summary.md`
+
+A `merge-readiness` repair invocation must resume the durable merge, preserve valid artifacts, and address only the packet's structural/accounting blockers. It must not restart extraction, discard valid groups, or invent a recursive retry loop. The TypeScript runner reassesses after the repair and stops on readiness, unchanged diagnostics, or budget exhaustion.
+
+After readiness passes, the runner can run a focused semantic post-merge review before final eval. It persists packets such as:
 
 - `stages/checkpoints/post-merge-01.review.json`
 - `stages/checkpoints/post-merge-01.repair.json`
@@ -221,10 +246,10 @@ When invoked as `stage: "repair"`:
 1. Read the provided `reviewPacket` and current `stages/merge/merged-candidates.json` plus emitted `world/` pages.
 2. Address only grounded `requestedActions`; do not redo extraction or the whole merge.
 3. Use source-reading helpers (`read-slice`, `find-text`, `suggest-ref-candidates`, `quote-ref --as-ref`) when the packet says to reread source or when evidence is insufficient.
-4. Update merge artifacts with `write-artifact`/`patch-merge` or `write-merge` only as needed, preserving candidate accounting and provenance.
+4. Update merge artifacts with `write-artifacts`, `write-artifact`, or `patch-merge` only as needed, preserving candidate accounting and provenance.
 5. Re-emit and run lint/repair-summary. Report which requested actions were attempted and which remain residual.
 
-The orchestrator owns loop bounds and final status. The repair model must not start another unbounded review/repair loop.
+The orchestrator owns loop bounds and final status. Before repair it records target artifact hashes for `strengthen-artifact` and `strengthen-provenance` actions. After readiness re-emits the durable merge, it may mark those actions `verified-structural` only when the artifact changed, requested source spans are represented, emitted Markdown/indexes are current, and scoped lint is clean. This is not a semantic quality verdict; final reviewer evaluation remains responsible for judging whether the strengthened prose or evidence is adequate. The repair model must not start another unbounded review/repair loop.
 
 ## 7. Helper anti-patterns
 

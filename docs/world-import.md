@@ -110,6 +110,8 @@ npm run world-import-run -- \
     extraction/<unit-id>.json   # model-authored candidates
     merge/merged-candidates.json
     checkpoints/
+      merge-readiness-01.review.json # deterministic merge/lint/coverage gate
+      merge-readiness-02.review.json # optional bounded recovery reassessment
       post-merge-01.review.json # optional staged intermediate review packet
       post-merge-01.repair.json # optional bounded repair summary
       post-merge-01.verify.json # optional action-scoped verification results
@@ -190,6 +192,16 @@ echo "--- source-unit pages ---"; find /tmp/world-out/world/sources/units -name 
 
 A healthy bundle includes concept pages under `world/people`, `world/places`, `world/things`, `world/facts`, `world/index.md`, group/source indexes, `world/log.md`, `world/coverage.md`, retained source-unit pages, optional style guides, and — for substantive narrative corpora — first-class plot surfaces such as a `Plot Synopsis` / `Corpus Synopsis`, `Timeline`, and `Scene Guide` / `Chapter Guide` / `Episode Guide` as normal emitted artifacts.
 
+### Inline artifact links
+
+Every model-authored concept page can contain id-based inline references in section prose:
+
+```md
+[[victor-frankenstein|Victor]] visits [[ingolstadt|Ingolstadt]] and confronts [[the-creature|the creature]].
+```
+
+The merge model uses the exact artifact id and optional reader-facing label. During emission, known markers become portable standard Markdown links calculated from the final artifact paths, including cross-group paths and collision suffixes. This applies to people, places, things, facts, and style pages—not only synopsis or timeline pages. `related` remains a structured navigation list and does not replace inline prose links. Do not mark pronouns or ambiguous mentions, self-link, or put markers inside existing links, URLs, code, or provenance quotes. Unknown markers remain visible and are reported by lint as unresolved wikilinks; helpers do not infer links from plain titles or aliases.
+
 ## Linting & eval
 
 Run deterministic lint after emission:
@@ -198,9 +210,11 @@ Run deterministic lint after emission:
 npm run world-import-helper -- lint --output /tmp/world-out
 ```
 
-Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps.
+Lint reports unresolved concept links and `[[wikilinks]]`, missing provenance targets/anchors, missing frontmatter/indexes, body-unit coverage gaps, and extraction-candidate accounting gaps. Successful inline markers are emitted as standard Markdown links and checked like other internal links; lint intentionally does not claim that every plain-text entity mention was semantically linkified.
 
-Staged is the default for both CLI and direct runner use; pass `--session-strategy single` only for comparison or debugging. In staged runs with a reviewer model, the runner first writes a focused post-merge checkpoint under `stages/checkpoints/`. The initial checkpoint is `post-merge-01`: it runs after merge/emission and before final eval. `post-merge-01.review.json` records structured findings, requested actions, status (`no-action`, `repair-requested`, `repair-attempted`, `verified-repaired`, `residual`, or `skipped`), and reviewer parse state. If actionable findings are present, the runner invokes one bounded `stage: "repair"` model pass, writes `post-merge-01.repair.json`, then writes `post-merge-01.verify.json` with action-scoped structural checks. Semantic actions without a deterministic predicate remain explicitly residual rather than being claimed repaired. Single-session mode records a skipped checkpoint because it has no orchestrator-visible merge boundary.
+Staged is the default for both CLI and direct runner use; pass `--session-strategy single` only for comparison or debugging. After every merge attempt, the runner writes a deterministic `merge-readiness-NN.review.json` checkpoint. Readiness requires a parseable non-empty merge, successful emission/lint, and error-free source/candidate accounting—not merely one emitted Markdown file. If readiness fails, the runner feeds the checkpoint and `stages/repair-summary.md` into a bounded repair session that resumes durable artifacts. Unchanged diagnostics are reported as a stall; exhausted recovery fails explicitly instead of silently skipping review. Only ready output can proceed to semantic review or final eval.
+
+In staged runs with a reviewer model, the runner then writes a focused semantic post-merge checkpoint under `stages/checkpoints/`. The initial semantic checkpoint is `post-merge-01`: it runs after readiness passes and before final eval. `post-merge-01.review.json` records structured findings, requested actions, status (`no-action`, `repair-requested`, `repair-attempted`, `verified-repaired`, `residual`, or `skipped`), and reviewer parse state. If actionable findings are present, the runner snapshots target artifact hashes, invokes one bounded `stage: "repair"` model pass, writes `post-merge-01.repair.json`, then writes `post-merge-01.verify.json` with action-scoped structural checks. `strengthen-artifact` and `strengthen-provenance` actions can receive `verified-structural` results when the target changed, requested source spans are represented, emitted Markdown/indexes are current, and target-scoped lint is clean. This verifies completion mechanics—not semantic adequacy, which remains reviewer-owned. Actions without a deterministic predicate remain explicitly residual rather than being claimed repaired. Single-session mode records a skipped checkpoint because it has no orchestrator-visible merge boundary.
 
 Then run eval — it embeds the same lint result in `stages/review.json` with optional reviewer-model scoring:
 
@@ -237,6 +251,7 @@ npm run world-import-helper -- resolve-ref --output <dir> --unit <unit-id> --sta
 npm run world-import-helper -- quote-ref --output <dir> --unit <unit-id> --start <anchor> --end <anchor> --as-ref
 npm run world-import-helper -- validate-artifact --output <dir> --file artifact.json
 npm run world-import-helper -- write-artifact --output <dir> --mode upsert --file artifact.json
+npm run world-import-helper -- write-artifacts --output <dir> --mode upsert --file artifacts.json
 npm run world-import-helper -- patch-merge --output <dir> --file patch.json
 npm run world-import-helper -- coverage-plan --output <dir>
 npm run world-import-helper -- repair-summary --output <dir>

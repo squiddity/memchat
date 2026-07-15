@@ -19,6 +19,7 @@ import {
   provenanceAudit,
   quoteRef,
   readArtifactFromFileOrStdin,
+  readArtifactsFromFileOrStdin,
   readPatchFromFileOrStdin,
   renderFindTextMarkdown,
   renderProvenanceAuditMarkdown,
@@ -28,6 +29,7 @@ import {
   suggestRefCandidates,
   validateArtifact,
   writeArtifact,
+  writeArtifacts,
   writeProvenanceAuditFile,
   writeRepairSummaryFile,
 } from "./helper-tools.js";
@@ -46,6 +48,7 @@ function usage(): string {
     `  quote-ref --output <dir> (--unit <unit-id>|--order <n>|--entry-path <text>|--title <text>) --start <anchor> --end <anchor> [--as-ref] [--max-chars <n>]\n` +
     `  validate-artifact --output <dir> [--file artifact.json] [--planned-ids a,b] [--allow-empty-quotes]\n` +
     `  write-artifact --output <dir> [--mode add|replace|upsert] [--file artifact.json] [--planned-ids a,b] [--allow-empty-quotes]\n` +
+    `  write-artifacts --output <dir> [--mode add|replace|upsert] [--file artifacts.json] [--planned-ids a,b] [--allow-empty-quotes]\n` +
     `  patch-merge --output <dir> [--file patch.json]\n` +
     `  coverage-plan --output <dir>\n` +
     `  repair-summary --output <dir> [--format json|markdown] [--write]\n` +
@@ -194,6 +197,21 @@ async function main(): Promise<void> {
     const result = await writeArtifact({
       outputRoot: requireString(options, "output"),
       artifact: await readArtifactFromFileOrStdin(artifactFile, artifactFile ? "" : await readStdin()),
+      mode: parseWriteMode(options.mode),
+      validate: options["no-validate"] !== true,
+      allowEmptyQuotes: options["allow-empty-quotes"] === true,
+      plannedIds: parsePlannedIds(options["planned-ids"]),
+    });
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.wrote) exit(1);
+    return;
+  }
+
+  if (command === "write-artifacts") {
+    const artifactFile = typeof options.file === "string" ? options.file : undefined;
+    const result = await writeArtifacts({
+      outputRoot: requireString(options, "output"),
+      artifacts: await readArtifactsFromFileOrStdin(artifactFile, artifactFile ? "" : await readStdin()),
       mode: parseWriteMode(options.mode),
       validate: options["no-validate"] !== true,
       allowEmptyQuotes: options["allow-empty-quotes"] === true,

@@ -102,11 +102,21 @@ Persist a single merge stage:
 
 Candidate dispositions are model-authored audit metadata. Every extraction candidate id should be represented by an artifact (`metadata.representedCandidateIds`, e.g. `["unit-id:candidate-id"]`), merged into a broader artifact, deferred, or dropped with a reason. For dropped candidates, explain why their content remains discoverable or why standalone omission is acceptable. Use the existing `unitId`, `candidateId`, disposition, optional `artifactId`, and reason fields; do not create a second disposition schema. Helper lint checks completeness only; it does not judge whether the disposition is semantically wise.
 
-Prefer incremental merge construction with `write-artifact --mode upsert --file artifact.json` and validate complex artifacts with `validate-artifact`. Use `coverage-plan` before final emission to inspect source-unit and candidate accounting. Use `emit-lint-repair-loop` and `repair-summary` before declaring the import complete.
+Prefer bounded, atomic merge construction with `write-artifacts --mode upsert --file artifacts.json`; use `write-artifact` and `validate-artifact` for isolated or complex repairs. Persist early, resume existing valid artifacts, and avoid executable prose generators or one all-or-nothing merge packet. Use `coverage-plan` after durable batches and before final emission to inspect source-unit and candidate accounting. Use `emit-lint-repair-loop` and `repair-summary` before declaring the import complete.
 
 `SourceSpanRef.quote` should be an exact or lightly trimmed source excerpt. Placeholder strings such as `[Source span b0001-b0003]`, `TODO quote`, or an empty quote are acceptable only as temporary drafts and will produce lint/validation diagnostics.
 
 The artifact packet is the only structure the emitter needs. Put human-readable semantic content in `sections`; put machine-oriented semantic hints in `metadata` only if useful for future model passes. `type`, `description`, `tags`, `resource`, and `timestamp` are optional interoperability fields for emitted OKF-style concept pages; helpers should validate their structure but must not infer their values.
+
+### Inline artifact references
+
+Section bodies may use model-authored id-based markers for human-readable traversal:
+
+```md
+[[alice|Alice]] enters [[rabbit-hole|the rabbit hole]] during [[fall-down-the-hole|the fall]].
+```
+
+The target must be the exact `ArtifactPacket.id`; the optional label is the natural prose to preserve in the rendered page. This contract applies to every model-authored concept page in every group, not only synopsis artifacts. The emitter resolves known ids to final relative Markdown links after path planning. It must not infer links from plain titles or aliases. Do not mark pronouns or ambiguous references, do not self-link, and do not use markers inside existing Markdown links, URLs, code, or provenance quotes. Unknown markers remain visible so deterministic lint can report them as unresolved wikilinks.
 
 For substantive imports, the merge stage should usually include first-class narrative surfaces as normal artifact packets under the existing taxonomy (typically `group: facts`): a `Plot Synopsis` / `Corpus Synopsis`, a `Timeline`, and a `Scene Guide` / `Chapter Guide` / `Episode Guide` when the source has that structure. These are model-authored pages, not helper-generated prose.
 

@@ -138,6 +138,8 @@ export type StagedReviewRequestedAction = {
   sourceRefs?: SourceSpanRef[];
   confidence?: "low" | "medium" | "high";
   rereadSource?: boolean;
+  /** TypeScript-owned baseline used only for structural post-repair verification. */
+  preRepairArtifactHash?: string;
 };
 
 export type StagedReviewFinding = {
@@ -179,7 +181,7 @@ export type StagedReviewCheckpoint = {
   };
 };
 
-export type StagedReviewActionVerificationStatus = "verified" | "residual" | "not-deterministically-verifiable";
+export type StagedReviewActionVerificationStatus = "verified" | "verified-structural" | "residual" | "not-deterministically-verifiable";
 
 export type StagedReviewActionVerification = {
   actionId: string;

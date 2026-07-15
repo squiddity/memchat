@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildPostMergeReviewPrompt, buildReviewBundle, buildReviewerPrompt, deterministicWorldImportChecks, generateQaQuestions, lintWorldImport, parseStructuredPostMergeReviewOutput, parseStructuredReviewerOutput, runReviewerModelEvaluation, writeEvaluationResult } from "./world-import/eval.js";
+import { emitWorldLibrary } from "./world-import/emit.js";
 import { writeExtractionStage, writeManifest, writeMergeStage, writeNormalizedUnit } from "./world-import/staging.js";
 
 async function createReviewableWorldOutput(options: { includeSourcePage?: boolean } = {}): Promise<string> {
@@ -192,6 +193,7 @@ test("reviewer prompt JSON example includes all scored dimensions", async () => 
   const output = await createReviewableWorldOutput();
   const prompt = buildReviewerPrompt(await buildReviewBundle(output));
   assert.match(prompt, /enriched instead of duplicated/);
+  assert.match(prompt, /important named references in entity, place, thing, fact, and style prose/);
   for (const dimension of [
     "entityRecall",
     "detailRichness",
@@ -220,6 +222,7 @@ test("post-merge review prompt focuses repairable semantic gaps", async () => {
   assert.match(prompt, /focused world-import intermediate reviewer/);
   assert.match(prompt, /plot-critical objects/);
   assert.match(prompt, /omission/);
+  assert.match(prompt, /inline traversal links in any sampled concept page/);
   assert.match(prompt, /"repairRecommended"/);
   assert.match(prompt, /"requestedActions"/);
   assert.match(prompt, /Deterministic pre-review inventory/);
@@ -242,6 +245,35 @@ test("post-merge review parser does not trigger repairs for malformed output", (
   assert.equal(parsed.parseStatus, "missing");
   assert.equal(parsed.repairRecommended, false);
   assert.deepEqual(parsed.requestedActions, []);
+});
+
+test("emitted inline artifact links resolve and pass structural lint", async () => {
+  const output = await createReviewableWorldOutput();
+  await writeMergeStage(output, {
+    version: 1,
+    kind: "merge",
+    artifacts: [
+      {
+        id: "alice",
+        group: "people",
+        title: "Alice",
+        sections: [{ heading: "Summary", body: "[[glass-tower|The Glass Tower]] shelters Alice." }],
+        provenance: [{ sourceId: "s", unitId: "u", startAnchor: "b0001", endAnchor: "b0001", quote: "Alice." }],
+      },
+      {
+        id: "glass-tower",
+        group: "places",
+        title: "Glass Tower",
+        sections: [{ heading: "Summary", body: "A tower." }],
+        provenance: [{ sourceId: "s", unitId: "u", startAnchor: "b0001", endAnchor: "b0001", quote: "A tower." }],
+      },
+    ],
+  });
+  await emitWorldLibrary(output);
+  const alice = await readFile(join(output, "world", "people", "alice.md"), "utf-8");
+  assert.match(alice, /\[The Glass Tower\]\(\.\.\/places\/glass-tower\.md\)/);
+  const lint = await lintWorldImport(output);
+  assert.equal(lint.passed, true, JSON.stringify(lint.diagnostics));
 });
 
 test("lint reports unresolved related ids and wikilinks", async () => {

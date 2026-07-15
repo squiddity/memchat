@@ -42,6 +42,32 @@ test("renders OKF-style frontmatter without semantic inference", () => {
   assert.doesNotMatch(markdown, /Attributes/);
 });
 
+test("resolves inline artifact markers across groups and avoids protected regions", () => {
+  const markdown = renderArtifactMarkdown({
+    id: "ada",
+    group: "people",
+    title: "Ada",
+    sections: [{
+      heading: "Summary",
+      body: "[[glass-tower|The Glass Tower]] shelters Ada. `[[glass-tower]]` stays code.\n\n```md\n[[glass-tower]]\n```\nSee [the tower](../places/glass-tower.md). https://example.test/[[glass-tower]] [[ada|Ada]] remains here. [[missing|missing thing]].",
+    }],
+    provenance: [{ sourceId: "chapter-1", unitId: "chapter-1-u001", startAnchor: "b0001", endAnchor: "b0001", quote: "Ada." }],
+  }, {
+    relatedTargets: { ada: "people/ada.md", "glass-tower": "places/glass-tower.md" },
+    sourceTargets: {},
+    currentRelativePath: "people/ada.md",
+    currentArtifactId: "ada",
+  });
+  assert.match(markdown, /\[The Glass Tower\]\(\.\.\/places\/glass-tower\.md\)/);
+  assert.match(markdown, /`\[\[glass-tower\]\]`/);
+  assert.match(markdown, /```md\n\[\[glass-tower\]\]\n```/);
+  assert.match(markdown, /See \[the tower\]\(\.\.\/places\/glass-tower\.md\)\./);
+  assert.match(markdown, /https:\/\/example\.test\/\[\[glass-tower\]\]/);
+  assert.match(markdown, /Ada remains here\./);
+  assert.match(markdown, /\[\[missing\|missing thing\]\]/);
+  assert.doesNotMatch(markdown, /\[Ada\]\(\.\.\/people\/ada\.md\)/);
+});
+
 test("emits artifact packets into group directories with portable related links", async () => {
   const output = await tempDir();
   await writeMergeStage(output, {

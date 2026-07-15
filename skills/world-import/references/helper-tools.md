@@ -82,6 +82,19 @@ Modes:
 
 This is preferred over writing a giant merge JSON document by hand. It validates by default; pass `--allow-empty-quotes` only for temporary drafts.
 
+### `write-artifacts`
+
+Atomically add or replace a bounded JSON array of model-authored artifact packets:
+
+```bash
+npm run world-import-helper -- write-artifacts \
+  --output <output> \
+  --mode upsert \
+  --file artifacts.json
+```
+
+All IDs in the array are automatically considered planned link/related targets while validating the batch. If any packet fails, the helper writes none of them. Prefer batches of roughly 5-12 artifacts so merge progress is frequent, inspectable, and resumable. This helper does not transform extraction payloads or decide identity, grouping, prose, links, or candidate dispositions.
+
 ### `patch-merge`
 
 Apply constrained structural patches, currently useful for provenance replacement/removal and candidate disposition additions.
@@ -217,6 +230,8 @@ Avoid these unless no helper can support the task:
 
 - Python dictionaries mapping chapter numbers to source hashes.
 - Handwritten `sid(n)`, `uid(n)`, or `ref(n, ...)` functions.
+- Executable JavaScript/Python/shell generators that embed many artifacts or prose strings.
+- One all-or-nothing merge packet when bounded `write-artifacts` batches can preserve progress.
 - Placeholder quote strings in final artifacts.
 - Treating clean lint as proof that provenance is high quality.
 - Leaving detailed artifacts supported only by story-title or heading refs.

@@ -319,8 +319,9 @@ export async function validateArtifact(options: ArtifactValidationOptions): Prom
 async function readOptionalMergeStage(outputRoot: string): Promise<StageEnvelope | undefined> {
   try {
     return await readMergeStage(outputRoot);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
 }
 
@@ -357,6 +358,49 @@ export async function writeArtifact(options: {
   else stage.artifacts[existingIndex] = options.artifact;
   await writeMergeStage(options.outputRoot, stage);
   return { wrote: true, mode: options.mode, artifactId: options.artifact.id, artifactCount: stage.artifacts.length, ...(validation ? { validation } : {}) };
+}
+
+export async function writeArtifacts(options: {
+  outputRoot: string;
+  artifacts: ArtifactPacket[];
+  mode: "add" | "replace" | "upsert";
+  validate?: boolean;
+  allowEmptyQuotes?: boolean;
+  plannedIds?: string[];
+}): Promise<{ wrote: boolean; mode: string; artifactIds: string[]; artifactCount: number; validations?: ArtifactValidationResult[] }> {
+  if (!Array.isArray(options.artifacts) || options.artifacts.length === 0) throw new Error("artifacts must be a non-empty array");
+  const duplicateIds = options.artifacts.map((artifact) => artifact.id).filter((id, index, ids) => ids.indexOf(id) !== index);
+  if (duplicateIds.length > 0) throw new Error(`artifact batch contains duplicate ids: ${[...new Set(duplicateIds)].join(", ")}`);
+
+  const stage = await readOptionalMergeStage(options.outputRoot) ?? emptyMergeStage();
+  stage.kind = "merge";
+  stage.version = 1;
+  stage.artifacts ??= [];
+  stage.candidateDispositions ??= [];
+  stage.diagnostics ??= [];
+  const batchIds = options.artifacts.map((artifact) => artifact.id);
+  const plannedIds = [...new Set([...(options.plannedIds ?? []), ...batchIds])];
+  const validations: ArtifactValidationResult[] = [];
+
+  for (const artifact of options.artifacts) {
+    const existingIndex = stage.artifacts.findIndex((item) => item.id === artifact.id);
+    if (options.mode === "add" && existingIndex !== -1) throw new Error(`Artifact ${artifact.id} already exists`);
+    if (options.mode === "replace" && existingIndex === -1) throw new Error(`Artifact ${artifact.id} does not exist`);
+    if (options.validate !== false) {
+      const stageForValidation = { ...stage, artifacts: stage.artifacts.filter((item) => item.id !== artifact.id) } satisfies StageEnvelope;
+      const validation = await validateArtifact({ outputRoot: options.outputRoot, artifact, allowEmptyQuotes: options.allowEmptyQuotes, plannedIds, existingMerge: stageForValidation });
+      validations.push(validation);
+      if (!validation.passed) return { wrote: false, mode: options.mode, artifactIds: batchIds, artifactCount: stage.artifacts.length, validations };
+    }
+  }
+
+  for (const artifact of options.artifacts) {
+    const existingIndex = stage.artifacts.findIndex((item) => item.id === artifact.id);
+    if (existingIndex === -1) stage.artifacts.push(artifact);
+    else stage.artifacts[existingIndex] = artifact;
+  }
+  await writeMergeStage(options.outputRoot, stage);
+  return { wrote: true, mode: options.mode, artifactIds: batchIds, artifactCount: stage.artifacts.length, ...(options.validate === false ? {} : { validations }) };
 }
 
 function candidateKey(unitId: string | undefined, candidateId: string): string {
@@ -775,7 +819,8 @@ export async function emitLintRepairLoop(outputRoot: string, maxIterations = 1):
       break;
     }
   }
-  return { passed: lint.passed, iterations, written, lint, coverage, repairSummaryPath };
+  const coveragePassed = coverage.recommendations.every((item) => item.level !== "error") && coverage.unitCoverage.every((unit) => unit.diagnostics.every((item) => item.level !== "error"));
+  return { passed: lint.passed && coveragePassed, iterations, written, lint, coverage, repairSummaryPath };
 }
 
 export async function patchMerge(outputRoot: string, operations: unknown[]): Promise<{ patched: boolean; artifactCount: number; backupPath: string; validation: { passed: boolean; diagnostics: LintDiagnostic[] } }> {
@@ -820,6 +865,13 @@ export async function patchMerge(outputRoot: string, operations: unknown[]): Pro
 export async function readArtifactFromFileOrStdin(file: string | undefined, stdinText: string): Promise<ArtifactPacket> {
   const text = file ? await readFile(file, "utf-8") : stdinText;
   return JSON.parse(text) as ArtifactPacket;
+}
+
+export async function readArtifactsFromFileOrStdin(file: string | undefined, stdinText: string): Promise<ArtifactPacket[]> {
+  const text = file ? await readFile(file, "utf-8") : stdinText;
+  const parsed = JSON.parse(text) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("artifact batch must be a JSON array");
+  return parsed as ArtifactPacket[];
 }
 
 export async function readPatchFromFileOrStdin(file: string | undefined, stdinText: string): Promise<unknown[]> {
