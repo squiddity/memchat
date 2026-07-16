@@ -179,6 +179,33 @@ herdr pane close "$review_pane"
 
 This is an on-demand, read-only browser review surface, not a public documentation host. If Tailscale address or DNS discovery fails, diagnose that local prerequisite; do **not** bind publicly, add a tunnel/reverse proxy, add viewer authentication, or leave a persistent service running. Browser preferences are isolated to a temporary runtime home and are discarded when the viewer stops.
 
+### Raw JSON artifact review over Tailscale
+
+Use the separate artifact viewer for U1 source, extraction, orchestration, and later JSON-stage packets. It is read-only, mounts one repository-contained root, exposes only `.json` files, rejects symlinks/path escapes, and uses `vanilla-jsoneditor` for tree, raw, and table views. It can run concurrently with the Markdown viewer on its stable default port `8522`.
+
+```bash
+artifact_pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label artifacts --no-focus \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>console.log(JSON.parse(s).result.root_pane.pane_id))')
+herdr pane rename "$artifact_pane" "artifact-review"
+herdr pane run "$artifact_pane" "npm run artifact-review"
+```
+
+The default root is `.memchat-agent-testing/output/`. Supply one explicit repository-contained root when requested:
+
+```bash
+npm run artifact-review -- .memchat-agent-testing/output/frankenstein-deepseek-v4
+# Use a different valid port only if 8522 is occupied:
+npm run artifact-review -- .memchat-agent-testing/output/frankenstein-deepseek-v4 --port 8530
+```
+
+The server announces `Artifact review URL: <tailscale-url>`. Inspect its retained output with `herdr pane read <artifact-pane> --source recent-unwrapped --lines 120`; it is active only while that current URL is present and the pane has not returned to a shell prompt. Reuse an existing inactive `artifacts` pane rather than creating another one. Close the exact pane after review or before session end:
+
+```bash
+herdr pane close "$artifact_pane"
+```
+
+Do not replace a Tailscale discovery failure with a public bind, tunnel, reverse proxy, or authentication workaround.
+
 ### Inspecting a run
 
 ```bash

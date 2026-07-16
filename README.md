@@ -20,7 +20,7 @@ Make multi-session chat feel consistent over time: if the agent invents or learn
 - support session restarts, recall commands, ignore/tombstone commands, and memory inspection
 - support agent-driven interactive-shell playtesting
 - provide a skill-first world-import pipeline for provenance-rich, OKF-compatible markdown world wiki bundles from HTML-like sources
-- expose requested generated Markdown trees for temporary, Tailscale-only browser review
+- expose requested generated Markdown trees and raw JSON artifact trees through separate temporary, Tailscale-only browser reviewers
 
 ## Design principle
 
@@ -53,7 +53,7 @@ For project commands that may run for a while or emit useful streaming output, u
 - [`docs/playtesting.md`](docs/playtesting.md) — interactive-shell playtesting workflow and agent defaults
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
-- [`docs/world-import.md`](docs/world-import.md) — shell quick-start, temporary Tailscale browser review, architecture, helper commands, lint/eval, and debugging
+- [`docs/world-import.md`](docs/world-import.md) — shell quick-start, temporary Tailscale Markdown/JSON browser review, architecture, helper commands, lint/eval, and debugging
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 
 ## Status
