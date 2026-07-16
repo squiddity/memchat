@@ -39,6 +39,18 @@ function registerMemImportTool(pi: ExtensionAPI, definition: Parameters<Extensio
   pi.registerTool({ ...definition, renderResult: renderMemImportResult });
 }
 
+const actorAuditSchema = Type.Object({
+  model: Type.Optional(Type.String({ minLength: 1, description: "Sanitized model identifier; never include credentials." })),
+  thinking: Type.Optional(Type.String({ minLength: 1, description: "Sanitized thinking setting; never include chain-of-thought." })),
+}, { additionalProperties: false });
+
+const assignmentAuditSchema = Type.Object({
+  parent: Type.Optional(actorAuditSchema),
+  worker: Type.Optional(actorAuditSchema),
+  adapter: Type.Optional(Type.String({ minLength: 1, description: "Worker adapter identity." })),
+  profile: Type.Optional(Type.String({ minLength: 1, description: "Worker role/profile identity." })),
+}, { additionalProperties: false });
+
 const coordinatorSchema = {
   outputRoot: Type.String({ description: "Absolute or relative mem-import output root; it is canonicalized and bound when the run begins." }),
   runId: Type.String({ description: "Run identifier returned by mem_import_begin." }),
@@ -105,9 +117,12 @@ export default function memImportTools(pi: ExtensionAPI) {
     name: "mem_import_begin",
     label: "Begin Mem Import",
     description: "Create a run scoped to one output root and return coordinator authority. This does not normalize or choose semantic work.",
-    parameters: Type.Object({ outputRoot: coordinatorSchema.outputRoot }),
+    parameters: Type.Object({
+      outputRoot: coordinatorSchema.outputRoot,
+      audit: Type.Optional(Type.Object({ parent: Type.Optional(actorAuditSchema) }, { additionalProperties: false })),
+    }),
     async execute(_id, params) {
-      try { return result(await service.begin(params.outputRoot)); } catch (error) { return failure(error); }
+      try { return result(await service.begin(params.outputRoot, params.audit)); } catch (error) { return failure(error); }
     },
   });
 
@@ -150,6 +165,9 @@ export default function memImportTools(pi: ExtensionAPI) {
       taskId: Type.String({ description: "Unique task identifier for this extractor attempt." }),
       unitIds: Type.Array(Type.String(), { minItems: 1, description: "Normalized unit IDs this extractor may read and submit." }),
       expiresAt: Type.Optional(Type.String({ description: "Optional future ISO timestamp for assignment expiry." })),
+      supersedesTaskIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Live overlapping task IDs this new task explicitly supersedes." })),
+      retriesTaskId: Type.Optional(Type.String({ minLength: 1, description: "Prior revoked or expired task this fresh task retries." })),
+      audit: Type.Optional(assignmentAuditSchema),
     }),
     async execute(_id, params) {
       try { return result(await service.assignExtractor(params)); } catch (error) { return failure(error); }
@@ -169,12 +187,13 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_source_read_unit",
     label: "Read Assigned Source Unit",
-    description: "Read a bounded normalized source unit only when it is assigned to this extractor task. If truncated, use totalChars, returnedChars, and nextAnchor to continue with a later anchor range rather than treating the prefix as complete coverage.",
+    description: "Read a bounded normalized source unit only when it is assigned to this extractor task. When truncated, pass continuationCursor unchanged to obtain the next monotonic page; anchors remain provenance identifiers, not arbitrary character cursors.",
     parameters: Type.Object({
       ...extractorSchema,
       unitId: Type.String({ description: "Assigned normalized unit ID." }),
       startAnchor: Type.Optional(Type.String({ description: "Optional inclusive local start anchor; requires endAnchor." })),
       endAnchor: Type.Optional(Type.String({ description: "Optional inclusive local end anchor; requires startAnchor." })),
+      continuationCursor: Type.Optional(Type.String({ minLength: 1, description: "Opaque cursor returned from a truncated read. Do not combine with anchors." })),
       maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 50000, description: "Maximum returned source characters; defaults to 12000." })),
     }),
     async execute(_id, params) {
@@ -205,7 +224,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_extraction_validate",
     label: "Validate Extraction Packet",
-    description: "Validate a structured version-1 extraction packet against the assigned normalized unit without writing it. The stage schema is model-visible; assignment-specific identity and anchors remain runtime-checked.",
+    description: "Validate a structured version-1 extraction packet against the assigned normalized unit without writing it. The stage schema is model-visible; assignment-specific identity, anchors, and literal quote excerpts remain runtime-checked.",
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }), stage: extractionStageSchema }),
     async execute(_id, params) {
       try {
@@ -218,7 +237,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_extraction_submit",
     label: "Submit Extraction Packet",
-    description: "Atomically persist a structured version-1 extraction packet only for a unit assigned to this extractor task.",
+    description: "Atomically persist a structured version-1 extraction packet only for a unit assigned to this extractor task. A revoked or superseded worker cannot replace a newer packet.",
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }), stage: extractionStageSchema }),
     async execute(_id, params) {
       try { return result(await service.submitExtraction(params)); } catch (error) { return failure(error); }

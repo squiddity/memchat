@@ -21,7 +21,7 @@ Do **not** create a sibling test directory under a shared `projects/` folder and
 }
 ```
 
-When `HERDR_ENV=1`, start the coordinator as a persistent interactive coding-agent pane (for example, `herdr agent start ... -- pi --approve`) from that workspace, then invoke `/skill:mem-import`. Do **not** use a one-shot print/shell job for a parent that launches async children: it can exit after dispatch and miss child completion steering. Keep the parent pane alive until it has inspected durable extraction packets; close the parent/child panes and delete only the run output after the demonstration. Retain the ignored workspace for later tests.
+When `HERDR_ENV=1`, start a long-lived coordinator in a dedicated tab as a persistent interactive coding-agent pane (for example, `herdr agent start ... -- pi --approve`) from that workspace, then invoke `/skill:mem-import`. Output roots are resolved from the coordinator's current working directory: a coordinator launched in `<repo>/.memchat-agent-testing/` must pass `output/<run-name>` or an absolute `<repo>/.memchat-agent-testing/output/<run-name>`—never prefix the workspace name again. Do **not** use a one-shot print/shell job for a parent that launches async children: it can exit after dispatch and miss child completion steering. Keep the parent pane alive until it has inspected durable extraction packets; close the parent/child panes and delete only the run output after the demonstration. Retain the ignored workspace for later tests.
 
 ## 1. Discover the active worker facility
 

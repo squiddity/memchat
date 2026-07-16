@@ -3,7 +3,7 @@ title: "feat: Move world-import to model-led subagent orchestration with typed t
 type: feat
 date: 2026-07-15
 origin: conversation and subagent-extension research
-status: in progress; U0/U1 implemented, U1a hardening next
+status: in progress; U0/U1/U1a implemented and validated, U2 next
 ---
 
 # feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
@@ -19,7 +19,20 @@ Two manual Herdr U1 runs over the same 30-unit *Frankenstein* corpus are retaine
 
 Both runs have complete per-unit extraction coverage, non-empty candidate packets, unit-local source/anchor provenance, hashed rather than raw durable grants, and revoked assignments for their recorded retries. They demonstrate the U1 artifact handoff and grant mechanics, but do **not** complete U1 acceptance: a direct artifact check found non-literal provenance quotes in 139/354 and 121/374 refs respectively. Examples include copied anchor display markers, typography substitutions, and ellipsized excerpts. The current submit validator verifies envelope shape and source/unit/anchor scope, not quote text. The run records also do not yet persist resolved worker model, adapter, or lifecycle identity; directory names are not an audit contract.
 
-U1a below closes these correctness/audit gaps. Do not run another model-backed extraction comparison until its three hardening items and tests are complete; then repeat the two-model corpus comparison and record the required audit evidence.
+U1a below closed these correctness/audit gaps. Its deterministic tests, retained-run reinspection, and a fresh tiered model run are recorded in the following update.
+
+## Progress Update — 2026-07-16 (U1a complete)
+
+U1a is implemented and validated. Extraction validation now requires every provenance quote to be a literal contiguous excerpt of the cited normalized block range (canonical multi-block join: `\n\n`); it rejects rendered anchor labels, ellipses, typography substitutions, and unrelated text. Bounded source reads use a monotonic continuation cursor even within an oversized block. Live extractor assignments cannot overlap; revocation, explicit supersession, fresh retry IDs, and stale-submit protection are durable. Run/task records retain sanitized parent/worker model and thinking, adapter/profile, lifecycle, retry/supersession links, and per-packet hashes without raw grants.
+
+The full TypeScript suite passed (`npm test`: 105 tests), as did `npm run build` and the focused mem-import test suite.
+
+The two retained U1 Frankenstein bundles were reinspected with the new literal-quote rule:
+
+- `.memchat-agent-testing/output/frankenstein-full`: 234/354 valid refs and 120 invalid refs (primarily 111 ellipsized quotes).
+- `.memchat-agent-testing/output/frankenstein-deepseek-v4`: 255/374 valid refs and 119 invalid refs (59 ellipsized and 57 other non-literal source mismatches, plus minor marker/typography cases).
+
+A fresh tiered extraction then completed with `openrouter/deepseek/deepseek-v4-pro` (coordinator, high thinking) and `openrouter/deepseek/deepseek-v4-flash` (workers, medium thinking): 30/30 submitted assignments, 490 candidates, and 570/570 literal provenance refs. All 30 assignments carry sanitized model/thinking, adapter/profile, and submitted lifecycle evidence; there were no retries, supersessions, or failures. Its durable audit is at `.memchat-agent-testing/.memchat-agent-testing/output/frankenstein-u1a-deepseek-tiered/stages/orchestration/u1a-quote-integrity-audit.json`. The nested path is retained as historical run evidence; coordinator guidance now requires an absolute output root or an `output/<run-name>` root relative to the test workspace.
 
 ## Goal Capsule
 
@@ -1078,17 +1091,7 @@ These are implementation decisions, not blockers to the architectural direction.
 
 ## Recommended Next Session
 
-Resume with **U1a only**. Do not launch another model-backed extraction run, broaden worker fanout, migrate the CLI, or start U2 until its three correctness items have deterministic tests.
-
-Suggested sequence:
-
-1. Implement and test extraction quote-integrity validation against the normalized cited range.
-2. Implement and test a monotonic continuation protocol for a normalized block larger than the bounded source-read limit.
-3. Implement and test live-assignment overlap prevention, revoke/supersede-and-reassign flow, and stale-submit protection.
-4. Add the minimum sanitized worker/audit fields needed to distinguish the two model runs by durable evidence rather than output-directory names.
-5. Reinspect the two retained U1 artifact sets with the new deterministic diagnostics. Then run a fresh two-model comparison only if U1a passes.
-6. Record adapter/version, extension provenance observations, lifecycle limitations, and coordinator suitability rationale; then resume the deferred child-extension-provenance follow-up.
-7. Do not change the legacy runner or migrate the CLI during this unit.
+Resume with **U2 only**. U1a's correctness gate is complete; do not migrate the CLI. Start by designing the coordinator-facing typed merge/review surface, single-writer merge lease, and revision/CAS contract. Preserve the legacy `world-import` runner during that work.
 
 ## New-Session Resume Checklist
 
@@ -1111,7 +1114,7 @@ A new planning/implementation session should know:
 - `pi-subagents` is a candidate that an account-level host agent may already have installed. The U0 disposable test showed usable lifecycle/correlation signals plus profile/acceptance limitations; it is not a memchat dependency or chosen CLI backend.
 - We agreed not to ask the model to build a worker extension live.
 - We agreed to hold off on our own SDK worker and defer all CLI/backend decisions until the interactive host-agent path supplies evidence.
-- No implementation changes were made during this design discussion beyond adding this plan document.
+- U0, U1, and U1a are implemented; U1a has deterministic and model-backed extraction evidence. U2 remains unimplemented.
 
 ## Sources and Evidence
 

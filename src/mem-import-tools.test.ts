@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -80,7 +80,9 @@ test("mem-import typed extraction flow normalizes, scopes reads, and atomically 
   assert.equal(source.unit.sourceId, units[0]!.sourceId);
 
   const submitted = await service.submitExtraction({ ...assignment, unitId: units[0]!.unitId, stage: validStage(units[0]!) });
-  assert.deepEqual(submitted, { unitId: units[0]!.unitId, candidateCount: 1 });
+  assert.equal(submitted.unitId, units[0]!.unitId);
+  assert.equal(submitted.candidateCount, 1);
+  assert.match(submitted.packetHash, /^[a-f0-9]{64}$/);
   const persisted = JSON.parse(await readFile(join(output, "stages", "extraction", `${units[0]!.unitId}.json`), "utf-8")) as StageEnvelope;
   assert.equal(persisted.candidates?.[0]?.title, "Ada");
 
@@ -99,37 +101,147 @@ test("mem-import typed extraction flow normalizes, scopes reads, and atomically 
   assert.match(await readFile(join(input, "one.html"), "utf-8"), /Ada guards/);
 });
 
-test("mem-import source reads expose an anchor-safe continuation after truncation", async () => {
+test("mem-import validates literal single- and multi-block provenance quotes", async () => {
   const root = await tempDir();
   const input = join(root, "input");
   const output = join(root, "output");
   await mkdir(input);
-  await writeFile(join(input, "chapter.html"), "<html><body><p>First source block is deliberately long.</p><p>Second source block is deliberately long.</p><p>Third source block is deliberately long.</p></body></html>", "utf-8");
+  await writeFile(join(input, "chapter.html"), "<html><body><p>Straight quotes can't be changed.</p><p>Second block remains exact.</p></body></html>", "utf-8");
   const service = new MemImportService();
   const run = await service.begin(output);
-  const manifest = await service.normalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, input });
-  const unit = manifest.units[0]!;
+  const unit = (await service.normalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, input })).units[0]!;
+  const assignment = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "quote-check", unitIds: [unit.unitId] });
+  const stage = validStage(unit);
+  const ref = stage.candidates![0]!.provenance[0]!;
+  ref.quote = "quotes can't be"; // A bounded literal excerpt inside one block.
+  await service.validateExtraction({ ...assignment, unitId: unit.unitId, stage });
+  ref.endAnchor = unit.anchors[1]!;
+  ref.quote = "Straight quotes can't be changed.\n\nSecond block remains exact.";
+  await service.validateExtraction({ ...assignment, unitId: unit.unitId, stage });
+
+  for (const quote of [
+    "[b0001] Straight quotes can't be changed.",
+    "Straight quotes…",
+    "Straight quotes can’t be changed.",
+    "Not present in this source.",
+  ]) {
+    ref.quote = quote;
+    await assert.rejects(
+      service.validateExtraction({ ...assignment, unitId: unit.unitId, stage }),
+      /literal contiguous excerpt/,
+      quote,
+    );
+  }
+});
+
+test("mem-import source reads use a monotonic cursor even inside one oversized block", async () => {
+  const root = await tempDir();
+  const input = join(root, "input");
+  const output = join(root, "output");
+  await mkdir(input);
+  const oversized = "An oversized source block must be paginated without replaying its prefix. ".repeat(8);
+  await writeFile(join(input, "chapter.html"), `<html><body><p>${oversized}</p></body></html>`, "utf-8");
+  const service = new MemImportService();
+  const run = await service.begin(output);
+  const unit = (await service.normalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, input })).units[0]!;
   const assignment = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "paginated-read", unitIds: [unit.unitId] });
 
-  const first = await service.readAssignedUnit({ ...assignment, unitId: unit.unitId, maxChars: 50 });
-  assert.equal(first.truncated, true);
-  assert.equal(first.nextAnchor, unit.anchors[1]);
-  assert.equal(first.returnedChars, first.content.length);
-  assert.ok(first.totalChars > first.returnedChars);
-  assert.match(first.content, /First source block/);
-  assert.doesNotMatch(first.content, /Second source block/);
+  const pages: string[] = [];
+  let page = await service.readAssignedUnit({ ...assignment, unitId: unit.unitId, maxChars: 17 });
+  pages.push(page.content);
+  assert.equal(page.truncated, true);
+  assert.ok(page.continuationCursor);
+  while (page.continuationCursor) {
+    page = await service.readAssignedUnit({ ...assignment, unitId: unit.unitId, continuationCursor: page.continuationCursor, maxChars: 17 });
+    pages.push(page.content);
+  }
+  assert.equal(page.truncated, false);
+  assert.equal(pages.join(""), `[${unit.anchors[0]}] ${oversized.trimEnd()}`);
+  assert.ok(pages.every((part, index) => index === 0 || !part.startsWith(pages[0]!)));
 
-  const remainder = await service.readAssignedUnit({
-    ...assignment,
-    unitId: unit.unitId,
-    startAnchor: first.nextAnchor!,
-    endAnchor: unit.anchors.at(-1)!,
-    maxChars: 1_000,
+  await assert.rejects(
+    service.readAssignedUnit({ ...assignment, unitId: unit.unitId, continuationCursor: "not-a-cursor" }),
+    /Invalid source continuation cursor/,
+  );
+  const first = await service.readAssignedUnit({ ...assignment, unitId: unit.unitId, maxChars: 17 });
+  const normalizedPath = join(output, "sources", "normalized", `${unit.unitId}.json`);
+  const normalized = JSON.parse(await readFile(normalizedPath, "utf-8")) as Record<string, unknown>;
+  normalized.contentHash = "replaced-content";
+  await writeFile(normalizedPath, `${JSON.stringify(normalized)}\n`, "utf-8");
+  await assert.rejects(
+    service.readAssignedUnit({ ...assignment, unitId: unit.unitId, continuationCursor: first.continuationCursor! }),
+    /Stale source continuation cursor/,
+  );
+});
+
+test("mem-import prevents live assignment overlap and stale submissions after revoke or supersession", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const unit = units[0]!;
+  const first = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "first", unitIds: [unit.unitId] });
+  await assert.rejects(
+    service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "overlap", unitIds: [unit.unitId] }),
+    /live extractor assignment/,
+  );
+
+  await service.revokeAssignment({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: first.taskId });
+  const retry = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "retry", unitIds: [unit.unitId], retriesTaskId: first.taskId });
+  await service.submitExtraction({ ...retry, unitId: unit.unitId, stage: validStage(unit) });
+  await assert.rejects(
+    service.submitExtraction({ ...first, unitId: unit.unitId, stage: validStage(unit) }),
+    /was revoked/,
+  );
+
+  const replacement = await service.assignExtractor({
+    outputRoot: output,
+    runId: run.runId,
+    coordinatorGrant: run.coordinatorGrant,
+    taskId: "replacement",
+    unitIds: [unit.unitId],
+    supersedesTaskIds: [retry.taskId],
   });
-  assert.equal(remainder.truncated, false);
-  assert.equal(remainder.nextAnchor, undefined);
-  assert.match(remainder.content, /Second source block/);
-  assert.match(remainder.content, /Third source block/);
+  await service.submitExtraction({ ...replacement, unitId: unit.unitId, stage: validStage(unit) });
+  await assert.rejects(
+    service.submitExtraction({ ...retry, unitId: unit.unitId, stage: validStage(unit) }),
+    /was superseded/,
+  );
+
+  const retryRecord = JSON.parse(await readFile(join(output, "stages", "orchestration", "assignments", "retry.json"), "utf-8")) as Record<string, unknown>;
+  assert.equal(retryRecord.retriesTaskId, first.taskId);
+  assert.equal(retryRecord.supersededByTaskId, replacement.taskId);
+  assert.equal(retryRecord.lifecycleOutcome, "superseded");
+});
+
+test("mem-import persists redacted run, assignment, and packet-effect audit evidence", async () => {
+  const root = await tempDir();
+  const input = join(root, "input");
+  const output = join(root, "output");
+  await mkdir(input);
+  await writeFile(join(input, "chapter.html"), "<html><body><p>Ada guards the glass tower.</p></body></html>", "utf-8");
+  const service = new MemImportService();
+  const run = await service.begin(output, { parent: { model: "parent/model", thinking: "high" } });
+  const unit = (await service.normalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, input })).units[0]!;
+  const assignment = await service.assignExtractor({
+    outputRoot: output,
+    runId: run.runId,
+    coordinatorGrant: run.coordinatorGrant,
+    taskId: "audited-worker",
+    unitIds: [unit.unitId],
+    audit: { parent: { model: "parent/model", thinking: "high" }, worker: { model: "worker/model", thinking: "low" }, adapter: "pi-subagents", profile: "mem-import-extractor" },
+  });
+  const receipt = await service.submitExtraction({ ...assignment, unitId: unit.unitId, stage: validStage(unit) });
+  const runRecord = await readFile(join(output, "stages", "orchestration", "run.json"), "utf-8");
+  const taskRecord = await readFile(join(output, "stages", "orchestration", "assignments", "audited-worker.json"), "utf-8");
+  const effectsDir = join(output, "stages", "orchestration", "effects", "audited-worker");
+  const effect = JSON.parse(await readFile(join(effectsDir, (await readdir(effectsDir))[0]!), "utf-8")) as Record<string, unknown>;
+  assert.match(runRecord, /parent\/model/);
+  assert.match(taskRecord, /worker\/model/);
+  assert.match(taskRecord, /pi-subagents/);
+  assert.match(taskRecord, /"lifecycleOutcome": "submitted"/);
+  assert.doesNotMatch(`${runRecord}\n${taskRecord}`, new RegExp(run.coordinatorGrant));
+  assert.doesNotMatch(`${runRecord}\n${taskRecord}`, new RegExp(assignment.grant));
+  assert.equal(effect.packetHash, receipt.packetHash);
+  assert.equal(effect.taskId, assignment.taskId);
 });
 
 test("mem-import rejects missing normalization, invalid anchors, revoked, expired, and cross-role assignments", async () => {

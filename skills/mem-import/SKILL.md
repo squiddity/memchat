@@ -7,7 +7,7 @@ description: Coordinate a model-led, artifact-driven world import with installed
 
 `mem-import` is the new model-led coordinator path. It works alongside the legacy `world-import` runner; do not redirect, modify, or depend on the legacy runner as part of this skill.
 
-## Current scope: U1 extraction vertical slice
+## Current scope: U1a hardened extraction vertical slice
 
 The parent coordinator is the model following this skill, not a tool. It chooses models, workers, fanout, waits, retries, escalation, and whether to work inline.
 
@@ -16,8 +16,8 @@ Typed tools are deterministic capabilities. An **extractor** is a worker role: a
 This slice supports:
 
 - run-scoped deterministic normalization and manifest inspection;
-- bounded source reads and extraction-packet validation/submission for assigned units only;
-- durable assignment grants for privileged extractor tools; and
+- bounded monotonic source reads and literal-provenance extraction validation/submission for assigned units only;
+- durable, exclusive extractor assignments with revocation/supersession and sanitized audit evidence; and
 - artifact-backed parent decisions after each worker result.
 
 It does **not** merge, emit, lint, review, finalize, migrate a CLI, or change legacy `world-import`.
