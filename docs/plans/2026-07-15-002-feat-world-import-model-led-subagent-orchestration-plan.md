@@ -6,20 +6,21 @@ origin: conversation and subagent-extension research
 status: decision-ready; implementation not started
 ---
 
-# feat: Move world-import to model-led subagent orchestration with typed tools
+# feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
 
 ## Goal Capsule
 
-Evolve `world-import` from a separate TypeScript program that hard-codes semantic session sequencing into a **thin, model-led orchestration workflow**:
+Build `mem-import` as a **thin, model-led orchestration workflow** alongside the legacy `world-import` TypeScript program that hard-codes semantic session sequencing:
 
-- the main/parent agent reads one world-import coordinator skill;
-- deterministic world-import operations are exposed as typed tools instead of being invoked through `bash`;
+- the main/parent agent reads one `mem-import` coordinator skill;
+- deterministic world-import operations are exposed to `mem-import` as typed tools instead of being invoked through `bash`;
 - the parent inspects durable source, extraction, merge, review, and diagnostic artifacts and decides what to do next;
 - the parent may launch individual workers, parallel fleets, chains, or a facility-native dynamic graph when the available subagent system supports them;
 - worker roles receive only the tools appropriate to their role;
 - deterministic contracts reject invalid operations and finalization refuses incomplete output;
 - model choice, thinking level, worker topology, escalation, repeated review, and repair strategy remain visible experimental variables;
-- the existing standalone CLI becomes a small host for the same skill and tools while preserving output artifact parity.
+- a future `mem-import-cli`, if warranted, may host the same skill and tools while preserving output artifact parity; and
+- legacy `world-import` remains available unchanged until the explicit U4a parity/rollback gate permits deprecation.
 
 This plan is self-contained so a new session can resume design or implementation without replaying the originating discussion.
 
@@ -36,17 +37,34 @@ This plan is self-contained so a new session can resume design or implementation
 7. **Use hybrid review.** Deterministic review remains code; semantic review is performed inline by the parent or by constrained reviewer subagents.
 8. **Require an existing compatible subagent facility.** If none is available, fail with concrete setup guidance. Do not ask the model to create a new worker extension during an import.
 9. **Support model tiering as a first-class experiment.** Parent and workers may use different models/thinking levels, and actual resolved runtime and usage should be audited.
-10. **Shrink the standalone CLI.** It should configure and host the workflow, not duplicate stage sequencing.
-11. **Preserve artifact parity, not exact runner behavior.** Existing output layouts, semantic stage contracts, readiness checks, and audit intent remain stable; invocation/session mechanics may change.
-12. **Hold off on building a custom SDK subagent wrapper.** First evaluate `pi-subagents` as the Herdr-free/CLI worker facility. Retain an adapter boundary so an SDK implementation can be added later if needed.
-13. **Authorize every worker through a durable cross-process assignment grant.** A worker may use typed tools only for its assigned run, role, units/artifacts/actions, and validity window; typed tools validate the grant independently in every child process.
-14. **Give the CLI a non-semantic lifecycle supervisor.** The host waits for authoritative finalized/failed/cancelled state, worker completion, and bounded coordinator continuation without choosing semantic stages.
-15. **Enforce one global merge writer with a lease and revision check.** Atomic file replacement alone is insufficient to prevent lost updates from concurrent merger/repair processes.
-16. **Require trusted adapter profiles or executable conformance probes.** Tool descriptions alone cannot prove allowlist enforcement, recursion prevention, correlation, or cancellation behavior.
+10. **Build `mem-import` alongside legacy `world-import`.** New skills, worker profiles, typed-tool extensions, and `mem-import-cli` use the new name; legacy command paths remain intact through U4a rather than being renamed in place.
+11. **Defer the `mem-import-cli` host decision.** The interactive `mem-import` path is host-agent-led; do not recreate the legacy hermetic embedded-Pi design by default. Decide later whether a CLI is useful and, if it is, make it a thin non-semantic host rather than a stage scheduler.
+12. **Preserve artifact parity, not exact runner behavior.** Existing output layouts, semantic stage contracts, readiness checks, and audit intent remain stable; invocation/session mechanics may change.
+13. **Hold off on building a custom SDK subagent wrapper or bundling `pi-subagents` into memchat.** Evaluate installed host-agent facilities first. A pinned project-local adapter remains a disposable compatibility-test setup, not the intended interactive deployment model.
+14. **Authorize privileged typed-tool workers through durable cross-process assignment grants.** Before a worker can mutate extraction, merge, review, or other scoped world-import state, it must be limited to its assigned run, role, units/artifacts/actions, and validity window; typed tools validate the grant independently in every child process. This hardening is deferred from U0's fixtureless, non-mutating adapter exploration.
+15. **If a future CLI is adopted, give it a non-semantic lifecycle supervisor.** The host must wait for authoritative finalized/failed/cancelled state, worker completion, and bounded coordinator continuation without choosing semantic stages.
+16. **Enforce one global merge writer with a lease and revision check.** Atomic file replacement alone is insufficient to prevent lost updates from concurrent merger/repair processes.
+17. **Begin adapter evaluation as a model-led, artifact/outcome-led experiment.** The strong coordinator inspects installed facilities, makes a provisional suitability judgment, and evaluates real low-risk worker outcomes and durable import artifacts before investing in formal adapter proof. Executable conformance and enforcement hardening are deferred until evidence warrants privileged worker tools or a promotion decision; tool descriptions alone remain insufficient to claim proven enforcement.
+
+### Naming and migration boundary
+
+`mem-import` names the new agent-driven coordinator, worker roles, typed-tool extension, and audit-facing orchestration layer. A `mem-import-cli` is only a possible later host surface. The interactive path is intentionally distinct from the legacy `world-import` runner so both paths can coexist and be compared.
+
+For initial parity, the new path continues to consume and produce the existing world-import source, stage, checkpoint, world-output, and audit artifacts. Do **not** rename those on-disk contracts merely because the host/skill is named `mem-import`. A future expansion beyond world-source imports may revisit the artifact vocabulary; that is out of scope for this migration.
+
+`world-import` and its CLI remain the legacy/reference implementation through U4a. After its parity gate passes, choose explicitly whether to deprecate/remove it or retain it as a supported legacy mode; do not silently repoint existing `world-import` commands.
 
 ### Important terminology
 
 This design is best described as **dynamic artifact-driven orchestration**.
+
+### Trust and evaluation posture
+
+The early path deliberately trusts a strong coordinator model to inspect the installed subagent facilities, choose whether and how to use one, and critically assess worker results. It does **not** begin by building a custom adapter fixture or treating a schema claim as a formal security proof.
+
+Worker infrastructure quality is evaluated first through observable outcomes: durable world-import artifacts, deterministic diagnostics/finalization, worker completion behavior, audit records, and the coordinator's review of whether the resulting work is useful and internally consistent. A weak, confused, or insufficiently isolated worker facility is expected to reveal itself through poor artifacts, failed work, missing correlation, or unmanageable lifecycle behavior; the coordinator may retry, escalate, change topology, stop using that facility, or fail clearly.
+
+This is a staged trust decision, not a claim that model inspection proves enforcement. Formal conformance probes, strict cross-process authorization tests, and other hardening remain planned before privileged mutation tools or CLI promotion if the evidence says they are necessary. They are intentionally deferred from U0 so experimentation is led by artifact quality and actual outcomes rather than premature infrastructure construction.
 
 A dependency graph will exist and may be explicitly recorded, but “DAG” does not mean TypeScript owns the semantic pipeline. The main model may author or revise the graph itself, incrementally or in one facility-native chain call.
 
@@ -63,7 +81,7 @@ This plan preserves the semantic and artifact principles from:
 It changes one major control-plane decision from the staged orchestration plan:
 
 - **Previously:** TypeScript runner code chose `extract → merge → readiness → review → repair → final eval` session order.
-- **Now:** the parent agent chooses worker topology and sequencing after inspecting durable state. Typed tools and deterministic gates enforce contracts, while the standalone runner becomes a host rather than the semantic scheduler.
+- **Now:** the parent agent chooses worker topology and sequencing after inspecting durable state. Typed tools and deterministic gates enforce contracts. A future CLI, if chosen, is only a non-semantic host; legacy `world-import` remains available for comparison.
 
 The previous runner remains useful as a source of tested readiness, repair verification, audit, and failure-handling behavior. Those responsibilities should be retained in shared deterministic services, not discarded.
 
@@ -112,7 +130,7 @@ A hard-coded pipeline would hide or eliminate several of these experimental vari
 ┌───────────────────────────────────────────────────────────────┐
 │ Parent Pi agent or other capable harness                      │
 │                                                               │
-│  reads world-import coordinator skill                         │
+│  reads mem-import coordinator skill                           │
 │  inspects durable artifacts                                   │
 │  chooses models, workers, fanout, chains, reviews, repairs     │
 └──────────────────────────────┬────────────────────────────────┘
@@ -139,24 +157,27 @@ A hard-coded pipeline would hide or eliminate several of these experimental vari
 
 ### Host surfaces
 
-1. **Interactive Pi/Herdr host**
-   - parent agent uses an installed compatible subagent extension;
+1. **Interactive Pi/Herdr host — intended initial `mem-import` surface**
+   - the coordinator is the agent already running in the user's host environment and uses that host's account-level `.pi` resources and installed worker facilities;
+   - `mem-import` does not create a project-local Pi installation, pin a worker package under memchat, or shield itself from the host agent's resource catalog;
    - `pi-herdr-subagents` was available in the authoring environment, not guaranteed by this repository;
-   - independent worker panes remain visible and interruptible.
+   - independent worker panes remain visible and interruptible when the selected host provides them.
 
 2. **Ordinary Pi host without Herdr**
-   - `pi-subagents` is the leading candidate;
-   - parent may run workers foreground or async and use `subagent_wait` when a skill must complete in one turn.
+   - the same account-level host-agent principle applies;
+   - `pi-subagents` is a candidate when the host has installed and enabled it, but is not a memchat dependency;
+   - parent may use the host's foreground/async/wait controls when they are actually available.
 
-3. **Standalone memchat CLI host**
-   - creates a hermetic coordinator Pi session;
-   - loads the same coordinator skill and typed tools;
-   - supplies a compatible worker facility;
-   - remains alive until world-import reaches a terminal finalized/failed state;
-   - streams events and cancellation;
-   - contains no semantic stage sequence.
+3. **Disposable compatibility-test workspace**
+   - an isolated subdirectory with a project-local `.pi` and a pinned adapter may be created to inspect a version, reproduce a conflict, or run a bounded experiment;
+   - it is test infrastructure only, not a deployment requirement or resource-loading policy for interactive `mem-import`.
 
-4. **Future harness adapters**
+4. **Possible future `mem-import-cli`**
+   - its existence and hosting/resource policy are deferred;
+   - do not assume it embeds a hermetic Pi session, bundles `pi-subagents`, or inherits legacy `.memchat/pi` behavior;
+   - if pursued, it must remain non-semantic and preserve the artifact/finalization contract.
+
+5. **Future harness adapters**
    - any harness may be used if its subagent facility satisfies the capability contract;
    - adapter-specific invocation guidance belongs in a skill reference, not in semantic world-import instructions.
 
@@ -255,16 +276,17 @@ A compatible worker facility must provide enough control for the parent to:
 
 ### Capability discovery behavior
 
-At workflow start, the parent should inspect its available tools and select an adapter profile.
+At workflow start, the parent should inspect its available tools and make a model-owned adapter selection.
 
-- If a known compatible facility/version is present, follow its trusted profile and run any profile-required startup probe.
-- If an unknown third facility is present, schema/documentation inspection may identify a candidate, but security-critical claims must be demonstrated by an executable conformance probe before use.
-- A conformance probe should prove fresh isolation, exact role-tool visibility, missing-tool failure, no recursive spawning, launch/result correlation, and completion/failure behavior with harmless fixture tools.
-- If a facility cannot prove the required controls, do not use it for a privileged import worker even if its description claims support.
-- If no compatible facility exists, stop before semantic import work and tell the user what is missing.
-- Do not create, install, or code a subagent extension during the import unless the user separately requests a setup task.
+- Known profiles provide evidence and invocation guidance, not an automatic trust verdict.
+- For an unknown third facility, inspect its schema/documentation, then make a limited, low-risk worker attempt when its apparent capabilities make that reasonable.
+- Assess the facility provisionally from observed worker behavior, correlation/lifecycle signals, and—once semantic work begins—the quality and completeness of durable artifacts and deterministic diagnostics. The parent may retry, change adapter/topology/model, continue inline, or stop with setup guidance.
+- Do not claim that an adapter's allowlists, isolation, recursion prevention, or cancellation semantics are formally proven merely from those observations.
+- Defer executable conformance probes and strict authorization proof until privileged worker-facing mutation tools or a promotion decision justify that investment.
+- If no facility appears adequate for the work the coordinator wants to delegate, do not delegate it; explain the limitation or proceed inline where the active tool policy permits.
+- Do not create, install, or code a subagent extension during an import unless the user separately requests a setup task.
 
-The skill must not assume the tool is always named `subagent`; it should describe the contract, include known profiles, and distinguish trusted/probed enforcement from model inference.
+The skill must not assume the tool is always named `subagent`; it should describe the contract, include known profiles, and make the coordinator's provisional, evidence-based judgment explicit.
 
 ## Known Adapter Profile: `pi-herdr-subagents` 0.1.5
 
@@ -336,7 +358,7 @@ The execution schema exposes context, async mode, concurrency, timeout, turn/too
 - `subagent_wait` is explicitly designed to keep a run-to-completion skill or non-interactive `pi -p` invocation alive while async workers finish ([source](https://github.com/nicobailon/pi-subagents/blob/8d2c05e51ce58923dea504b4530dc2643cb25c54/README.md#L594-L598)).
 - Fresh-context workers do not require a persisted parent; forked workers do.
 - The extension launches child Pi CLI processes rather than in-process SDK sessions ([source](https://github.com/nicobailon/pi-subagents/blob/8d2c05e51ce58923dea504b4530dc2643cb25c54/src/runs/shared/pi-spawn.ts#L134-L152)).
-- The standalone host must therefore ensure children see the same hermetic auth, models, package resources, and world-import typed tools.
+- If a future CLI elects to use it, its host/resource policy must be designed explicitly; it must not accidentally recreate the legacy hermetic `.memchat/pi` setup or assume that a project-local test installation is the deployment model.
 - Current package peers are wildcard, but its direct/dev Pi baseline is 0.74 while memchat's current lockfile resolves Pi 0.80.6; compatibility must be tested, not assumed ([source](https://github.com/nicobailon/pi-subagents/blob/8d2c05e51ce58923dea504b4530dc2643cb25c54/package.json#L55-L80)).
 
 ### Extension RPC
@@ -352,15 +374,14 @@ The skill should not reject a capable third extension merely because it is not o
 A generic selection procedure:
 
 1. Identify candidate worker/delegation tools from the active tool catalog.
-2. Compare their schema/documentation to the required capability contract only as preliminary discovery.
-3. Run an adapter conformance fixture using harmless custom tools and a disposable run root.
-4. Prove whether tool restrictions are per spawn, per role, and actually enforced in the child.
-5. Prove completion mode, worker/result correlation, failure reporting, cancellation, and recursion prevention.
-6. Determine model/thinking and cwd controls and verify the resolved runtime is observable when required.
-7. Promote the adapter/version to a trusted profile only after the probe passes; record the probe/profile identity in the import audit.
-8. Fail before work if required controls are absent or cannot be verified.
+2. Compare their schema/documentation to the capability contract as preliminary evidence.
+3. Have the coordinator select a low-risk trial appropriate to the available facility and inspect its completion, correlation, and resulting evidence.
+4. Judge the facility provisionally by observable behavior and, for semantic work, the quality/completeness of durable artifacts plus deterministic diagnostics—not by worker prose alone.
+5. Record the adapter/version, observed limitations, and coordinator rationale in the import audit when available.
+6. Change models, topology, adapter, or stop delegating if outcomes are weak or lifecycle behavior is not manageable.
+7. Add executable conformance probes for exact allowlist enforcement, recursion prevention, cancellation, and authorization only when moving to privileged mutation tools or promoting the infrastructure.
 
-The parent may use any chain, DAG, or parallel feature supplied by a trusted/probed adapter when it remains the author of the workflow and artifact/finalization rules are preserved.
+The parent may use any chain, DAG, or parallel feature supplied by an adapter it judges suitable when it remains the author of the workflow and artifact/finalization rules are preserved.
 
 ## Typed World-Import Tool Design
 
@@ -377,7 +398,7 @@ The parent may use any chain, DAG, or parallel feature supplied by a trusted/pro
 
 ### Cross-process assignment grants
 
-This is a prerequisite for worker-facing tools, not a later detail.
+This is a prerequisite for **privileged worker-facing typed tools**, not a later detail. It is deliberately outside U0's fixtureless, non-mutating adapter exploration; introduce and verify it before enabling extraction submission, merge mutation, review persistence, or other scoped world-state writes.
 
 `world_import_begin` should create a run identity. Before dispatch, the coordinator issues a high-entropy bearer grant and persists only its hash plus an assignment record under a deterministic orchestration path such as:
 
@@ -640,7 +661,7 @@ Reviewer findings are recommendations. The parent decides which repairs are wort
 
 ### Orchestration artifacts
 
-Durable cross-process assignment records are required, although final naming may change. Other projections remain optional:
+Durable cross-process assignment records are required once privileged typed-tool workers are enabled, although final naming may change. They are not required for U0's non-mutating adapter exploration. Other projections remain optional:
 
 ```text
 stages/orchestration/
@@ -706,75 +727,22 @@ Extend the existing invocation audit intent to record parent and worker activity
 
 Do not store hidden thinking text or duplicate large prompts/responses. Preserve compact prompt descriptors and hashes as in the existing invocation-audit plan.
 
-## Standalone CLI Decision
+## `mem-import-cli` Decision: deferred
 
-### Target responsibilities
+`mem-import` is first an interactive, host-agent-led skill path. Do not carry forward the legacy `world-import` assumption that memchat creates a fully hermetic project-local Pi runtime, owns a worker extension in `node_modules`, or shields execution from account-level `.pi` resources.
 
-The CLI should eventually do only:
+A disposable project-local `.pi` installation—such as the U0 `pi-subagents` test workspace—is valid compatibility-test infrastructure. It is not evidence that memchat should package, pin, or load that adapter for normal `mem-import` use.
 
-1. parse input/output/model/auth/runtime options;
-2. create/configure a hermetic coordinator Pi session;
-3. load the world-import coordinator skill and typed tools;
-4. expose/configure a compatible subagent facility;
-5. stream coordinator/worker events and cancellation;
-6. remain alive until finalization/failure;
-7. print the final summary and exit status.
+### Revisit only if a CLI is still needed
 
-It should not contain extraction/merge/review sequencing.
+If the interactive path proves useful and a standalone CLI remains desirable, decide its host/resource policy at that time. Evaluate at least:
 
-### Non-semantic host completion supervisor
+- whether the CLI should require an explicitly selected external host facility, use an account-level Pi environment, or provide another clearly documented model;
+- whether it can discover and use installed adapters without colliding with other extensions that register the same worker tool name;
+- whether children can access the chosen tools, auth, models, and package resources without recreating legacy `.memchat/pi` behavior by accident;
+- whether its lifecycle handling can preserve authoritative terminal state, cancellation, cleanup, audit, and artifact parity without choosing semantic stages.
 
-The host cannot rely solely on the coordinator remembering to call `subagent_wait` and finalize. It owns a lifecycle loop, not a semantic stage loop:
-
-1. Start the coordinator turn and subscribe to world-import run-state plus adapter worker events.
-2. Treat `finalized`, `failed`, and `cancelled` from the authoritative run ledger as terminal.
-3. If the coordinator turn ends while workers remain active, keep the process alive and wait through the adapter's event/wait API.
-4. When worker state changes, deliver a concise follow-up to the coordinator so the model can inspect artifacts and choose the next semantic action.
-5. If no workers remain but the run is still nonterminal, issue a bounded continuation prompt asking the coordinator to continue, explicitly fail, or finalize; do not choose a stage for it.
-6. Enforce idle-continuation, wall-clock, call, and cost budgets. Exhaustion records an incomplete/failed terminal state rather than pretending success.
-7. On cancellation, abort the parent turn, interrupt/stop active workers through the adapter, revoke assignment grants/leases, persist cancellation, and only then exit.
-8. Dispose the Pi session only after authoritative terminal state and worker cleanup.
-
-This supervisor is deterministic lifecycle plumbing. It never decides to extract, merge, review, or repair.
-
-### Candidate worker backend order
-
-1. **Evaluate `pi-subagents` first.** It is Herdr-free and already supplies fresh-context workers, async/foreground execution, `subagent_wait`, timeouts, budgets, stable lifecycle artifacts, and telemetry.
-2. **Use `pi-herdr-subagents` for interactive visible-pane runs when appropriate.** It is not sufficient by itself for ordinary non-Herdr CLI execution.
-3. **Defer a custom SDK wrapper.** Build one only if subprocess hermeticity, dependency/version coupling, or resource discovery make `pi-subagents` unsuitable.
-
-### `pi-subagents` compatibility spike
-
-Before adopting it for the CLI, verify:
-
-1. Decide and prove an explicit distribution/loading policy: pin an exact `pi-subagents` version as an optional/runtime backend dependency (or reject that approach), resolve its extension entry deterministically, and load it through the coordinator `DefaultResourceLoader` rather than relying on account-level installation. Confirm the selected policy works with the current lockfile's Pi 0.80.6 resolution.
-2. Prove how the same pinned extension/package resources are visible to spawned child Pi processes; nested `pi.subagents.agents` metadata has no effect until `pi-subagents` itself is active.
-3. Run a fresh-context child without a persisted parent session.
-4. Make the memchat package expose world-import agent profiles through `pi.subagents.agents` or equivalent supported metadata.
-5. Load world-import typed tools in the child through normal package discovery or `subagentOnlyExtensions`.
-6. Confirm strict role allowlists omit bash/generic write/subagent tools.
-7. Confirm missing typed tools fail before the model turn.
-8. Confirm child processes resolve credentials and custom models from `.memchat/pi` or explicitly supplied environment/runtime paths.
-9. Launch parallel extractor fixtures and use `subagent_wait({ all: true })` in the same coordinator prompt.
-10. Confirm timeout, interrupt, hard stop, cleanup, and failure reporting.
-11. Confirm stable run IDs and lifecycle artifacts are scoped to the originating coordinator session.
-12. Confirm token/cost/model-attempt records can be projected into `stages/import-run.json`.
-13. Confirm assignment grants can be delivered to subprocess workers and validated by child-only typed tools without shared memory.
-14. Confirm the non-semantic CLI completion supervisor survives early coordinator return and reaches authoritative terminal state.
-15. Confirm package version/resource loading remains compatible with the project Pi version.
-
-### Why an SDK wrapper remains a fallback
-
-An in-process SDK worker would naturally share:
-
-- `AuthStorage`;
-- `ModelRegistry`;
-- exact resource loader configuration;
-- typed tool instances;
-- package root and cwd;
-- event subscriptions.
-
-But it would require us to implement worker IDs, concurrency, cancellation, timeout, usage aggregation, result persistence, cleanup, and resume. Do not take that cost until the existing Herdr-free extension has been tested.
+A future CLI, if adopted, must be a thin non-semantic host: it may manage lifecycle events, wait for workers, and report terminal state, but it must never select extraction, merge, review, or repair sequencing. Do not select `pi-subagents` as its backend, build an SDK wrapper, or define a package-loading policy until that later decision is explicitly made.
 
 ## Proposed Package Shape
 
@@ -782,20 +750,22 @@ Exact paths are provisional.
 
 ```text
 skills/
-  world-import/                  # coordinator + semantic workflow
-  world-import-extractor/        # optional narrow worker skill/profile guidance
-  world-import-merger/
-  world-import-reviewer/
-  world-import-repairer/
+  mem-import/                    # new coordinator + semantic workflow
+  mem-import-extractor/          # optional narrow worker skill/profile guidance
+  mem-import-merger/
+  mem-import-reviewer/
+  mem-import-repairer/
 
 extensions/
-  world-import-tools.ts          # typed deterministic tools
+  mem-import-tools.ts            # typed deterministic tools over legacy services
 
-agents/world-import/
+agents/mem-import/
   extractor.md
   merger.md
   reviewer.md
   repairer.md
+
+# Existing skills/world-import and src/world-import-cli.ts remain legacy.
 ```
 
 Possible package metadata when `pi-subagents` is used:
@@ -803,10 +773,10 @@ Possible package metadata when `pi-subagents` is used:
 ```json
 {
   "pi": {
-    "extensions": ["./extensions/world-import-tools.ts"],
+    "extensions": ["./extensions/mem-import-tools.ts"],
     "skills": ["./skills"],
     "subagents": {
-      "agents": ["./agents/world-import"]
+      "agents": ["./agents/mem-import"]
     }
   }
 }
@@ -816,7 +786,7 @@ Do not finalize this manifest until the compatibility spike confirms how Pi core
 
 ## Skill Structure
 
-### Coordinator skill responsibilities
+### `mem-import` coordinator skill responsibilities
 
 - explain semantic world-import quality requirements;
 - define durable artifact contracts and required final checks;
@@ -835,7 +805,7 @@ Do not finalize this manifest until the compatibility spike confirms how Pi core
 Suggested reference documents:
 
 ```text
-skills/world-import/references/
+skills/mem-import/references/
   workflow.md
   contracts.md
   helper-tools.md
@@ -864,86 +834,60 @@ The main `SKILL.md` should stay readable. Load adapter details only after detect
 
 ## Implementation Units
 
-Implementation is not started. Sequence should preserve testability and allow early validation.
+Implementation is not started. Build the **agent-driven coordinator skill and constrained worker vertical slice first**, then grow its typed surface and migrate the standalone CLI only after the skill path is credible. TypeScript supplies deterministic capabilities and lifecycle plumbing; it must not regain semantic stage sequencing.
 
-### U0. Prove subagent compatibility and foundational control contracts
+### U0. Explore adapter suitability through the coordinator skill
 
-- Run the `pi-subagents` CLI compatibility/loading spike above.
-- Confirm the environment-specific Herdr adapter can launch a no-bash worker with a placeholder custom tool.
-- Design and prove cross-process assignment-grant issuance/validation/revocation with a disposable typed tool.
-- Design and prove the non-semantic CLI terminal-state supervisor against early coordinator return.
-- Design and prove a cross-process merge lease plus revision/CAS primitive.
-- Document executable conformance probes and trusted adapter profiles.
-- Decide whether `pi-subagents` is accepted as the initial CLI backend and how it is version-pinned/loaded.
+- Inspect installed `pi-subagents`, the environment-specific Herdr adapter, and any other candidate worker facilities through the coordinator's capability-discovery guidance. Do not build an adapter or custom conformance fixture in this unit.
+- Add `mem-import` coordinator-skill guidance for capability discovery, provisional adapter selection, artifact-authoritative handoffs, outcome-led evaluation, and parent-owned next-action decisions. Remove bash/helper-command use from this new path, while retaining legacy `world-import` unchanged.
+- Define a narrow scout role as skill/profile guidance: it must not be asked to mutate world state, recursively orchestrate, or rely on worker prose as canonical state. Where the selected adapter can enforce tool restrictions, request no `bash`, generic-write, or recursive-spawn access; record any inability to make that request as a limitation rather than pretending it is enforced.
+- Demonstrate: the parent skill chooses one installed facility, dispatches one low-risk scout task using that facility's native controls, waits/receives a correlated result when supported, critically assesses the result, and chooses the next action itself. This is a provisional, model-led conclusion—not a formal proof of the adapter.
+- Record observed capability, lifecycle, and outcome-quality findings before expanding to typed extraction submission, grants, merge locking, or CLI lifecycle supervision. Add the latter safeguards only when the next privileged surface warrants them.
+- Do not change `world-import-cli.ts` or replace `model-runner.ts` in this unit.
 
-### U1. Extract typed tool definitions over existing deterministic functions
+### U1. Make the coordinator skill useful for a first extraction path
 
-- Define run-scoped tool contracts, assignment grants, and result types.
-- Begin with normalize/status/source reads/extraction submission.
-- Keep command-router behavior unchanged.
-- Add role-allowlist tests and missing-precondition tests.
-- Do not migrate orchestration yet.
+- Extract typed normalize/status/source-read/extraction-submission tools over current deterministic functions; keep `command-router.ts` unchanged as an adapter.
+- Expand assignment grants and role allowlists so extractors can submit only assigned normalized units and their scoped extraction stage packets.
+- Add a `mem-import` extractor worker profile and coordinator-skill decision guidance for single launch, parallel fanout, wait, inspection, re-extraction, and escalation. The parent still authors topology and sequencing.
+- Add deterministic schema, output-root/run scope, role-allowlist, and missing-precondition tests.
+- Demonstrate a parent skill completing normalization plus a small, artifact-backed extraction pass without bash helper commands. This is the first meaningful model-led import path, not a CLI cutover.
 
-### U2. Add merge/check/review/finalization tools
+### U2. Complete the coordinator-facing typed surface and worker roles
 
 - Wrap artifact validation/upsert/patch, emit, lint, coverage, readiness, provenance audit, review submission, and final eval.
-- Require a valid single-writer lease and expected revision/hash for every merge mutation.
-- Separate hard errors from diagnostics.
-- Add output-root/run scoping, forged-grant, lease-contention, stale-writer, and atomic write tests.
+- Require a valid single-writer lease and expected revision/hash for every merge mutation; prove lease contention and stale compare-and-swap failures before enabling merger/repairer writes.
+- Define merger, reviewer, and repairer prompts/tool allowlists; expose package agents for `pi-subagents` if accepted and equivalent Herdr guidance.
+- Update the coordinator skill with merge/review/repair/finalization decision rules while preserving semantic guidance and allowing model-selected parallelism, chains, and DAGs.
+- Separate hard errors from diagnostics and add output-root/run scoping, forged-grant, atomic-write, lease-contention, and stale-writer tests.
 
-### U3. Rewrite the world-import skill as a coordinator
+### U3. Add worker-aware orchestration audit and skill-level evaluations
 
-- Remove bash/helper-command dependency from the primary path.
-- Add capability discovery and known adapter references.
-- Add model-led single/parallel/chain/DAG guidance.
-- Add role restrictions, escalation rules, and finalization requirements.
-- Preserve semantic guidance from the current skill.
+- Extend or version `stages/import-run.json` and orchestration projections with parent/worker model, tool, task, artifact, adapter-profile, and redacted authorization metadata.
+- Ingest adapter telemetry when available and preserve compact/redacted audit policy.
+- Add model-led skill fixtures: cheap extraction fleet plus strong coordinator/merger/reviewer; strong workers plus weaker coordinator; targeted re-extraction; inline versus delegated review; bounded repeated review; facility-native chain versus incremental dispatch; and no-compatible-subagent failure.
 
-### U4. Package worker role profiles
+### U4. Revisit whether `mem-import-cli` is needed
 
-- Define extractor, merger, reviewer, and repairer prompts/tool allowlists.
-- Expose package agents for `pi-subagents` if accepted.
-- Define equivalent Herdr invocation guidance.
-- Ensure ordinary workers cannot spawn subagents.
+- Do not implement a CLI by default. First evaluate whether the host-agent-led interactive path has made a separate CLI unnecessary.
+- If a CLI is still desired, make an explicit host/resource-policy decision rather than inheriting legacy embedded-Pi, `.memchat/pi`, or project-local-adapter assumptions.
+- Only after that decision, design any lifecycle plumbing as a thin non-semantic host: stream events, wait for authoritative terminal state, deliver bounded coordinator continuations, enforce budgets, and propagate cancellation/cleanup. It never selects an import stage.
 
-### U5. Add worker-aware orchestration audit
+### U4a. Conditional CLI promotion/parity gate
 
-- Extend or version `stages/import-run.json`.
-- Record parent and worker model/tool/task/artifact metadata.
-- Ingest telemetry from adapters when available.
-- Preserve compact/redacted audit policy.
-
-### U6. Convert the standalone runner into a thin host
-
-- Load the coordinator skill, typed tools, selected worker facility, and non-semantic completion supervisor.
-- Keep the existing staged runner available as a comparison/rollback path.
-- Keep streaming, debug visibility, cancellation, auth/model setup, and terminal result reporting.
-- Preserve existing output paths and deterministic gates.
-
-### U6a. Gate cutover on artifact/checkpoint/audit parity
-
-- Run old staged and new model-led hosts against deterministic stubbed worker fixtures and small model-backed fixtures.
+- Apply this gate only if U4 explicitly chooses to build `mem-import-cli`.
+- Run legacy `world-import` and the chosen new CLI path against deterministic stubbed worker fixtures and small model-backed fixtures.
 - Compare normalized layout, extraction/merge envelope validity, readiness/checkpoint behavior, emitted indexes/source pages, lint/accounting, audit completeness/redaction, failure/cancellation state, and CLI exit semantics.
 - Normalize nondeterministic timestamps/run IDs/model prose rather than requiring byte-identical semantic output.
-- Define CLI flag/default migration, legacy rollback command, and deprecation/removal criteria.
-- Remove hard-coded semantic sequencing only after parity gates pass and the legacy path has a documented rollback window.
+- Define CLI flag/default migration, legacy rollback command, and deprecation/removal/retention criteria for `world-import`.
+- Promote a new CLI only after parity gates pass and legacy `world-import` has a documented rollback window. Do not remove the legacy path in the same change as promotion.
 
-### U7. Add model-routing and orchestration eval fixtures
-
-- Cheap extraction fleet plus strong coordinator/merger/reviewer.
-- Strong workers plus weaker coordinator.
-- Targeted re-extraction after sparse output.
-- Parent inline review versus delegated review.
-- Repeated review with bounded repair.
-- Facility-native chain versus incremental dispatch.
-- No-compatible-subagent failure.
-
-### U8. Update docs and smoke tests
+### U5. Update docs and smoke tests
 
 - `docs/world-import.md`
 - `README.md`
 - `docs/smoke-tests.md`
-- skill references and adapter setup notes.
+- coordinator/worker skill references and adapter setup notes.
 
 ## Verification Contract
 
@@ -963,12 +907,11 @@ Implementation is not started. Sequence should preserve testability and allow ea
 - Existing artifact layouts and emission/lint behavior remain compatible.
 - Audit records requested/resolved models and worker identities without credential/path leakage.
 
-### Adapter tests
+### Adapter evaluation and later hardening
 
-- Herdr profile: fresh/lineage worker, exact tool allowlist, parallel completion, interrupt, resume.
-- `pi-subagents` profile: exact extension loading, package agent discovery, strict typed tools, fresh context, async wait, timeout/stop, telemetry, cleanup.
-- Unknown profile: executable conformance probe before privileged work.
-- Unknown/incompatible or unprovable profile: explicit failure before semantic work.
+- U0: coordinator-led inspection and low-risk trials record observed tool visibility, correlation, completion, interruption/cleanup where available, and outcome quality; they do not claim formal enforcement.
+- U1+: judge delegated semantic work by durable artifacts, deterministic diagnostics, and auditable lifecycle behavior. Weak outcomes are evidence to retry, escalate, alter topology, or stop delegating.
+- Before privileged worker mutation tools or infrastructure promotion: add the exact conformance checks then required—e.g. Herdr fresh/lineage behavior, exact allowlists, completion/interrupt/resume; `pi-subagents` extension loading, profile discovery, strict typed tools, fresh context, wait, timeout/stop, telemetry, and cleanup; and unknown-adapter enforcement proof where applicable.
 - CLI lifecycle: early coordinator return does not exit while workers/run state remain nonterminal; cancellation reaches workers and persists terminal state.
 
 ### Model-backed scenarios
@@ -990,17 +933,17 @@ Continue to apply `docs/smoke-tests.md` after implementation changes. Long model
 2. The parent, not TypeScript, chooses worker topology and semantic sequencing.
 3. The parent may use individual calls, native parallelism, chains, or dynamic DAG features when supported.
 4. Extraction and reviewer workers can run with only typed role tools.
-5. Absence of a compatible, trusted/probed subagent facility produces a clear setup failure before semantic work.
+5. The coordinator makes an explicit, auditable suitability judgment before delegation and avoids or stops using a facility whose observed behavior or artifact outcomes are inadequate; no claim of formally proven enforcement is made before later hardening.
 6. Every worker-facing tool rejects forged, expired, revoked, cross-role, and out-of-assignment grants.
 7. Invalid operations fail locally with actionable errors.
 8. Incomplete drafts remain inspectable, but finalization refuses hard blockers.
 9. Concurrent merge writers cannot cause lost updates; lease and revision/CAS enforcement rejects stale writers.
 10. Existing world-import output structure and quality gates remain available.
 11. Parent and worker model assignments, actual runtimes, costs/usage when available, and artifact effects are auditable.
-12. The standalone CLI contains materially less orchestration logic than the current `model-runner.ts` path.
-13. Early coordinator return cannot terminate a nonterminal CLI run; the host reaches authoritative terminal state or bounded failure/cancellation.
-14. Old and new hosts pass the defined artifact/checkpoint/audit/exit-semantics parity gate before cutover.
-15. CLI execution works without Herdr if the explicitly loaded `pi-subagents` compatibility spike succeeds; otherwise a documented SDK-adapter follow-up is created.
+12. If a new CLI is explicitly chosen, it contains materially less orchestration logic than the legacy `world-import` `model-runner.ts` path.
+13. If a new CLI is explicitly chosen, early coordinator return cannot terminate a nonterminal run; the host reaches authoritative terminal state or bounded failure/cancellation.
+14. Legacy `world-import` and any explicitly chosen new CLI pass the defined artifact/checkpoint/audit/exit-semantics parity gate before promotion.
+15. No memchat-bundled or project-local `pi-subagents` dependency is implied by the interactive `mem-import` path; any later CLI backend decision is documented separately.
 16. Semantic quality remains model-owned; helper tools do not decide canon, identity, merge meaning, synopsis quality, or review correctness.
 
 ## Non-Goals
@@ -1039,7 +982,7 @@ Mitigation: assign disjoint extraction units, use atomic per-unit writes, requir
 
 ### Risk: adapter behavior differs or overclaims enforcement
 
-Mitigation: trusted versioned profiles, executable conformance probes for unknown adapters, artifact-authoritative handoffs, and audit the selected adapter/version/probe identity.
+Mitigation: let the strong coordinator inspect and trial the installed facility, judge it first by durable artifacts, deterministic diagnostics, and observable lifecycle behavior, and record the adapter/version plus observed limitations. Do not mistake this evidence for a security proof; introduce conformance probes and authorization hardening later, before privileged mutation or promotion, if evidence warrants it.
 
 ### Risk: coordinator returns before the CLI run is complete
 
@@ -1049,9 +992,9 @@ Mitigation: deterministic host lifecycle supervisor waits on worker/run events, 
 
 Mitigation: treat them as selectable alternatives initially. Use package/resource filtering or one enabled adapter per coordinator until coexistence is explicitly tested.
 
-### Risk: `pi-subagents` subprocesses break hermetic CLI configuration
+### Risk: a future CLI accidentally recreates legacy resource isolation
 
-Mitigation: compatibility spike for `PI_CODING_AGENT_DIR`, auth/models, package discovery, typed tool extension paths, and Pi binary selection. Fall back to an SDK adapter only if this remains unreliable.
+Mitigation: defer the CLI host/resource-policy decision. If a CLI is later selected, test its adapter discovery, extension conflicts, auth/model/tool visibility, package resources, and Pi binary selection against the chosen policy rather than assuming `.memchat/pi` or a project-local test installation.
 
 ### Risk: model routing becomes irreproducible
 
@@ -1081,41 +1024,43 @@ These are implementation decisions, not blockers to the architectural direction.
 10. Whether semantic reviewers submit directly through a typed tool or return structured output for the parent to persist.
 11. What hard runtime/cost/concurrency and idle-continuation defaults are appropriate for unattended CLI imports.
 12. Exact merge-lease heartbeat, expiry, stale-owner recovery, and repair handoff policy; single-writer lease plus revision/CAS enforcement for every import is decided.
-13. Exact `pi-subagents` dependency policy: optional dependency, bundled backend, or explicit install resolved by the CLI.
+13. Whether a `mem-import-cli` is needed at all; only if it is, its explicit host/resource policy and any adapter dependency policy.
 
 ## Recommended Next Session
 
-Start with **U0 only**. Do not refactor the runner before proving the worker/tool composition.
+Start with **U0 only**. Build the skill-led vertical slice before CLI migration or broad typed-tool extraction.
 
 Suggested sequence:
 
 1. Re-read this plan and `docs/world-import.md`.
-2. Inspect current Pi package/version state and whether `pi-subagents` is already installed.
-3. Design a minimal placeholder typed tool plus durable cross-process assignment grant; prove forged/out-of-scope calls fail.
-4. Prove the environment-specific Herdr worker can receive only that tool and no bash.
-5. Decide how an exact `pi-subagents` version is provided and explicitly loaded by the hermetic coordinator and child process.
-6. Prove a `pi-subagents` fresh worker can discover a package-provided role and child-only tool extension under that configuration.
-7. Prove `subagent_wait` plus the host completion supervisor handles early coordinator return and authoritative finalization.
-8. Prove cross-process merge lease/revision primitives before exposing merge writes.
-9. Record findings in this plan or a focused follow-up before implementing the full typed helper surface.
+2. Inspect current Pi package/version state, available adapter facilities, and whether `pi-subagents` is already installed.
+3. Add the `mem-import` coordinator skill's capability-discovery, provisional adapter-selection, outcome-led evaluation, and first-worker guidance, plus a narrow non-mutating scout role.
+4. Have the parent use native adapter controls for one low-risk scout trial, then inspect the completion/correlation evidence and critically assess the outcome itself.
+5. Record adapter/version, observed limits, and the coordinator's suitability rationale. Treat the result as a provisional experiment, not proof of isolation or authorization.
+6. Expand to typed extraction submission only when the outcome evidence supports it; then decide which grants, role restrictions, and conformance tests are warranted before enabling privileged worker writes.
+7. Do not change the legacy runner or migrate the CLI during this unit.
 
 ## New-Session Resume Checklist
 
 A new planning/implementation session should know:
 
-- We are aligned on a thin model-led coordinator, not a coded semantic DAG runner.
+- `mem-import` is the new thin model-led coordinator/worker path; `world-import` remains the legacy reference path through U4a.
 - The parent is explicitly allowed to choose facility-native chains, dynamic DAGs, or incremental calls.
 - Typed tools and artifact/finalization contracts provide the deterministic safety boundary.
-- Cross-process assignment grants are required before exposing worker-facing typed tools.
-- Worker tool allowlists should remove bash and generic writes where possible.
+- U0 deliberately begins with coordinator-led, low-risk adapter trials; judge worker infrastructure by durable artifact quality, deterministic outcomes, and observable lifecycle behavior rather than assuming a schema proves trust.
+- Formal conformance probes, cross-process assignment grants, and hard authorization tests are deferred until privileged worker-facing tools or promotion justify them.
+- Worker tool allowlists should remove bash and generic writes where the selected adapter can enforce that request; otherwise record the limitation and let the coordinator decide whether delegation remains appropriate.
 - Every merge mutation requires a cross-process single-writer lease and expected revision/CAS check.
-- The CLI needs a non-semantic completion supervisor so early coordinator return cannot abandon workers or incomplete state.
+- Interactive `mem-import` deliberately uses the already-running host agent and its account-level `.pi` resources; it does not create a memchat project-local Pi installation or bundle an adapter.
+- A temporary subdirectory with project-local `.pi`/`pi-subagents` is compatibility-test infrastructure only, not an interactive deployment model.
+- Whether `mem-import-cli` exists and what resources it hosts is deferred. If it is later selected, it needs a non-semantic completion supervisor so early coordinator return cannot abandon workers or incomplete state.
+- Preserve existing world-import on-disk artifacts during the migration; the new name does not authorize an artifact-layout rename.
 - Review is hybrid: deterministic checks plus parent or constrained semantic reviewers.
 - Model tiering and orchestration topology are evaluation variables, so audit them.
 - `pi-herdr-subagents` satisfies core interactive worker needs but lacks hard timeout/usage telemetry and requires Herdr/persisted parent state.
-- `pi-subagents` appears to satisfy the full worker contract and is the preferred Herdr-free CLI candidate, but exact dependency/loading policy, subprocess hermeticity, and Pi-version compatibility must be proven.
+- `pi-subagents` is a candidate that an account-level host agent may already have installed. The U0 disposable test showed usable lifecycle/correlation signals plus profile/acceptance limitations; it is not a memchat dependency or chosen CLI backend.
 - We agreed not to ask the model to build a worker extension live.
-- We agreed to hold off on our own SDK worker until the `pi-subagents` spike is complete.
+- We agreed to hold off on our own SDK worker and defer all CLI/backend decisions until the interactive host-agent path supplies evidence.
 - No implementation changes were made during this design discussion beyond adding this plan document.
 
 ## Sources and Evidence

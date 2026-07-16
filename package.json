@@ -29,6 +29,9 @@
     "mdts": "0.20.3"
   },
   "pi": {
+    "extensions": [
+      "./extensions/mem-import-tools.ts"
+    ],
     "skills": [
       "./skills"
     ]
