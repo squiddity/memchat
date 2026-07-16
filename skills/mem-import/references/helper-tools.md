@@ -4,14 +4,14 @@ These are typed deterministic tools supplied by `extensions/mem-import-tools.ts`
 
 ## Coordinator-only tools
 
-The parent model holds the coordinator grant returned by `world_import_begin`.
+The parent model holds the coordinator grant returned by `mem_import_begin`.
 
-- `world_import_begin({ outputRoot })` creates a new run under that canonical output root and returns `{ runId, outputRoot, coordinatorGrant }`.
-- `world_import_normalize({ outputRoot, runId, coordinatorGrant, input })` deterministically normalizes source. It does not choose units, candidates, or semantic meaning.
-- `world_import_status(...)` returns normalization and extraction counts.
-- `world_import_inspect_manifest(...)` returns the complete normalized unit manifest.
-- `world_import_assign_extractor({ ..., taskId, unitIds, expiresAt? })` creates one durable extractor assignment and returns a worker bootstrap `{ runId, taskId, outputRoot, grant, unitIds, units, expiresAt, capabilities }`. `units` contains compact assigned-unit context (`unitId`, `sourceId`, `order`, optional title/role, and `blockCount`) for the coordinator and worker task; it does not replace source reads.
-- `world_import_revoke_assignment({ ..., taskId })` immediately disables that assignment for later extractor calls.
+- `mem_import_begin({ outputRoot })` creates a new run under that canonical output root and returns `{ runId, outputRoot, coordinatorGrant }`.
+- `mem_import_normalize({ outputRoot, runId, coordinatorGrant, input })` deterministically normalizes source. It does not choose units, candidates, or semantic meaning.
+- `mem_import_status(...)` returns normalization and extraction counts.
+- `mem_import_inspect_manifest(...)` returns the complete normalized unit manifest.
+- `mem_import_assign_extractor({ ..., taskId, unitIds, expiresAt? })` creates one durable extractor assignment and returns a worker bootstrap `{ runId, taskId, outputRoot, grant, unitIds, units, expiresAt, capabilities }`. `units` contains compact assigned-unit context (`unitId`, `sourceId`, `order`, optional title/role, and `blockCount`) for the coordinator and worker task; it does not replace source reads.
+- `mem_import_revoke_assignment({ ..., taskId })` immediately disables that assignment for later extractor calls.
 
 Use a fresh task ID for a retry or a superseding extractor. Never persist raw coordinator/worker grants in source, stage, world, review, or audit artifacts.
 
@@ -19,11 +19,11 @@ Use a fresh task ID for a retry or a superseding extractor. Never persist raw co
 
 Every extractor tool requires the exact assignment bootstrap. The tools independently validate the assignment record and reject a wrong run/root/task/grant/role/capability/unit, an expired or revoked assignment, and missing normalization.
 
-- `world_source_read_unit({ ..., unitId, startAnchor?, endAnchor?, maxChars? })` returns only an assigned normalized unit or bounded local anchor slice. Its response reports `totalChars`, `returnedChars`, and, when truncated, `nextAnchor`. Continue from that anchor with a bounded range (or a larger allowed `maxChars`) rather than treating a truncated prefix as full-unit coverage.
-- `world_extraction_status(...)` reports assigned, submitted, and missing unit IDs.
-- `world_extraction_read({ ..., unitId })` reads a persisted packet only for an assigned unit.
-- `world_extraction_validate({ ..., unitId, stage })` performs no write; it checks stage shape, assigned source/unit identity, and local anchors.
-- `world_extraction_submit({ ..., unitId, stage })` atomically persists a validated extraction packet at the assigned unit's existing stage path.
+- `mem_source_read_unit({ ..., unitId, startAnchor?, endAnchor?, maxChars? })` returns only an assigned normalized unit or bounded local anchor slice. Its response reports `totalChars`, `returnedChars`, and, when truncated, `nextAnchor`. Continue from that anchor with a bounded range (or a larger allowed `maxChars`) rather than treating a truncated prefix as full-unit coverage.
+- `mem_extraction_status(...)` reports assigned, submitted, and missing unit IDs.
+- `mem_extraction_read({ ..., unitId })` reads a persisted packet only for an assigned unit.
+- `mem_extraction_validate({ ..., unitId, stage })` performs no write; it checks stage shape, assigned source/unit identity, and local anchors.
+- `mem_extraction_submit({ ..., unitId, stage })` atomically persists a validated extraction packet at the assigned unit's existing stage path.
 
 ## Extraction packet rules
 

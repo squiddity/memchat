@@ -1,4 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { MemImportService } from "../src/mem-import/service.js";
 
@@ -20,17 +21,35 @@ function failure(error: unknown) {
   };
 }
 
+function renderMemImportResult(result: { details?: unknown }, context: { expanded: boolean; isPartial: boolean }, theme: any) {
+  if (context.isPartial) return new Text(theme.fg("warning", "Mem-import operation in progress…"), 0, 0);
+  const details = result.details as { error?: unknown } | undefined;
+  if (typeof details?.error === "string") return new Text(theme.fg("error", `Mem-import failed: ${details.error}`), 0, 0);
+
+  let text = theme.fg("success", "✓ Mem-import operation complete");
+  if (context.expanded) {
+    text += `\n${theme.fg("dim", JSON.stringify(result.details, null, 2))}`;
+  } else {
+    text += ` (${keyHint("app.tools.expand", "to expand")})`;
+  }
+  return new Text(text, 0, 0);
+}
+
+function registerMemImportTool(pi: ExtensionAPI, definition: Parameters<ExtensionAPI["registerTool"]>[0]) {
+  pi.registerTool({ ...definition, renderResult: renderMemImportResult });
+}
+
 const coordinatorSchema = {
-  outputRoot: Type.String({ description: "Absolute or relative world-import output root; it is canonicalized and bound when the run begins." }),
-  runId: Type.String({ description: "Run identifier returned by world_import_begin." }),
-  coordinatorGrant: Type.String({ description: "Coordinator authority returned by world_import_begin. Do not place this value in world artifacts or audit prose." }),
+  outputRoot: Type.String({ description: "Absolute or relative mem-import output root; it is canonicalized and bound when the run begins." }),
+  runId: Type.String({ description: "Run identifier returned by mem_import_begin." }),
+  coordinatorGrant: Type.String({ description: "Coordinator authority returned by mem_import_begin. Do not place this value in import artifacts or audit prose." }),
 };
 
 const extractorSchema = {
   outputRoot: Type.String({ description: "Output root returned in the extractor assignment bootstrap." }),
   runId: Type.String({ description: "Run identifier returned in the extractor assignment bootstrap." }),
-  taskId: Type.String({ description: "Extractor task identifier returned by world_import_assign_extractor." }),
-  grant: Type.String({ description: "Extractor assignment grant. Use only for the assigned run/task; never persist it in world artifacts." }),
+  taskId: Type.String({ description: "Extractor task identifier returned by mem_import_assign_extractor." }),
+  grant: Type.String({ description: "Extractor assignment grant. Use only for the assigned run/task; never persist it in import artifacts." }),
 };
 
 const extractionGroupSchema = Type.Union([
@@ -44,8 +63,8 @@ const extractionGroupSchema = Type.Union([
 const extractionProvenanceSchema = Type.Object({
   sourceId: Type.String({ minLength: 1, description: "Must exactly equal the assigned unit sourceId." }),
   unitId: Type.String({ minLength: 1, description: "Must exactly equal the assigned unitId." }),
-  startAnchor: Type.String({ minLength: 1, description: "Inclusive local anchor returned by world_source_read_unit." }),
-  endAnchor: Type.String({ minLength: 1, description: "Inclusive local anchor returned by world_source_read_unit." }),
+  startAnchor: Type.String({ minLength: 1, description: "Inclusive local anchor returned by mem_source_read_unit." }),
+  endAnchor: Type.String({ minLength: 1, description: "Inclusive local anchor returned by mem_source_read_unit." }),
   quote: Type.String({ minLength: 1, description: "Exact source excerpt supporting this candidate." }),
 }, { additionalProperties: true });
 
@@ -82,8 +101,8 @@ export const extractionStageSchema = Type.Object({
 });
 
 export default function memImportTools(pi: ExtensionAPI) {
-  pi.registerTool({
-    name: "world_import_begin",
+  registerMemImportTool(pi, {
+    name: "mem_import_begin",
     label: "Begin Mem Import",
     description: "Create a run scoped to one output root and return coordinator authority. This does not normalize or choose semantic work.",
     parameters: Type.Object({ outputRoot: coordinatorSchema.outputRoot }),
@@ -92,8 +111,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_import_normalize",
+  registerMemImportTool(pi, {
+    name: "mem_import_normalize",
     label: "Normalize Sources",
     description: "Deterministically normalize an input under an authorized mem-import run. It does not extract semantic candidates.",
     parameters: Type.Object({ ...coordinatorSchema, input: Type.String({ description: "Input HTML/XHTML directory, ZIP, or EPUB-like archive." }) }),
@@ -102,8 +121,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_import_status",
+  registerMemImportTool(pi, {
+    name: "mem_import_status",
     label: "Mem Import Status",
     description: "Read deterministic normalization and extraction counts for an authorized coordinator run.",
     parameters: Type.Object(coordinatorSchema),
@@ -112,8 +131,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_import_inspect_manifest",
+  registerMemImportTool(pi, {
+    name: "mem_import_inspect_manifest",
     label: "Inspect Source Manifest",
     description: "Read the complete normalized source manifest for an authorized coordinator run.",
     parameters: Type.Object(coordinatorSchema),
@@ -122,8 +141,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_import_assign_extractor",
+  registerMemImportTool(pi, {
+    name: "mem_import_assign_extractor",
     label: "Assign Extractor Units",
     description: "Issue one bounded extractor assignment for normalized unit IDs. The returned bootstrap is for the selected worker only; do not persist its grant in artifacts.",
     parameters: Type.Object({
@@ -137,8 +156,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_import_revoke_assignment",
+  registerMemImportTool(pi, {
+    name: "mem_import_revoke_assignment",
     label: "Revoke Extractor Assignment",
     description: "Revoke a bounded extractor assignment before further worker tool calls.",
     parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ description: "Task identifier to revoke." }) }),
@@ -147,8 +166,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_source_read_unit",
+  registerMemImportTool(pi, {
+    name: "mem_source_read_unit",
     label: "Read Assigned Source Unit",
     description: "Read a bounded normalized source unit only when it is assigned to this extractor task. If truncated, use totalChars, returnedChars, and nextAnchor to continue with a later anchor range rather than treating the prefix as complete coverage.",
     parameters: Type.Object({
@@ -163,8 +182,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_extraction_status",
+  registerMemImportTool(pi, {
+    name: "mem_extraction_status",
     label: "Assigned Extraction Status",
     description: "Read which units in this extractor assignment have persisted extraction packets.",
     parameters: Type.Object(extractorSchema),
@@ -173,8 +192,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_extraction_read",
+  registerMemImportTool(pi, {
+    name: "mem_extraction_read",
     label: "Read Assigned Extraction",
     description: "Read an existing extraction packet only for a unit assigned to this extractor task.",
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }) }),
@@ -183,8 +202,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_extraction_validate",
+  registerMemImportTool(pi, {
+    name: "mem_extraction_validate",
     label: "Validate Extraction Packet",
     description: "Validate a structured version-1 extraction packet against the assigned normalized unit without writing it. The stage schema is model-visible; assignment-specific identity and anchors remain runtime-checked.",
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }), stage: extractionStageSchema }),
@@ -196,8 +215,8 @@ export default function memImportTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "world_extraction_submit",
+  registerMemImportTool(pi, {
+    name: "mem_extraction_submit",
     label: "Submit Extraction Packet",
     description: "Atomically persist a structured version-1 extraction packet only for a unit assigned to this extractor task.",
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }), stage: extractionStageSchema }),

@@ -38,10 +38,10 @@ Known profiles are evidence, not a trust verdict. If the host cannot make the bo
 
 ## 2. Establish deterministic source state
 
-1. Call `world_import_begin` with a fresh output root.
-2. Call `world_import_normalize` with the input.
-3. Read `world_import_inspect_manifest` and inspect the complete ordered unit list.
-4. Use `world_import_status` to understand persisted extraction state.
+1. Call `mem_import_begin` with a fresh output root.
+2. Call `mem_import_normalize` with the input.
+3. Read `mem_import_inspect_manifest` and inspect the complete ordered unit list.
+4. Use `mem_import_status` to understand persisted extraction state.
 
 Normalization is deterministic; deciding which units to delegate, whether some need more attention, and when to proceed remains model-owned.
 
@@ -50,7 +50,7 @@ Normalization is deterministic; deciding which units to delegate, whether some n
 For every extractor attempt:
 
 1. Choose a unique task ID and disjoint normalized unit IDs.
-2. Call `world_import_assign_extractor`.
+2. Call `mem_import_assign_extractor`.
 3. Deliver its bootstrap only to that worker through the selected adapter. Keep grants out of world/import artifacts and concise receipts.
 4. Deliver a self-contained extractor task: include the extractor-role packet contract and truncation procedure, not merely a path or instruction to read shared skill files. A narrowly allowlisted child may intentionally lack generic `read` access.
 5. Request the extractor role plus only the five U1 typed source/extraction tools where the host can enforce an allowlist. If it cannot, record that as an observed limitation.
@@ -64,7 +64,7 @@ The parent chooses one worker, parallel disjoint workers, a chain, or inline wor
 After a worker returns or fails:
 
 1. Use the adapter's task/run identity and native wait/status behavior as lifecycle evidence.
-2. Call `world_extraction_status` and `world_extraction_read` with the assignment bootstrap.
+2. Call `mem_extraction_status` and `mem_extraction_read` with the assignment bootstrap.
 3. Inspect the persisted candidate envelope and compare it with the normalized source. Do not rely only on worker prose.
 4. Decide whether to accept the packet, re-extract, escalate the model, try another adapter, assign more units, or stop.
 5. Revoke superseded/interrupted assignments before replacing them.

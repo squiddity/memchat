@@ -177,7 +177,7 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
 
 async function readRun(outputRoot: string): Promise<MemImportRunRecord> {
   const path = runPath(outputRoot);
-  if (!existsSync(path)) throw new Error("No active mem-import run exists for outputRoot; call world_import_begin first");
+  if (!existsSync(path)) throw new Error("No active mem-import run exists for outputRoot; call mem_import_begin first");
   return parseRunRecord(JSON.parse(await readFile(path, "utf-8")));
 }
 

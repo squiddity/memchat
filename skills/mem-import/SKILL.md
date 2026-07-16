@@ -29,17 +29,17 @@ It does **not** merge, emit, lint, review, finalize, migrate a CLI, or change le
 - Durable source, extraction, merge, review, and diagnostic artifacts are authoritative. Worker prose and chain values are receipts, never world truth.
 - A strong coordinator judges adapters and worker quality from observable lifecycle behavior and—during import—persisted artifacts plus deterministic diagnostics. It may retry, escalate, change topology/facility, work inline, or stop.
 - Do not claim that allowlists, isolation, recursive-spawn prevention, or cancellation are formally proven merely from a schema or worker report.
-- Do not use `bash`, generic filesystem writes, or legacy helper CLI commands for this new path. Use the typed `world_*` tools.
+- Do not use `bash`, generic filesystem writes, or legacy helper CLI commands for this new path. Use the typed `mem_*` tools.
 
 ## Run and authorization boundary
 
 Read [typed tool contracts](references/helper-tools.md) before starting extraction.
 
-1. Call `world_import_begin` with a fresh output root. Keep its `runId` and `coordinatorGrant` in the coordinator context; never copy the grant into world artifacts, task receipts, review packets, or audit prose.
-2. Call `world_import_normalize`, then `world_import_inspect_manifest`. Inspect all units before deciding assignments.
-3. Call `world_import_assign_extractor` with a unique task ID and only the normalized unit IDs chosen for that worker. Its returned bootstrap is limited to that assigned worker/task.
+1. Call `mem_import_begin` with a fresh output root. Keep its `runId` and `coordinatorGrant` in the coordinator context; never copy the grant into world artifacts, task receipts, review packets, or audit prose.
+2. Call `mem_import_normalize`, then `mem_import_inspect_manifest`. Inspect all units before deciding assignments.
+3. Call `mem_import_assign_extractor` with a unique task ID and only the normalized unit IDs chosen for that worker. Its returned bootstrap is limited to that assigned worker/task.
 4. Deliver the bootstrap only through the selected host's worker-task mechanism. The current Pi tool API does not provide a transcript-secret channel, so treat grant delivery as an application authorization boundary rather than a credential vault; do not repeat or persist raw grants unnecessarily.
-5. Revoke an assignment with `world_import_revoke_assignment` after interruption, replacement, or any decision not to let it continue.
+5. Revoke an assignment with `mem_import_revoke_assignment` after interruption, replacement, or any decision not to let it continue.
 
 Every privileged extractor tool independently reloads durable run/assignment state and checks run identity, canonical output root, task/role/capability, grant hash, expiry/revocation, and unit scope. Invalid or incomplete operations should fail locally; they do not make a semantic decision.
 
@@ -49,8 +49,8 @@ Read [the coordinator workflow](references/workflow.md), [the capability guide](
 
 1. Identify candidate worker/delegation tools in the active tool catalog and inspect their actual schema/docs. Load a matching known adapter reference only after detection.
 2. Select a facility only if its controls make the proposed bounded extraction task reasonable. Request the extractor's exact typed tool set where supported; if the facility cannot enforce that request, record the limitation rather than pretending it is enforced.
-3. Give the worker its extractor prompt/profile, assignment bootstrap, and assigned units. It must read source only through `world_source_read_unit` and persist candidates only through `world_extraction_submit`.
-4. Wait using the adapter's native mechanism when available. Then inspect `world_extraction_status`, submitted packets, and source evidence yourself. The parent chooses re-extraction, escalation, more workers, or the next phase.
+3. Give the worker its extractor prompt/profile, assignment bootstrap, and assigned units. It must read source only through `mem_source_read_unit` and persist candidates only through `mem_extraction_submit`.
+4. Wait using the adapter's native mechanism when available. Then inspect `mem_extraction_status`, submitted packets, and source evidence yourself. The parent chooses re-extraction, escalation, more workers, or the next phase.
 
 U1 permits one worker, parallel workers on disjoint units, or an inline extraction by the parent if its active tool policy includes the necessary typed tools. It does not prescribe a fixed worker count or stage sequence.
 

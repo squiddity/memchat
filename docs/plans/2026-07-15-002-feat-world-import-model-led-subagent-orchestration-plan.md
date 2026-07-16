@@ -28,7 +28,7 @@ This plan is self-contained so a new session can resume design or implementation
 
 ### Confirmed decisions
 
-1. **Use a thin, model-owned coordinator skill as the primary control plane.** Do not replace the current runner with a single opaque `run_world_import_dag` tool.
+1. **Use a thin, model-owned coordinator skill as the primary control plane.** Do not replace the current runner with a single opaque `run_mem_import_dag` tool.
 2. **Move helper access from shell commands to typed tools.** Existing deterministic TypeScript functions remain the implementation source of truth; the command router can remain as a human/CLI adapter.
 3. **Let the parent choose the orchestration shape.** The skill documents required subagent capabilities and available adapter profiles. The parent may use single launches, parallel calls, chains, dynamic fanout, or a model-authored DAG when that is the best fit.
 4. **Use durable world-import artifacts as authoritative handoffs.** Subagent prose and chain `{previous}` values may be useful receipts or summaries but must not be the only handoff state.
@@ -188,7 +188,7 @@ A hard-coded pipeline would hide or eliminate several of these experimental vari
 Do not make the primary interface:
 
 ```text
-world_import_run_dag({ input, output, modelPolicy })
+mem_import_run_dag({ input, output, modelPolicy })
 ```
 
 where TypeScript internally decides every extraction, merge, review, and repair step. That would recreate the current runner behind a different tool name and reduce the main model to a launcher.
@@ -400,7 +400,7 @@ The parent may use any chain, DAG, or parallel feature supplied by an adapter it
 
 This is a prerequisite for **privileged worker-facing typed tools**, not a later detail. It is deliberately outside U0's fixtureless, non-mutating adapter exploration; introduce and verify it before enabling extraction submission, merge mutation, review persistence, or other scoped world-state writes.
 
-`world_import_begin` should create a run identity. Before dispatch, the coordinator issues a high-entropy bearer grant and persists only its hash plus an assignment record under a deterministic orchestration path such as:
+`mem_import_begin` should create a run identity. Before dispatch, the coordinator issues a high-entropy bearer grant and persists only its hash plus an assignment record under a deterministic orchestration path such as:
 
 ```text
 stages/orchestration/assignments/<task-id>.json
@@ -427,12 +427,12 @@ Names are provisional; contracts matter more than exact spelling.
 
 #### Coordinator/run tools
 
-- `world_import_begin`
-- `world_import_normalize`
-- `world_import_status`
-- `world_import_inspect_manifest`
-- `world_import_validate`
-- `world_import_finalize`
+- `mem_import_begin`
+- `mem_import_normalize`
+- `mem_import_status`
+- `mem_import_inspect_manifest`
+- `mem_import_validate`
+- `mem_import_finalize`
 
 Responsibilities:
 
@@ -444,22 +444,22 @@ Responsibilities:
 
 #### Source-reading tools
 
-- `world_source_list_units`
-- `world_source_read_unit`
-- `world_source_read_slice`
-- `world_source_find_text`
-- `world_source_suggest_refs`
-- `world_source_resolve_ref`
-- `world_source_quote_ref`
+- `mem_source_list_units`
+- `mem_source_read_unit`
+- `mem_source_read_slice`
+- `mem_source_find_text`
+- `mem_source_suggest_refs`
+- `mem_source_resolve_ref`
+- `mem_source_quote_ref`
 
 These wrap current deterministic source/provenance helpers and never mutate semantic world state.
 
 #### Extraction tools
 
-- `world_extraction_status`
-- `world_extraction_read`
-- `world_extraction_validate`
-- `world_extraction_submit`
+- `mem_extraction_status`
+- `mem_extraction_read`
+- `mem_extraction_validate`
+- `mem_extraction_submit`
 
 `submit` should verify:
 
