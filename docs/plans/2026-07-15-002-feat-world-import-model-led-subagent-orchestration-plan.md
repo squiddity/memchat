@@ -421,6 +421,30 @@ The raw grant is delivered in the worker task/bootstrap context and supplied to 
 
 Coordinator-only tools use a separate coordinator authority. Grants must be redacted from transcripts/audits where practical, revocable after interruption, and rotated for retries or superseding workers.
 
+### Authorization-decision audit
+
+Before worker-facing mutation tools are promoted beyond U1, persist sanitized authorization decisions under the run output, for example:
+
+```text
+stages/orchestration/authorization-events.jsonl
+```
+
+Record both allowed and denied privileged tool decisions with a timestamp, operation/capability, assignment/task identity, requested unit or artifact scope, allow/deny outcome, and stable safe reason code. This makes out-of-scope, revoked, expired, wrong-role, and invalid-grant attempts reviewable from durable artifacts rather than only transient worker panes or session transcripts.
+
+Never persist raw grants, source excerpts, unbounded rejected arguments, hidden reasoning, or credentials in this ledger. The service-side authorization decision remains authoritative; the ledger is audit evidence, not an enforcement mechanism. Add conformance coverage that deliberately exercises denied scope and verifies the corresponding sanitized event.
+
+### Candidate inclusion and saliency audit
+
+Prioritize durable accounting of model candidate-selection decisions before adding a broad saliency policy. A worker may favor a compact, salient extraction to reduce downstream merge/review work, but that choice can silently omit minor entities, technical details, props, or local context that a user later needs. Conversely, broad extraction improves recoverability and completeness but increases duplicate/noise handling downstream.
+
+A later extraction/audit packet must make inclusion decisions inspectable: preserve each considered candidate's compact identity, group, local evidence, and model-authored include/defer/drop decision with a reason. A dropped or deferred candidate must remain durable audit evidence rather than disappearing from accounting. Deterministic checks should report per-unit and per-group candidate totals, inclusion/defer/drop counts, reasons, and unresolved accounting gaps. The parent or a later merger/reviewer—not TypeScript—decides whether a candidate should remain merely audited, be promoted, be merged, or be omitted from final world surfaces.
+
+Do not require every early U1 worker to enumerate hidden chain-of-thought or claim exhaustive entity detection. The goal is to audit explicit candidate decisions the worker makes, preserve their evidence, and make the resulting completeness/saliency tradeoff visible for evaluation.
+
+### Future interactive run preferences
+
+A future interactive coordinator may optionally ask for a small run-policy preference before dispatch, such as desired reader-facing tone (technical versus friendly) and coverage posture (broad/completeness-oriented versus compact/saliency-oriented). This is a model-led intake step, not a helper default: skip it for unattended/non-interactive runs or when the caller supplied a policy, use an explicit documented default otherwise, and persist the selected policy as compact run/audit metadata. Do not block normalization or invent a user preference when none is needed.
+
 ### Proposed conceptual tool families
 
 Names are provisional; contracts matter more than exact spelling.
@@ -475,13 +499,13 @@ It must not judge candidate semantics.
 
 #### Merge tools
 
-- `world_merge_read_candidates`
-- `world_merge_read_existing`
-- `world_merge_validate_artifact`
-- `world_merge_write_artifact`
-- `world_merge_write_artifacts`
-- `world_merge_patch`
-- `world_merge_accounting`
+- `mem_merge_read_candidates`
+- `mem_merge_read_existing`
+- `mem_merge_validate_artifact`
+- `mem_merge_write_artifact`
+- `mem_merge_write_artifacts`
+- `mem_merge_patch`
+- `mem_merge_accounting`
 
 These wrap current artifact validation/upsert/patch behavior. Merge writing must use a cross-process single-writer lease for every fresh or maintained import because identity and cross-linking are global.
 
@@ -489,23 +513,23 @@ A merger/repairer must acquire a lease bound to its assignment grant. Lease acqu
 
 #### Deterministic check tools
 
-- `world_check_coverage`
-- `world_check_emit`
-- `world_check_lint`
-- `world_check_provenance`
-- `world_check_readiness`
-- `world_check_repair_summary`
-- `world_check_final_eval`
+- `mem_check_coverage`
+- `mem_check_emit`
+- `mem_check_lint`
+- `mem_check_provenance`
+- `mem_check_readiness`
+- `mem_check_repair_summary`
+- `mem_check_final_eval`
 
 These report facts/heuristics and may write deterministic checkpoint artifacts, but do not perform semantic repair.
 
 #### Semantic review tools
 
-- `world_review_read_bundle`
-- `world_review_read_artifact`
-- `world_review_read_extraction`
-- `world_review_read_diagnostics`
-- `world_review_submit`
+- `mem_review_read_bundle`
+- `mem_review_read_artifact`
+- `mem_review_read_extraction`
+- `mem_review_read_diagnostics`
+- `mem_review_submit`
 
 `submit` is an append-only/schema-validated review/checkpoint output. A reviewer is therefore **world-state read-only**, even though it may persist its own review packet.
 
@@ -582,7 +606,7 @@ Allow:
 
 - source/extraction/merge/emitted-world reads;
 - deterministic diagnostics;
-- schema-validated `world_review_submit`.
+- schema-validated `mem_review_submit`.
 
 Deny:
 
@@ -863,7 +887,8 @@ Implementation is not started. Build the **agent-driven coordinator skill and co
 
 ### U3. Add worker-aware orchestration audit and skill-level evaluations
 
-- Extend or version `stages/import-run.json` and orchestration projections with parent/worker model, tool, task, artifact, adapter-profile, and redacted authorization metadata.
+- Extend or version `stages/import-run.json` and orchestration projections with parent/worker model, tool, task, artifact, adapter-profile, redacted authorization metadata, and sanitized allow/deny authorization decisions.
+- Add candidate inclusion/saliency accounting: durable include/defer/drop decisions with compact evidence/reasons plus deterministic per-unit/per-group accounting and gap diagnostics.
 - Ingest adapter telemetry when available and preserve compact/redacted audit policy.
 - Add model-led skill fixtures: cheap extraction fleet plus strong coordinator/merger/reviewer; strong workers plus weaker coordinator; targeted re-extraction; inline versus delegated review; bounded repeated review; facility-native chain versus incremental dispatch; and no-compatible-subagent failure.
 
@@ -1023,6 +1048,7 @@ These are implementation decisions, not blockers to the architectural direction.
 9. How model-tier policies are supplied: CLI options, JSON policy file, skill arguments, or parent free choice with budget limits.
 10. Whether semantic reviewers submit directly through a typed tool or return structured output for the parent to persist.
 11. What hard runtime/cost/concurrency and idle-continuation defaults are appropriate for unattended CLI imports.
+12. When and how an interactive coordinator should ask optional tone and completeness-versus-saliency preferences, and how that policy is represented in durable audit metadata without blocking unattended runs.
 12. Exact merge-lease heartbeat, expiry, stale-owner recovery, and repair handoff policy; single-writer lease plus revision/CAS enforcement for every import is decided.
 13. Whether a `mem-import-cli` is needed at all; only if it is, its explicit host/resource policy and any adapter dependency policy.
 

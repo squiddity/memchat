@@ -50,7 +50,8 @@ Read [the coordinator workflow](references/workflow.md), [the capability guide](
 1. Identify candidate worker/delegation tools in the active tool catalog and inspect their actual schema/docs. Load a matching known adapter reference only after detection.
 2. Select a facility only if its controls make the proposed bounded extraction task reasonable. Request the extractor's exact typed tool set where supported; if the facility cannot enforce that request, record the limitation rather than pretending it is enforced.
 3. Give the worker its extractor prompt/profile, assignment bootstrap, and assigned units. It must read source only through `mem_source_read_unit` and persist candidates only through `mem_extraction_submit`.
-4. Wait using the adapter's native mechanism when available. Then inspect `mem_extraction_status`, submitted packets, and source evidence yourself. The parent chooses re-extraction, escalation, more workers, or the next phase.
+4. Start with a small wave of disjoint workers (normally one to three), wait using the adapter's native mechanism, then inspect `mem_extraction_status`, submitted packets, and source evidence yourself.
+5. Increase fanout only gradually after early waves show clean durable packets, manageable parent lifecycle traffic, and no provider/adapter failures. Reduce or stop fanout immediately on schema failures, source-coverage gaps, provider errors, or parent backlog. The parent chooses re-extraction, escalation, more workers, or the next phase.
 
 U1 permits one worker, parallel workers on disjoint units, or an inline extraction by the parent if its active tool policy includes the necessary typed tools. It does not prescribe a fixed worker count or stage sequence.
 

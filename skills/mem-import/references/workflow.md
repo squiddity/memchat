@@ -59,7 +59,7 @@ The durable assignment validates the run/root, role, allowed capability, expiry/
 
 ## 4. Dispatch, wait, and inspect
 
-The parent chooses one worker, parallel disjoint workers, a chain, or inline work. U1 does not hard-code a topology.
+The parent chooses one worker, parallel disjoint workers, a chain, or inline work. U1 does not hard-code a topology. Start with a small disjoint wave (normally one to three); after inspecting its durable packets and lifecycle/provider behavior, increase concurrency gradually only when that evidence is clean and the parent can keep up with completions. Reduce or stop fanout on repeated validation/schema errors, incomplete source coverage, provider/adapter failures, or parent backlog. Do not launch an entire corpus at maximum fanout before early evidence is available.
 
 After a worker returns or fails:
 
