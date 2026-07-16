@@ -1,7 +1,7 @@
 ---
 title: "todo: preserve parent extension policy in delegated child agents"
 date: 2026-07-16
-status: deferred until the Frankenstein managed-agent run completes
+status: concluded; Herdr child tool allowlist confirmed, extension isolation remains a non-blocking future validation
 ---
 
 # Child extension provenance follow-up
@@ -26,14 +26,13 @@ A facility must make the child extension/resource policy observable. A child mus
 
 The requirement is about extension provenance and tool exposure, not a claim that extension filtering creates a general OS sandbox. Provider credentials/auth may remain host-managed where required; the extension policy must be explicit.
 
-## Follow-up after the run
+## Disposition — 2026-07-16
 
-1. Inspect the managed coordinator and child panes/session data to establish whether children actually loaded account-level extensions, which ones, and whether they had observable side effects.
-2. Update `skills/mem-import/references/subagent-capabilities.md` and `workflow.md` with the generic requirement and assessment questions.
-3. Update only the relevant adapter profile (currently `references/adapters/pi-herdr-subagents.md`) with observed behavior and exact invocation/provisioning details. Do not hard-code Herdr behavior into the generic workflow.
-4. In the Herdr child-spawn implementation, support propagating a parent’s resolved extension mode and approved extension entries to descendants. For an explicitly isolated parent, suppress ambient extension discovery and replay only the approved child extension set. Omit recursive spawning support when the child tool allowlist excludes it.
-5. Add a conformance test with an account-level sentinel extension. Prove that it does not load in an explicitly isolated child, while an explicitly approved development extension does load and its requested tool subset remains callable.
-6. Record any remaining limitation as an adapter observation. Do not claim enforcement merely from tool schemas or worker prose.
+The active `pi-herdr-subagents` Pi launch path resolves the child tools from the explicit spawn `tools` argument (or the selected agent definition), passes them as Pi's `--tools` allowlist, and adds only the documented `caller_ping` and `subagent_done` lifecycle controls. Pi 0.70+ applies that allowlist to built-in, extension, and custom tools. A worker must therefore receive an explicit minimal `tools` list; omitting it deliberately leaves the child unrestricted. This is sufficient for the current mem-import worker policy when combined with durable assignment grants.
+
+Accordingly, the generic coordinator capability assessment now requires an observable, enforceable role-specific child-tool allowlist. The current Herdr adapter is provisionally acceptable for the bounded U1/U1a worker roles, and recursive-spawn tools should be omitted from their allowlists.
+
+This result does **not** prove that ambient extensions are suppressed or that the child is OS-sandboxed. The observed inherited extension set is non-blocking for the current worker policy because the callable surface is restricted and grants authorize import mutations independently. If stronger extension isolation becomes necessary, create a new adapter-hardening task to test an account-level sentinel extension and an explicit extension-mode/entry policy; do not imply that tool filtering alone supplies that guarantee.
 
 ## Non-goals
 

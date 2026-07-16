@@ -3,10 +3,23 @@ title: "feat: Move world-import to model-led subagent orchestration with typed t
 type: feat
 date: 2026-07-15
 origin: conversation and subagent-extension research
-status: decision-ready; implementation not started
+status: in progress; U0/U1 implemented, U1a hardening next
 ---
 
 # feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
+
+## Progress Update — 2026-07-16
+
+U0 and the U1 extraction vertical slice are implemented: the `mem-import` coordinator/extractor skill guidance, typed normalization and bounded-read tools, durable cross-process extractor grants, extraction submission, revocation/expiry checks, and deterministic tests are present. The full test suite passed after this work.
+
+Two manual Herdr U1 runs over the same 30-unit *Frankenstein* corpus are retained under the ignored test workspace, each run with a different worker model:
+
+- `.memchat-agent-testing/output/frankenstein-full`: 30/30 extraction packets, 234 candidates, and 354 provenance refs; 31 assignments with one revoked retry.
+- `.memchat-agent-testing/output/frankenstein-deepseek-v4`: 30/30 extraction packets, 315 candidates, and 374 provenance refs; 32 assignments with two revoked retries.
+
+Both runs have complete per-unit extraction coverage, non-empty candidate packets, unit-local source/anchor provenance, hashed rather than raw durable grants, and revoked assignments for their recorded retries. They demonstrate the U1 artifact handoff and grant mechanics, but do **not** complete U1 acceptance: a direct artifact check found non-literal provenance quotes in 139/354 and 121/374 refs respectively. Examples include copied anchor display markers, typography substitutions, and ellipsized excerpts. The current submit validator verifies envelope shape and source/unit/anchor scope, not quote text. The run records also do not yet persist resolved worker model, adapter, or lifecycle identity; directory names are not an audit contract.
+
+U1a below closes these correctness/audit gaps. Do not run another model-backed extraction comparison until its three hardening items and tests are complete; then repeat the two-model corpus comparison and record the required audit evidence.
 
 ## Goal Capsule
 
@@ -858,7 +871,7 @@ The main `SKILL.md` should stay readable. Load adapter details only after detect
 
 ## Implementation Units
 
-Implementation is not started. Build the **agent-driven coordinator skill and constrained worker vertical slice first**, then grow its typed surface and migrate the standalone CLI only after the skill path is credible. TypeScript supplies deterministic capabilities and lifecycle plumbing; it must not regain semantic stage sequencing.
+U0 and U1 established the **agent-driven coordinator skill and constrained worker vertical slice**. Complete U1a correctness hardening before expanding the typed surface; only reconsider standalone CLI migration after the skill path is credible. TypeScript supplies deterministic capabilities and lifecycle plumbing; it must not regain semantic stage sequencing.
 
 ### U0. Explore adapter suitability through the coordinator skill
 
@@ -876,6 +889,17 @@ Implementation is not started. Build the **agent-driven coordinator skill and co
 - Add a `mem-import` extractor worker profile and coordinator-skill decision guidance for single launch, parallel fanout, wait, inspection, re-extraction, and escalation. The parent still authors topology and sequencing.
 - Add deterministic schema, output-root/run scope, role-allowlist, and missing-precondition tests.
 - Demonstrate a parent skill completing normalization plus a small, artifact-backed extraction pass without bash helper commands. This is the first meaningful model-led import path, not a CLI cutover.
+
+### U1a. Harden extraction provenance, pagination, and assignment exclusivity
+
+This intermediate unit is required by the two retained U1 *Frankenstein* runs before additional model-backed extraction experiments or U2 work.
+
+- **Quote integrity:** on extraction validation/submission, derive the selected normalized block range and require every non-empty `provenance.quote` to be a literal source excerpt from that range. Define one canonical multi-block join representation and permit a bounded excerpt within it; reject rendered `[bNNNN]` labels, ellipsized text, and typography substitutions. Keep semantic relevance and excerpt selection model-owned. Add valid single/multi-block, lightly bounded-excerpt, anchor-marker, ellipsis, typography-substitution, and absent-quote tests.
+- **Pagination:** make bounded source reads monotonic even when one normalized block exceeds `maxChars`. Return an opaque continuation cursor or another deterministic offset mechanism tied to the same unit/block, and make it impossible for a worker to receive the same prefix indefinitely. Preserve local anchors as provenance identifiers, document the continuation protocol, and test a block larger than every ordinary page plus invalid/stale cursor handling.
+- **Assignment overlap:** prevent two live extractor assignments from mutating the same unit. Reject an overlapping assignment until the prior assignment is explicitly revoked or superseded; ensure a revoked/superseded worker cannot win a submit race and replace the newer packet. Preserve retries as fresh task IDs and retain sanitized supersession/revocation evidence. Add concurrent/overlap, revoke-then-reassign, and stale-submit tests.
+- **Audit minimum for the rerun:** persist sanitized parent/worker model and thinking, adapter/profile identity, task/run correlation, lifecycle outcome, assignment/retry/supersession relationship, and packet effect/hash. Never persist raw grants or chain-of-thought.
+
+The legacy `world-import` path is useful comparison evidence but does not already solve these gaps. Its skill strongly directs models to call `quote-ref --as-ref`, which derives source text, but `write-extraction`/stage validation and merge lint check only quote presence/placeholder status plus source/anchor validity—not quote equality; `quote-ref --max-chars` itself intentionally emits an ellipsis. Legacy bounded reads expose ranges, not a resumable character cursor for an oversized single block. Its normal staged runner uses one extract session, so it avoids ordinary fleet overlap, but its atomic extraction writes are still last-writer-wins if concurrent writers are introduced; there is no extraction assignment lease or compare-and-swap.
 
 ### U2. Complete the coordinator-facing typed surface and worker roles
 
@@ -1054,16 +1078,16 @@ These are implementation decisions, not blockers to the architectural direction.
 
 ## Recommended Next Session
 
-Start with **U0 only**. Build the skill-led vertical slice before CLI migration or broad typed-tool extraction.
+Resume with **U1a only**. Do not launch another model-backed extraction run, broaden worker fanout, migrate the CLI, or start U2 until its three correctness items have deterministic tests.
 
 Suggested sequence:
 
-1. Re-read this plan and `docs/world-import.md`.
-2. Inspect current Pi package/version state, available adapter facilities, and whether `pi-subagents` is already installed.
-3. Add the `mem-import` coordinator skill's capability-discovery, provisional adapter-selection, outcome-led evaluation, and first-worker guidance, plus a narrow non-mutating scout role.
-4. Have the parent use native adapter controls for one low-risk scout trial, then inspect the completion/correlation evidence and critically assess the outcome itself.
-5. Record adapter/version, observed limits, and the coordinator's suitability rationale. Treat the result as a provisional experiment, not proof of isolation or authorization.
-6. Expand to typed extraction submission only when the outcome evidence supports it; then decide which grants, role restrictions, and conformance tests are warranted before enabling privileged worker writes.
+1. Implement and test extraction quote-integrity validation against the normalized cited range.
+2. Implement and test a monotonic continuation protocol for a normalized block larger than the bounded source-read limit.
+3. Implement and test live-assignment overlap prevention, revoke/supersede-and-reassign flow, and stale-submit protection.
+4. Add the minimum sanitized worker/audit fields needed to distinguish the two model runs by durable evidence rather than output-directory names.
+5. Reinspect the two retained U1 artifact sets with the new deterministic diagnostics. Then run a fresh two-model comparison only if U1a passes.
+6. Record adapter/version, extension provenance observations, lifecycle limitations, and coordinator suitability rationale; then resume the deferred child-extension-provenance follow-up.
 7. Do not change the legacy runner or migrate the CLI during this unit.
 
 ## New-Session Resume Checklist
