@@ -404,6 +404,36 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_merge_inventory",
+    label: "List Canonical Inventory",
+    description: "Read compact cursor-paginated canonical artifact summaries for an authorized merger, reviewer, or repairer. Use this instead of loading a complete canonical snapshot.",
+    parameters: Type.Object({ ...workerSchema, group: Type.Optional(extractionGroupSchema), continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
+    async execute(_id, params) {
+      try { return result(await u2.readMergeInventoryForWorker(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_read_artifact",
+    label: "Read Canonical Artifact",
+    description: "Read one explicit canonical artifact by ID for an authorized merger, reviewer, or repairer.",
+    parameters: Type.Object({ ...workerSchema, artifactId: Type.String({ minLength: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await u2.readMergeArtifactForWorker(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_merge_inventory",
+    label: "List Coordinator Canonical Inventory",
+    description: "Read compact cursor-paginated canonical artifact summaries as the coordinator.",
+    parameters: Type.Object({ ...coordinatorSchema, group: Type.Optional(extractionGroupSchema), continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
+    async execute(_id, params) {
+      try { return result(await u2.mergeInventory(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_import_merge_state",
     label: "Read Merge State",
     description: "Read the latest canonical merge snapshot and revision/hash controls as the coordinator.",

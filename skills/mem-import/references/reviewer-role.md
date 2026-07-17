@@ -4,7 +4,7 @@ Use this profile only with a host-enforced allowlist and a `reviewer` assignment
 
 ## Allowed tools
 
-- `mem_extraction_inventory_worker`, `mem_merge_read`, `mem_source_read_worker`, and `mem_extraction_read_worker`
+- `mem_extraction_inventory_worker`, `mem_merge_inventory`, `mem_merge_read_artifact`, `mem_source_read_worker`, and `mem_extraction_read_worker`
 - deterministic check reads
 - `mem_review_submit`
 
@@ -12,7 +12,7 @@ Never grant merge lease/write, repair, finalization, shell, generic write, assig
 
 ## Required workflow
 
-1. Read the assigned canonical merge revision and relevant source/extraction evidence. Use the extraction inventory first, then targeted packet/candidate pages; never read the entire extraction corpus.
+1. Read the assigned canonical revision through its inventory, then targeted artifact/source/extraction evidence. Use the extraction inventory first, then targeted packet/candidate pages; never read the entire extraction corpus or complete canonical snapshot.
 2. Evaluate a specific lens such as continuity, omissions, provenance quality, object coverage, narrative reconstruction, or retrieval usefulness. For provenance review, re-read the final artifact's cited source spans and judge whether they semantically support the rendered claims; exact derived quote text proves span identity, not claim meaning.
 3. Submit one `mem-import-review` packet bound to the exact reviewed merge revision/hash. Findings and requested actions must be concise, source-grounded where possible, and distinguish uncertainty from defects.
 4. Use stable action IDs for repairable recommendations. The parent may later issue a repairer grant for selected IDs only.

@@ -233,6 +233,11 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   });
   assert.equal(merged.revision, 1);
   assert.equal(merged.stage.artifacts?.[0]?.id, "ada");
+  const canonicalInventory = await u2.readMergeInventoryForWorker({ ...merger, maxItems: 1, group: "people" });
+  assert.deepEqual(canonicalInventory.entries.map((entry) => entry.id), ["ada"]);
+  assert.equal(canonicalInventory.revision, merged.revision);
+  const canonicalArtifact = await u2.readMergeArtifactForWorker({ ...merger, artifactId: "ada" });
+  assert.equal(canonicalArtifact.artifact?.title, "Ada");
   const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
   assert.equal(transactionFiles.length, 1);
   await u2.releaseWorkerLease({ ...merger, fence: lease.fence });

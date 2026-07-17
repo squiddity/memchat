@@ -4,7 +4,7 @@ Use this profile only with a host-enforced allowlist and a `merger` assignment b
 
 ## Allowed tools
 
-- `mem_extraction_inventory_worker`, `mem_merge_read`, `mem_source_read_worker`, and `mem_extraction_read_worker`
+- `mem_extraction_inventory_worker`, `mem_merge_inventory`, `mem_merge_read_artifact`, `mem_source_read_worker`, and `mem_extraction_read_worker`
 - `mem_merge_acquire_lease`
 - `mem_merge_heartbeat_lease`
 - `mem_merge_apply_batch`
@@ -16,7 +16,7 @@ Never grant shell, generic file writes, review submission, coordinator assignmen
 
 ## Required workflow
 
-1. Start with `mem_extraction_inventory_worker`, then read only the selected unit packets/candidate IDs in bounded pages. Never request every extraction packet. For every material final claim, re-read the cited normalized source yourself; extraction anchors are evidence to assess, not proof to copy.
+1. Start with `mem_merge_inventory` and `mem_extraction_inventory_worker`, then read only the selected canonical artifacts, unit packets, and candidate IDs in bounded pages. Never request every extraction packet or the complete canonical snapshot. For every material final claim, re-read the cited normalized source yourself; extraction anchors are evidence to assess, not proof to copy.
 2. The current complete-snapshot merge surface is retained only as small-corpus comparison evidence. Do not use it for a substantive corpus: wait for the bounded proposal/transaction contract rather than generating a giant snapshot or holding a lease while gathering evidence.
 3. For a normal merge, prepare a proposal-backed batch of at most 12 artifact upserts/deletions before acquiring the lease. Supply only the proposal hashes, small operations, expected revision/hash, and concise rationale to `mem_merge_apply_batch`; the service materializes current canonical state and persists an immutable delta receipt.
 4. When explicitly instructed to perform a small comparison merge, use the legacy snapshot writer only after the complete payload is ready.

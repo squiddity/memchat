@@ -36,12 +36,31 @@ type MergeLease = {
   expiresAt: string;
 };
 
-type MergeState = {
+export type MergeState = {
   stage: StageEnvelope;
   revision: number;
   contentHash: string | null;
   parentContentHash?: string;
 };
+
+export type MergeInventoryEntry = {
+  id: string;
+  group: string;
+  title: string;
+  type?: string;
+  tags?: string[];
+};
+
+export type MergeInventoryResult = {
+  revision: number;
+  contentHash: string | null;
+  totalArtifacts: number;
+  entries: MergeInventoryEntry[];
+  truncated: boolean;
+  continuationCursor?: string;
+};
+
+type MergeInventoryCursor = { version: 1; revision: number; contentHash: string | null; group?: string; afterId: string };
 
 export type MergeLeaseResult = { fence: number; expiresAt: string; heartbeatEveryMs: number };
 export type MergeBatch = {
@@ -119,6 +138,23 @@ export class MemImportU2Service {
   async readMergeForWorker(options: WorkerAuthority): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
     return this.readMergeState(assignment.outputRoot);
+  }
+
+  async mergeInventory(options: CoordinatorAuthority & { group?: string; continuationCursor?: string; maxItems?: number }): Promise<MergeInventoryResult> {
+    const run = await this.base.authorizeCoordinator(options);
+    return this.inventoryMerge(run.outputRoot, options);
+  }
+
+  async readMergeInventoryForWorker(options: WorkerAuthority & { group?: string; continuationCursor?: string; maxItems?: number }): Promise<MergeInventoryResult> {
+    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
+    return this.inventoryMerge(assignment.outputRoot, options);
+  }
+
+  async readMergeArtifactForWorker(options: WorkerAuthority & { artifactId: string }): Promise<{ revision: number; contentHash: string | null; artifact?: NonNullable<StageEnvelope["artifacts"]>[number] }> {
+    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
+    assertId(options.artifactId, "artifactId");
+    const state = await this.readMergeState(assignment.outputRoot);
+    return { revision: state.revision, contentHash: state.contentHash, ...(state.stage.artifacts?.find((artifact) => artifact.id === options.artifactId) ? { artifact: state.stage.artifacts.find((artifact) => artifact.id === options.artifactId)! } : {}) };
   }
 
   async acquireCoordinatorLease(options: CoordinatorAuthority & { taskId: string }): Promise<MergeLeaseResult> {
@@ -386,6 +422,47 @@ export class MemImportU2Service {
     if (!existsSync(fencePath(outputRoot))) return 0;
     const value = JSON.parse(await readFile(fencePath(outputRoot), "utf-8")) as { highestFence?: unknown };
     return typeof value.highestFence === "number" && Number.isInteger(value.highestFence) && value.highestFence >= 0 ? value.highestFence : 0;
+  }
+
+  private async inventoryMerge(outputRoot: string, options: { group?: string; continuationCursor?: string; maxItems?: number }): Promise<MergeInventoryResult> {
+    const maxItems = options.maxItems ?? 25;
+    if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 100) throw new Error("maxItems must be an integer between 1 and 100");
+    const state = await this.readMergeState(outputRoot);
+    const cursor = options.continuationCursor ? this.decodeMergeInventoryCursor(options.continuationCursor) : undefined;
+    if (cursor && (cursor.revision !== state.revision || cursor.contentHash !== state.contentHash || cursor.group !== options.group)) throw new Error("Stale merge inventory continuation cursor");
+    const artifacts = (state.stage.artifacts ?? [])
+      .filter((artifact) => !options.group || artifact.group === options.group)
+      .filter((artifact) => !cursor || artifact.id > cursor.afterId)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const entries = artifacts.slice(0, maxItems).map((artifact) => ({
+      id: artifact.id,
+      group: artifact.group,
+      title: artifact.title,
+      ...(artifact.type ? { type: artifact.type } : {}),
+      ...(artifact.tags?.length ? { tags: artifact.tags } : {}),
+    }));
+    const truncated = artifacts.length > entries.length;
+    const last = entries.at(-1);
+    return {
+      revision: state.revision,
+      contentHash: state.contentHash,
+      totalArtifacts: artifacts.length,
+      entries,
+      truncated,
+      ...(truncated && last ? { continuationCursor: this.encodeMergeInventoryCursor({ version: 1, revision: state.revision, contentHash: state.contentHash, ...(options.group ? { group: options.group } : {}), afterId: last.id }) } : {}),
+    };
+  }
+
+  private encodeMergeInventoryCursor(cursor: MergeInventoryCursor): string {
+    return Buffer.from(JSON.stringify(cursor), "utf-8").toString("base64url");
+  }
+
+  private decodeMergeInventoryCursor(value: string): MergeInventoryCursor {
+    let cursor: Partial<MergeInventoryCursor>;
+    try { cursor = JSON.parse(Buffer.from(value, "base64url").toString("utf-8")) as Partial<MergeInventoryCursor>; }
+    catch { throw new Error("Invalid merge inventory continuation cursor"); }
+    if (cursor.version !== 1 || typeof cursor.revision !== "number" || !Number.isInteger(cursor.revision) || cursor.revision < 0 || (cursor.contentHash !== null && typeof cursor.contentHash !== "string") || (cursor.group !== undefined && typeof cursor.group !== "string") || typeof cursor.afterId !== "string") throw new Error("Invalid merge inventory continuation cursor");
+    return cursor as MergeInventoryCursor;
   }
 
   private async readMergeState(outputRoot: string): Promise<MergeState> {
