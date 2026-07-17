@@ -132,6 +132,16 @@ const mergeStageSchema = Type.Object({
   metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: true, description: "Canonical merge semantic content. Do not supply revision/contentHash controls; the service derives them atomically." });
 
+const mergeBatchSchema = Type.Object({
+  proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 12 }),
+  operations: Type.Array(Type.Union([
+    Type.Object({ kind: Type.Literal("upsert"), artifact: Type.Unknown() }, { additionalProperties: false }),
+    Type.Object({ kind: Type.Literal("delete"), artifactId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+  ]), { minItems: 1, maxItems: 12 }),
+  candidateDispositions: Type.Optional(Type.Array(Type.Unknown())),
+  rationale: Type.String({ minLength: 1, description: "Concise auditable rationale, not hidden reasoning." }),
+}, { additionalProperties: false, description: "Bounded proposal-backed canonical delta. The service materializes latest state and writes an immutable transaction receipt." });
+
 const proposalPacketSchema = Type.Object({
   version: Type.Literal(1),
   kind: Type.Literal("mem-import-proposal"),
@@ -459,6 +469,22 @@ export default function memImportTools(pi: ExtensionAPI) {
     }),
     async execute(_id, params) {
       try { return result(await u2.writeWorkerMerge(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_apply_batch",
+    label: "Apply Canonical Batch",
+    description: "Apply one proposal-backed bounded canonical artifact delta with a current merger lease and exact revision/hash CAS. Up to 12 operations are accepted; prior accepted batches survive later interruption.",
+    parameters: Type.Object({
+      ...workerSchema,
+      fence: Type.Integer({ minimum: 1 }),
+      expectedRevision: Type.Integer({ minimum: 0 }),
+      expectedContentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
+      batch: mergeBatchSchema,
+    }),
+    async execute(_id, params) {
+      try { return result(await u2.applyWorkerBatch(params)); } catch (error) { return failure(error); }
     },
   });
 

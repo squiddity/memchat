@@ -215,6 +215,31 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const stored = JSON.parse(await readFile(join(output, persisted.path), "utf-8")) as Record<string, unknown>;
   assert.equal(stored.contentHash, persisted.contentHash);
   assert.equal((((stored.artifacts as Array<Record<string, unknown>>)[0]!.provenance as Array<Record<string, unknown>>)[0]!.quote), "Ada guards the glass tower.");
+
+  const u2 = new MemImportU2Service(service);
+  const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "proposal-merger", role: "merger" });
+  const lease = await u2.acquireWorkerLease(merger);
+  const merged = await u2.applyWorkerBatch({
+    ...merger,
+    fence: lease.fence,
+    expectedRevision: 0,
+    expectedContentHash: null,
+    batch: {
+      proposalHashes: [persisted.contentHash],
+      operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }],
+      candidateDispositions: [],
+      rationale: "Accept the bounded Ada shard proposal into canonical state.",
+    },
+  });
+  assert.equal(merged.revision, 1);
+  assert.equal(merged.stage.artifacts?.[0]?.id, "ada");
+  const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
+  assert.equal(transactionFiles.length, 1);
+  await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
+  await assert.rejects(
+    u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: 1, expectedContentHash: merged.contentHash, batch: { proposalHashes: [persisted.contentHash], operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }], rationale: "Cannot write without a current lease." } }),
+    /No active merge writer lease/,
+  );
   await assert.rejects(
     proposals.submitWorkerProposal({ ...proposer, packet: { ...packet, id: "wrong-candidate", inputs: [{ ...packet.inputs[0]!, candidateIds: ["not-assigned"] }] } }),
     /does not exist|outside this assignment/,
