@@ -3,9 +3,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { MemImportService } from "../src/mem-import/service.js";
 import { MemImportU2Service } from "../src/mem-import/u2-service.js";
+import { MemImportProposalService } from "../src/mem-import/proposal-service.js";
 
 const service = new MemImportService();
 const u2 = new MemImportU2Service(service);
+const proposals = new MemImportProposalService(service);
 
 function result(value: unknown) {
   return {
@@ -129,6 +131,22 @@ const mergeStageSchema = Type.Object({
   diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
   metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: true, description: "Canonical merge semantic content. Do not supply revision/contentHash controls; the service derives them atomically." });
+
+const proposalPacketSchema = Type.Object({
+  version: Type.Literal(1),
+  kind: Type.Literal("mem-import-proposal"),
+  id: Type.String({ minLength: 1 }),
+  inputs: Type.Array(Type.Object({
+    unitId: Type.String({ minLength: 1 }),
+    packetHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 })),
+  }, { additionalProperties: false }), { minItems: 1, maxItems: 100 }),
+  artifacts: Type.Array(Type.Unknown()),
+  candidateDispositions: Type.Optional(Type.Array(Type.Unknown())),
+  diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
+  rationale: Type.String({ minLength: 1, description: "Concise auditable rationale, not hidden reasoning." }),
+  metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+}, { additionalProperties: false, description: "Immutable bounded shard proposal. It cannot mutate canonical merge state." });
 
 const reviewPacketSchema = Type.Object({
   version: Type.Literal(1),
@@ -294,14 +312,26 @@ export default function memImportTools(pi: ExtensionAPI) {
     parameters: Type.Object({
       ...coordinatorSchema,
       taskId: Type.String({ minLength: 1 }),
-      role: Type.Union([Type.Literal("merger"), Type.Literal("reviewer"), Type.Literal("repairer")]),
+      role: Type.Union([Type.Literal("proposer"), Type.Literal("merger"), Type.Literal("reviewer"), Type.Literal("repairer")]),
       expiresAt: Type.Optional(Type.String()),
+      unitIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+      candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
       checkpointIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
       actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
       audit: Type.Optional(assignmentAuditSchema),
     }),
     async execute(_id, params) {
       try { return result(await service.assignWorker(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_proposal_submit",
+    label: "Submit Shard Proposal",
+    description: "Persist an immutable bounded proposal from a scoped proposal-author assignment. This validates declared extraction packet hashes and cannot mutate canonical merge state.",
+    parameters: Type.Object({ ...workerSchema, packet: proposalPacketSchema }),
+    async execute(_id, params) {
+      try { return result(await proposals.submitWorkerProposal(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -323,10 +353,31 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_extraction_inventory_worker",
+    label: "List Extraction Inventory",
+    description: "Read compact, cursor-paginated extraction packet summaries for an authorized merger, reviewer, or repairer. This never returns candidate payloads or a whole corpus.",
+    parameters: Type.Object({
+      ...workerSchema,
+      group: Type.Optional(extractionGroupSchema),
+      continuationCursor: Type.Optional(Type.String({ minLength: 1 })),
+      maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    }),
+    async execute(_id, params) {
+      try { return result(await service.readWorkerExtractionInventory(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_extraction_read_worker",
-    label: "Read Worker Extractions",
-    description: "Read persisted extraction packets for an authorized merger, reviewer, or repairer. The optional unit filter is informational, not a write scope.",
-    parameters: Type.Object({ ...workerSchema, unitId: Type.Optional(Type.String({ minLength: 1 })) }),
+    label: "Read Extraction Packet",
+    description: "Read candidates from exactly one persisted extraction packet in bounded pages. Use mem_extraction_inventory_worker first; do not request a whole corpus.",
+    parameters: Type.Object({
+      ...workerSchema,
+      unitId: Type.String({ minLength: 1 }),
+      candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 })),
+      continuationCursor: Type.Optional(Type.String({ minLength: 1 })),
+      maxCandidates: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    }),
     async execute(_id, params) {
       try { return result(await service.readWorkerExtractions(params)); } catch (error) { return failure(error); }
     },

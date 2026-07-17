@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { MemImportService } from "./mem-import/service.js";
 import { MemImportU2Service } from "./mem-import/u2-service.js";
+import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -110,9 +111,122 @@ test("mem-import merger workers can read any normalized unit and extraction pack
   const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "merger-reader", role: "merger" });
   const source = await service.readWorkerUnit({ ...merger, unitId: units[1]!.unitId, maxChars: 1000 });
   assert.match(source.content, /Bea carries the silver key/);
+  const inventory = await service.readWorkerExtractionInventory({ ...merger, maxItems: 10 });
+  assert.deepEqual(inventory.entries.map((entry) => entry.unitId), [units[0]!.unitId]);
+  assert.equal(inventory.entries[0]!.candidateCount, 1);
   const filtered = await service.readWorkerExtractions({ ...merger, unitId: units[0]!.unitId });
-  assert.equal(filtered.length, 1);
-  assert.equal(filtered[0]!.unitId, units[0]!.unitId);
+  assert.equal(filtered?.totalCandidates, 1);
+  assert.equal(filtered?.candidates[0]!.id, "local-candidate");
+});
+
+test("mem-import extraction inventories page in source order and retain group filters", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "inventory-extract", unitIds: units.map((unit) => unit.unitId) });
+  await service.submitExtraction({ ...extractor, unitId: units[0]!.unitId, stage: validStage(units[0]!) });
+  const bea = validStage(units[1]!);
+  bea.candidates![0]!.title = "Bea";
+  bea.candidates![0]!.provenance[0]!.quote = "Bea carries the silver key.";
+  await service.submitExtraction({ ...extractor, unitId: units[1]!.unitId, stage: bea });
+  const reviewer = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "inventory-review", role: "reviewer" });
+
+  const first = await service.readWorkerExtractionInventory({ ...reviewer, maxItems: 1, group: "people" });
+  assert.equal(first.entries.length, 1);
+  assert.equal(first.truncated, true);
+  assert.ok(first.continuationCursor);
+  const second = await service.readWorkerExtractionInventory({ ...reviewer, maxItems: 1, group: "people", continuationCursor: first.continuationCursor });
+  assert.equal(second.entries.length, 1);
+  assert.equal(second.truncated, false);
+  assert.deepEqual([...first.entries, ...second.entries].map((entry) => entry.unitId), units.map((unit) => unit.unitId));
+  await assert.rejects(
+    service.readWorkerExtractionInventory({ ...reviewer, group: "facts", continuationCursor: first.continuationCursor }),
+    /does not match the requested group filter/,
+  );
+});
+
+test("mem-import worker extraction reads are bounded, filtered, and monotonic", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "bounded-extract", unitIds: [unit.unitId] });
+  const stage = validStage(unit);
+  stage.candidates = Array.from({ length: 105 }, (_, index) => ({
+    ...stage.candidates![0]!,
+    id: `candidate-${String(index).padStart(3, "0")}`,
+    title: `Ada ${index}`,
+  }));
+  await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage });
+  const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "bounded-reader", role: "merger" });
+
+  const first = await service.readWorkerExtractions({ ...merger, unitId: unit.unitId, maxCandidates: 50 });
+  assert.equal(first?.totalCandidates, 105);
+  assert.equal(first?.candidates.length, 50);
+  assert.equal(first?.truncated, true);
+  assert.ok(first?.continuationCursor);
+  const second = await service.readWorkerExtractions({ ...merger, unitId: unit.unitId, maxCandidates: 50, continuationCursor: first!.continuationCursor });
+  assert.equal(second?.candidates.length, 50);
+  const final = await service.readWorkerExtractions({ ...merger, unitId: unit.unitId, maxCandidates: 50, continuationCursor: second!.continuationCursor });
+  assert.equal(final?.candidates.length, 5);
+  assert.equal(final?.truncated, false);
+  assert.deepEqual([...first!.candidates, ...second!.candidates, ...final!.candidates].map((candidate) => candidate.id), stage.candidates.map((candidate) => candidate.id));
+
+  const subset = await service.readWorkerExtractions({ ...merger, unitId: unit.unitId, candidateIds: ["candidate-004", "candidate-099"] });
+  assert.deepEqual(subset?.candidates.map((candidate) => candidate.id), ["candidate-004", "candidate-099"]);
+  await assert.rejects(
+    service.readWorkerExtractions({ ...merger, unitId: unit.unitId, maxCandidates: 101 }),
+    /between 1 and 100/,
+  );
+});
+
+test("mem-import persists immutable scoped shard proposals against exact extraction hashes", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "proposal-extract", unitIds: [unit.unitId] });
+  const submitted = await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const proposer = await service.assignWorker({
+    outputRoot: output,
+    runId: run.runId,
+    coordinatorGrant: run.coordinatorGrant,
+    taskId: "proposal-author",
+    role: "proposer",
+    unitIds: [unit.unitId],
+    candidateIds: [`${unit.unitId}:local-candidate`],
+  });
+  const packet = {
+    version: 1 as const,
+    kind: "mem-import-proposal" as const,
+    id: "ada-shard",
+    inputs: [{ unitId: unit.unitId, packetHash: submitted.packetHash, candidateIds: ["local-candidate"] }],
+    artifacts: [{
+      id: "ada",
+      group: "people",
+      title: "Ada",
+      description: "A guard at the glass tower.",
+      sections: [{ heading: "Summary", body: "Ada guards the glass tower." }],
+      provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }],
+    }],
+    candidateDispositions: [],
+    rationale: "Preserve the local Ada evidence for later canonical reconciliation.",
+  };
+  const persisted = await proposals.submitWorkerProposal({ ...proposer, packet });
+  assert.match(persisted.path, new RegExp(`^stages/runs/${run.runId}/proposals/ada-shard-`));
+  const stored = JSON.parse(await readFile(join(output, persisted.path), "utf-8")) as Record<string, unknown>;
+  assert.equal(stored.contentHash, persisted.contentHash);
+  assert.equal((((stored.artifacts as Array<Record<string, unknown>>)[0]!.provenance as Array<Record<string, unknown>>)[0]!.quote), "Ada guards the glass tower.");
+  await assert.rejects(
+    proposals.submitWorkerProposal({ ...proposer, packet: { ...packet, id: "wrong-candidate", inputs: [{ ...packet.inputs[0]!, candidateIds: ["not-assigned"] }] } }),
+    /does not exist|outside this assignment/,
+  );
+
+  const replacement = validStage(unit);
+  replacement.candidates![0]!.title = "Ada, tower guard";
+  await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: replacement });
+  await assert.rejects(
+    proposals.submitWorkerProposal({ ...proposer, packet: { ...packet, id: "stale-input" } }),
+    /stale or invalid/,
+  );
 });
 
 test("mem-import validates literal single- and multi-block provenance quotes", async () => {

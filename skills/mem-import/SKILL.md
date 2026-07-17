@@ -18,8 +18,10 @@ This slice supports:
 - run-scoped deterministic normalization and manifest inspection;
 - bounded monotonic source reads and literal-provenance extraction validation/submission for assigned units only;
 - durable, exclusive extractor assignments with revocation/supersession and sanitized authorization evidence;
-- grant-bound merger/reviewer/repairer assignments with role-specific tool boundaries;
-- one fenced global merge writer, revision/hash CAS, immutable content-addressed merge history, and source/extraction input hashes;
+- compact cursor-paginated extraction inventories plus bounded candidate reads for merger/reviewer/repairer roles;
+- grant-bound proposal-author, merger, reviewer, and repairer assignments with role-specific tool boundaries;
+- immutable, bounded shard proposals scoped to declared extraction packet hashes;
+- one fenced global merge writer, revision/hash CAS, immutable content-addressed merge history, and source/extraction input hashes. The complete-snapshot merge writer is retained only as small-corpus comparison evidence while bounded proposal/transaction work is introduced;
 - immutable reviewer packets bound to a precise merge revision; and
 - coordinator-only deterministic checks and finalization into `stages/import-run.json` schema v2.
 
@@ -63,7 +65,8 @@ A delegated run permits one worker or parallel workers on disjoint units, but ex
 
 - Source truth: normalized units and manifest.
 - Extraction truth: `stages/extraction/<unit>.json` packets submitted through typed tools.
-- Merge truth: the latest canonical merge snapshot plus its immutable content-addressed receipt under `stages/merge/revisions/`.
+- Extraction discovery truth: cursor-paginated packet inventories and bounded packet pages; do not request the whole corpus.
+- Merge truth: the latest canonical merge snapshot plus its immutable content-addressed receipt under `stages/merge/revisions/`. Do not use its legacy complete-snapshot surface for a substantive corpus.
 - Review truth: immutable task-keyed packets under `stages/reviews/`, hash-bound to the reviewed merge revision.
 - Completion truth: deterministic check artifacts and `stages/import-run.json` schema v2.
 
@@ -74,7 +77,7 @@ Do not report success solely because a worker says it finished. Verify persisted
 - [workflow](references/workflow.md) — model-owned adapter and outcome evaluation.
 - [typed helper tools](references/helper-tools.md) — U1 run, assignment, source-read, and extraction contracts.
 - [extractor role](references/extractor-role.md) — extraction worker prompt/profile boundary.
-- [merger role](references/merger-role.md), [reviewer role](references/reviewer-role.md), and [repairer role](references/repairer-role.md) — privileged U2 worker boundaries.
+- [proposal role](references/proposal-role.md), [merger role](references/merger-role.md), [reviewer role](references/reviewer-role.md), and [repairer role](references/repairer-role.md) — privileged worker boundaries.
 - [subagent capabilities](references/subagent-capabilities.md) — adapter decision aid.
 - [pi-subagents](references/adapters/pi-subagents.md) and [pi-herdr-subagents](references/adapters/pi-herdr-subagents.md) — load only after detecting a matching facility.
 - [scout role](references/scout-role.md) — retained for a non-mutating adapter trial.

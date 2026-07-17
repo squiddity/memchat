@@ -13,7 +13,7 @@ import {
   writeJson,
 } from "../world-import/staging.js";
 import { validateStageEnvelope } from "../world-import/staging.js";
-import type { SourceManifest, SourceManifestEntry, StageEnvelope } from "../world-import/types.js";
+import { WORLD_IMPORT_GROUPS, type SourceManifest, type SourceManifestEntry, type StageEnvelope, type WorldImportGroup } from "../world-import/types.js";
 
 export const MEM_IMPORT_RUN_VERSION = 1;
 export const EXTRACTOR_CAPABILITIES = ["source:read", "extraction:read", "extraction:validate", "extraction:submit"] as const;
@@ -22,6 +22,7 @@ export const MEM_IMPORT_CAPABILITIES = [
   "merge:read",
   "merge:lease",
   "merge:write",
+  "proposal:submit",
   "review:read",
   "review:submit",
   "check:read",
@@ -29,7 +30,7 @@ export const MEM_IMPORT_CAPABILITIES = [
 
 export type ExtractorCapability = (typeof EXTRACTOR_CAPABILITIES)[number];
 export type MemImportCapability = (typeof MEM_IMPORT_CAPABILITIES)[number];
-export type AssignmentRole = "extractor" | "merger" | "reviewer" | "repairer";
+export type AssignmentRole = "extractor" | "proposer" | "merger" | "reviewer" | "repairer";
 export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
 
 /** Deliberately small, credential-free runtime identity supplied by the parent. */
@@ -64,6 +65,8 @@ export type MemImportAssignmentRecord = {
   role: AssignmentRole;
   outputRoot: string;
   allowedUnitIds: string[];
+  /** Proposal grants can additionally restrict candidate IDs within their allowed units. */
+  allowedCandidateIds?: string[];
   /** Repair grants name the checkpoint actions they may implement; other roles leave these empty. */
   allowedCheckpointIds?: string[];
   allowedActionIds?: string[];
@@ -108,6 +111,8 @@ export type WorkerAssignmentResult = {
   role: Exclude<AssignmentRole, "extractor">;
   expiresAt: string;
   capabilities: MemImportCapability[];
+  unitIds: string[];
+  candidateIds: string[];
   checkpointIds: string[];
   actionIds: string[];
 };
@@ -132,6 +137,33 @@ export type ExtractionStatusResult = {
   missingUnitIds: string[];
 };
 
+/** Small, page-safe summary of one persisted extraction packet. */
+export type ExtractionInventoryEntry = {
+  unitId: string;
+  sourceId: string;
+  packetHash: string;
+  candidateCount: number;
+  groupCounts: Partial<Record<WorldImportGroup, number>>;
+};
+
+export type ExtractionInventoryResult = {
+  entries: ExtractionInventoryEntry[];
+  returnedItems: number;
+  truncated: boolean;
+  continuationCursor?: string;
+};
+
+/** A bounded candidate page from exactly one extraction packet. */
+export type ExtractionPacketResult = {
+  unitId: string;
+  sourceId: string;
+  packetHash: string;
+  totalCandidates: number;
+  candidates: NonNullable<StageEnvelope["candidates"]>;
+  truncated: boolean;
+  continuationCursor?: string;
+};
+
 type Clock = () => Date;
 type SourceCursor = {
   version: 1;
@@ -139,6 +171,23 @@ type SourceCursor = {
   contentHash: string;
   startAnchor: string;
   endAnchor: string;
+  offset: number;
+};
+
+type ExtractionInventoryCursor = {
+  version: 1;
+  kind: "extraction-inventory";
+  afterOrder: number;
+  afterUnitId: string;
+  group?: WorldImportGroup;
+};
+
+type ExtractionPacketCursor = {
+  version: 1;
+  kind: "extraction-packet";
+  unitId: string;
+  packetHash: string;
+  candidateIdsHash: string;
   offset: number;
 };
 
@@ -156,6 +205,10 @@ function assignmentPath(outputRoot: string, taskId: string): string {
 
 function assignmentEffectPath(outputRoot: string, taskId: string, unitId: string): string {
   return `${orchestrationDir(outputRoot)}/effects/${taskId}/${createHash("sha256").update(unitId).digest("hex")}.json`;
+}
+
+function extractionInventoryPath(outputRoot: string, unitId: string): string {
+  return `${orchestrationDir(outputRoot)}/extraction-inventory/${unitId}.json`;
 }
 
 async function writeAuthorizationEvent(outputRoot: string, event: Record<string, unknown>): Promise<void> {
@@ -266,9 +319,10 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || value.kind !== "mem-import-assignment"
     || typeof value.runId !== "string"
     || typeof value.taskId !== "string"
-    || !["extractor", "merger", "reviewer", "repairer"].includes(String(value.role))
+    || !["extractor", "proposer", "merger", "reviewer", "repairer"].includes(String(value.role))
     || typeof value.outputRoot !== "string"
     || !Array.isArray(value.allowedUnitIds) || !value.allowedUnitIds.every((item) => typeof item === "string")
+    || (value.allowedCandidateIds !== undefined && (!Array.isArray(value.allowedCandidateIds) || !value.allowedCandidateIds.every((item) => typeof item === "string")))
     || (value.allowedCheckpointIds !== undefined && (!Array.isArray(value.allowedCheckpointIds) || !value.allowedCheckpointIds.every((item) => typeof item === "string")))
     || (value.allowedActionIds !== undefined && (!Array.isArray(value.allowedActionIds) || !value.allowedActionIds.every((item) => typeof item === "string")))
     || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => MEM_IMPORT_CAPABILITIES.includes(item as MemImportCapability))
@@ -519,6 +573,8 @@ export class MemImportService {
     taskId: string;
     role: Exclude<AssignmentRole, "extractor">;
     expiresAt?: string;
+    unitIds?: string[];
+    candidateIds?: string[];
     checkpointIds?: string[];
     actionIds?: string[];
     audit?: MemImportAssignmentAudit;
@@ -526,12 +582,21 @@ export class MemImportService {
     const run = await this.authorizeCoordinator(options);
     if (!run.normalizedAt || !existsSync(`${run.outputRoot}/sources/manifest.json`)) throw new Error("Normalize the run before issuing worker assignments");
     assertTaskId(options.taskId);
-    if (!["merger", "reviewer", "repairer"].includes(options.role)) throw new Error("role must be merger, reviewer, or repairer");
+    if (!["proposer", "merger", "reviewer", "repairer"].includes(options.role)) throw new Error("role must be proposer, merger, reviewer, or repairer");
     if (existsSync(assignmentPath(run.outputRoot, options.taskId))) throw new Error(`Assignment ${options.taskId} already exists; use a fresh taskId`);
+    const unitIds = [...new Set(options.unitIds ?? [])];
+    const candidateIds = [...new Set(options.candidateIds ?? [])];
     const checkpointIds = [...new Set(options.checkpointIds ?? [])];
     const actionIds = [...new Set(options.actionIds ?? [])];
+    unitIds.forEach(assertTaskId);
+    candidateIds.forEach((candidateId) => {
+      requireNonEmpty(candidateId, "candidateId");
+      if (candidateId.includes("\n") || candidateId.includes("\r")) throw new Error("candidateId must not contain line breaks");
+    });
     checkpointIds.forEach(assertTaskId);
     actionIds.forEach(assertTaskId);
+    if (options.role === "proposer" && unitIds.length === 0) throw new Error("Proposer assignments require explicit unitIds");
+    if (options.role !== "proposer" && (unitIds.length > 0 || candidateIds.length > 0)) throw new Error("Only proposer assignments may carry unit/candidate scope");
     if (options.role === "repairer" && (checkpointIds.length === 0 || actionIds.length === 0)) {
       throw new Error("Repairer assignments require explicit checkpointIds and actionIds");
     }
@@ -542,6 +607,7 @@ export class MemImportService {
     const expiresAt = options.expiresAt ? asIsoDate(options.expiresAt, "expiresAt") : new Date(issuedAt.getTime() + 60 * 60 * 1000);
     if (expiresAt.getTime() <= issuedAt.getTime()) throw new Error("expiresAt must be in the future");
     const capabilities: Record<Exclude<AssignmentRole, "extractor">, MemImportCapability[]> = {
+      proposer: ["source:read", "extraction:read", "proposal:submit"],
       merger: ["source:read", "extraction:read", "merge:read", "merge:lease", "merge:write", "check:read"],
       reviewer: ["source:read", "extraction:read", "merge:read", "review:read", "review:submit", "check:read"],
       repairer: ["source:read", "extraction:read", "merge:read", "merge:lease", "merge:write", "check:read"],
@@ -554,7 +620,8 @@ export class MemImportService {
       taskId: options.taskId,
       role: options.role,
       outputRoot: run.outputRoot,
-      allowedUnitIds: [],
+      allowedUnitIds: unitIds,
+      ...(candidateIds.length ? { allowedCandidateIds: candidateIds } : {}),
       ...(checkpointIds.length ? { allowedCheckpointIds: checkpointIds } : {}),
       ...(actionIds.length ? { allowedActionIds: actionIds } : {}),
       capabilities: capabilities[options.role],
@@ -565,7 +632,7 @@ export class MemImportService {
       ...(sanitizeAudit(options.audit) ? { audit: sanitizeAudit(options.audit) } : {}),
     };
     await writeJson(assignmentPath(run.outputRoot, assignment.taskId), assignment);
-    return { runId: assignment.runId, taskId: assignment.taskId, outputRoot: assignment.outputRoot, grant, role: assignment.role as Exclude<AssignmentRole, "extractor">, expiresAt: assignment.expiresAt, capabilities: assignment.capabilities, checkpointIds, actionIds };
+    return { runId: assignment.runId, taskId: assignment.taskId, outputRoot: assignment.outputRoot, grant, role: assignment.role as Exclude<AssignmentRole, "extractor">, expiresAt: assignment.expiresAt, capabilities: assignment.capabilities, unitIds, candidateIds, checkpointIds, actionIds };
   }
 
   async revokeAssignment(options: { outputRoot: string; runId: string; coordinatorGrant: string; taskId: string }): Promise<{ taskId: string; revokedAt: string }> {
@@ -607,7 +674,7 @@ export class MemImportService {
       if (assignment.supersededAt) throw new Error(`Assignment ${assignment.taskId} was superseded at ${assignment.supersededAt}`);
       if (asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() <= this.now().getTime()) throw new Error(`Assignment ${assignment.taskId} has expired`);
       if (!assignment.capabilities.includes(options.capability)) throw new Error(`Assignment does not allow capability ${options.capability}`);
-      if (options.unitId && !assignment.allowedUnitIds.includes(options.unitId)) throw new Error(`Unit ${options.unitId} is outside this extractor assignment`);
+      if (options.unitId && !assignment.allowedUnitIds.includes(options.unitId)) throw new Error(`Unit ${options.unitId} is outside this${assignment.role === "extractor" ? " extractor" : ""} assignment`);
       if (options.checkpointId && !assignment.allowedCheckpointIds?.includes(options.checkpointId)) throw new Error(`Checkpoint ${options.checkpointId} is outside this assignment`);
       if (options.actionIds?.some((actionId) => !assignment.allowedActionIds?.includes(actionId))) throw new Error("One or more repair actions are outside this assignment");
       await writeAuthorizationEvent(outputRoot, { runId, taskId: assignment.taskId, role: assignment.role, capability: options.capability, ...(options.unitId ? { unitId: options.unitId } : {}), ...(options.checkpointId ? { checkpointId: options.checkpointId } : {}), ...(options.actionIds?.length ? { actionIds: [...options.actionIds] } : {}), outcome: "allowed" });
@@ -710,7 +777,8 @@ export class MemImportService {
     // A requested unit is not an extractor assignment scope, so do not pass it
     // to authorizeWorker for run-wide merger/reviewer/repairer read grants.
     const { unitId: requestedUnitId, ...authority } = options;
-    await this.authorizeWorker({ ...authority, capability: "source:read" });
+    const assignment = await this.authorizeWorker({ ...authority, capability: "source:read" });
+    if (assignment.role === "proposer" && !assignment.allowedUnitIds.includes(requestedUnitId)) throw new Error(`Unit ${requestedUnitId} is outside this assignment`);
     const outputRoot = canonicalOutputRoot(options.outputRoot);
     const [manifest, unit] = await Promise.all([readManifest(outputRoot), readNormalizedUnit(outputRoot, requestedUnitId)]);
     const entry = manifest.units.find((item) => item.unitId === requestedUnitId);
@@ -752,12 +820,83 @@ export class MemImportService {
     return { assignedUnitIds: assignment.allowedUnitIds, submittedUnitIds, missingUnitIds: assignment.allowedUnitIds.filter((unitId) => !submitted.has(unitId)) };
   }
 
-  async readWorkerExtractions(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId?: string }): Promise<StageEnvelope[]> {
-    const { unitId, ...authority } = options;
+  /**
+   * List compact extraction-packet summaries in deterministic source-unit order.
+   * This deliberately never returns candidates or a whole corpus packet payload.
+   */
+  async readWorkerExtractionInventory(options: { outputRoot: string; runId: string; taskId: string; grant: string; group?: WorldImportGroup; continuationCursor?: string; maxItems?: number }): Promise<ExtractionInventoryResult> {
+    const assignment = await this.authorizeWorker({ ...options, capability: "extraction:read" });
+    if (options.group && !WORLD_IMPORT_GROUPS.includes(options.group)) throw new Error("group must be a known world-import group");
+    const maxItems = options.maxItems ?? 25;
+    if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 100) throw new Error("maxItems must be an integer between 1 and 100");
+    const cursor = options.continuationCursor ? this.decodeExtractionInventoryCursor(options.continuationCursor) : undefined;
+    if (cursor && cursor.group !== options.group) throw new Error("Extraction inventory cursor does not match the requested group filter");
+
+    const manifest = await readManifest(assignment.outputRoot);
+    const candidates = manifest.units
+      .filter((unit) => assignment.role !== "proposer" || assignment.allowedUnitIds.includes(unit.unitId))
+      .filter((unit) => !cursor || unit.order > cursor.afterOrder || (unit.order === cursor.afterOrder && unit.unitId > cursor.afterUnitId))
+      .sort((left, right) => left.order - right.order || left.unitId.localeCompare(right.unitId));
+    const entries: ExtractionInventoryEntry[] = [];
+    let hasMore = false;
+    for (const unit of candidates) {
+      const entry = await this.readExtractionInventoryEntry(assignment.outputRoot, unit.unitId);
+      if (!entry || (options.group && !entry.groupCounts[options.group])) continue;
+      if (entries.length === maxItems) { hasMore = true; break; }
+      entries.push(entry);
+    }
+    const last = entries.at(-1);
+    const lastManifestEntry = last ? manifest.units.find((unit) => unit.unitId === last.unitId) : undefined;
+    return {
+      entries,
+      returnedItems: entries.length,
+      truncated: hasMore,
+      ...(hasMore && last && lastManifestEntry ? { continuationCursor: this.encodeExtractionInventoryCursor({ version: 1, kind: "extraction-inventory", afterOrder: lastManifestEntry.order, afterUnitId: last.unitId, ...(options.group ? { group: options.group } : {}) }) } : {}),
+    };
+  }
+
+  /**
+   * Read candidates from exactly one packet in bounded pages. Callers must use
+   * the inventory first instead of requesting every extraction packet at once.
+   */
+  async readWorkerExtractions(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId: string; candidateIds?: string[]; continuationCursor?: string; maxCandidates?: number }): Promise<ExtractionPacketResult | undefined> {
+    const { unitId, candidateIds, continuationCursor, maxCandidates, ...authority } = options;
     const assignment = await this.authorizeWorker({ ...authority, capability: "extraction:read" });
-    const stages = await readExtractionStages(assignment.outputRoot);
-    if (!unitId) return stages;
-    return stages.filter((stage) => stage.unitId === unitId);
+    if (assignment.role === "proposer" && !assignment.allowedUnitIds.includes(unitId)) throw new Error(`Unit ${unitId} is outside this assignment`);
+    assertTaskId(unitId);
+    const path = extractionStagePath(assignment.outputRoot, unitId);
+    if (!existsSync(path)) return undefined;
+    const stage = JSON.parse(await readFile(path, "utf-8")) as StageEnvelope;
+    if (stage.kind !== "extraction" || stage.unitId !== unitId || typeof stage.sourceId !== "string" || !Array.isArray(stage.candidates)) throw new Error(`Extraction packet ${unitId} is invalid`);
+    const packetHash = createHash("sha256").update(JSON.stringify(stage)).digest("hex");
+    const requestedIds = candidateIds?.length ? [...new Set(candidateIds)] : undefined;
+    if (requestedIds?.some((id) => !id.trim())) throw new Error("candidateIds must contain non-empty IDs");
+    if (requestedIds && requestedIds.length > 100) throw new Error("candidateIds may contain at most 100 IDs");
+    const scopedIds = assignment.role === "proposer" && assignment.allowedCandidateIds?.length
+      ? assignment.allowedCandidateIds.filter((id) => id.startsWith(`${unitId}:`)).map((id) => id.slice(unitId.length + 1))
+      : undefined;
+    if (assignment.role === "proposer" && requestedIds?.some((id) => scopedIds && !scopedIds.includes(id))) throw new Error("One or more candidate IDs are outside this proposal assignment");
+    const effectiveIds = requestedIds ?? scopedIds;
+    const candidateIdsHash = createHash("sha256").update(JSON.stringify(effectiveIds ?? [])).digest("hex");
+    const cursor = continuationCursor ? this.decodeExtractionPacketCursor(continuationCursor) : undefined;
+    if (cursor && (cursor.unitId !== unitId || cursor.packetHash !== packetHash || cursor.candidateIdsHash !== candidateIdsHash)) throw new Error("Stale extraction packet continuation cursor");
+    const limit = maxCandidates ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("maxCandidates must be an integer between 1 and 100");
+    const selected = effectiveIds ? stage.candidates.filter((candidate) => effectiveIds.includes(candidate.id)) : stage.candidates;
+    const offset = cursor?.offset ?? 0;
+    if (offset >= selected.length && (cursor || selected.length > 0)) throw new Error("Stale extraction packet continuation cursor is already at the end of its candidate range");
+    const candidates = selected.slice(offset, offset + limit);
+    const nextOffset = offset + candidates.length;
+    const truncated = nextOffset < selected.length;
+    return {
+      unitId,
+      sourceId: stage.sourceId,
+      packetHash,
+      totalCandidates: selected.length,
+      candidates,
+      truncated,
+      ...(truncated ? { continuationCursor: this.encodeExtractionPacketCursor({ version: 1, kind: "extraction-packet", unitId, packetHash, candidateIdsHash, offset: nextOffset }) } : {}),
+    };
   }
 
   async readExtraction(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId: string }): Promise<StageEnvelope | undefined> {
@@ -780,6 +919,7 @@ export class MemImportService {
       const packetHash = createHash("sha256").update(JSON.stringify(stage)).digest("hex");
       const submittedAt = this.now().toISOString();
       await writeExtractionStage(outputRoot, stage);
+      await writeJson(extractionInventoryPath(outputRoot, options.unitId), this.extractionInventoryEntry(stage, packetHash));
       await writeJson(assignmentEffectPath(outputRoot, assignment.taskId, options.unitId), {
         version: 1,
         kind: "mem-import-packet-effect",
@@ -794,6 +934,52 @@ export class MemImportService {
       await writeJson(assignmentPath(outputRoot, assignment.taskId), { ...assignment, lifecycleOutcome: "submitted" } satisfies MemImportAssignmentRecord);
       return { unitId: options.unitId, candidateCount: stage.candidates?.length ?? 0, packetHash };
     });
+  }
+
+  private extractionInventoryEntry(stage: StageEnvelope, packetHash: string): ExtractionInventoryEntry {
+    if (!stage.unitId || !stage.sourceId || !Array.isArray(stage.candidates)) throw new Error("Cannot inventory an invalid extraction stage");
+    const groupCounts: Partial<Record<WorldImportGroup, number>> = {};
+    for (const candidate of stage.candidates) {
+      groupCounts[candidate.group] = (groupCounts[candidate.group] ?? 0) + 1;
+    }
+    return { unitId: stage.unitId, sourceId: stage.sourceId, packetHash, candidateCount: stage.candidates.length, groupCounts };
+  }
+
+  private async readExtractionInventoryEntry(outputRoot: string, unitId: string): Promise<ExtractionInventoryEntry | undefined> {
+    const inventoryPath = extractionInventoryPath(outputRoot, unitId);
+    if (existsSync(inventoryPath)) {
+      const inventory = JSON.parse(await readFile(inventoryPath, "utf-8")) as ExtractionInventoryEntry;
+      if (inventory.unitId === unitId && typeof inventory.sourceId === "string" && typeof inventory.packetHash === "string" && Number.isInteger(inventory.candidateCount) && inventory.candidateCount >= 0 && inventory.groupCounts && typeof inventory.groupCounts === "object") return inventory;
+      throw new Error(`Extraction inventory record ${unitId} is invalid`);
+    }
+    const path = extractionStagePath(outputRoot, unitId);
+    if (!existsSync(path)) return undefined;
+    const stage = JSON.parse(await readFile(path, "utf-8")) as StageEnvelope;
+    return this.extractionInventoryEntry(stage, createHash("sha256").update(JSON.stringify(stage)).digest("hex"));
+  }
+
+  private encodeExtractionInventoryCursor(cursor: ExtractionInventoryCursor): string {
+    return Buffer.from(JSON.stringify(cursor), "utf-8").toString("base64url");
+  }
+
+  private decodeExtractionInventoryCursor(value: string): ExtractionInventoryCursor {
+    let cursor: Partial<ExtractionInventoryCursor>;
+    try { cursor = JSON.parse(Buffer.from(value, "base64url").toString("utf-8")) as Partial<ExtractionInventoryCursor>; }
+    catch { throw new Error("Invalid extraction inventory continuation cursor"); }
+    if (cursor.version !== 1 || cursor.kind !== "extraction-inventory" || typeof cursor.afterOrder !== "number" || !Number.isInteger(cursor.afterOrder) || cursor.afterOrder < 0 || typeof cursor.afterUnitId !== "string" || (cursor.group !== undefined && !WORLD_IMPORT_GROUPS.includes(cursor.group))) throw new Error("Invalid extraction inventory continuation cursor");
+    return cursor as ExtractionInventoryCursor;
+  }
+
+  private encodeExtractionPacketCursor(cursor: ExtractionPacketCursor): string {
+    return Buffer.from(JSON.stringify(cursor), "utf-8").toString("base64url");
+  }
+
+  private decodeExtractionPacketCursor(value: string): ExtractionPacketCursor {
+    let cursor: Partial<ExtractionPacketCursor>;
+    try { cursor = JSON.parse(Buffer.from(value, "base64url").toString("utf-8")) as Partial<ExtractionPacketCursor>; }
+    catch { throw new Error("Invalid extraction packet continuation cursor"); }
+    if (cursor.version !== 1 || cursor.kind !== "extraction-packet" || typeof cursor.unitId !== "string" || typeof cursor.packetHash !== "string" || typeof cursor.candidateIdsHash !== "string" || typeof cursor.offset !== "number" || !Number.isInteger(cursor.offset) || cursor.offset < 0) throw new Error("Invalid extraction packet continuation cursor");
+    return cursor as ExtractionPacketCursor;
   }
 
   private async assertExtractionStage(outputRoot: string, unitId: string, value: unknown): Promise<StageEnvelope> {
