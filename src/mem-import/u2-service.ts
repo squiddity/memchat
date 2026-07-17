@@ -548,11 +548,15 @@ export class MemImportU2Service {
       if (operation.kind === "upsert") artifacts.set((operation.artifact as { id: string }).id, structuredClone(operation.artifact) as NonNullable<StageEnvelope["artifacts"]>[number]);
       else artifacts.delete(operation.artifactId);
     }
+    const dispositions = new Map((before.candidateDispositions ?? []).map((disposition) => [`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition]));
+    for (const disposition of batch.candidateDispositions as NonNullable<StageEnvelope["candidateDispositions"]> ?? []) {
+      dispositions.set(`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition);
+    }
     return {
       version: 1,
       kind: "merge",
       artifacts: [...artifacts.values()].sort((left, right) => left.id.localeCompare(right.id)),
-      candidateDispositions: batch.candidateDispositions as StageEnvelope["candidateDispositions"] ?? before.candidateDispositions ?? [],
+      candidateDispositions: [...dispositions.values()],
       diagnostics: before.diagnostics ?? [],
     };
   }

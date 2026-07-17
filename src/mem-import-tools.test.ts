@@ -155,6 +155,57 @@ test("mem-import compendia isolate run roots and record duplicate work sources",
   await u2.releaseCoordinatorLease({ outputRoot: first.outputRoot, runId: first.runId, coordinatorGrant: first.coordinatorGrant, taskId: "compendium-merge", fence: lease.fence });
 });
 
+test("mem-import compendium integration projects two work runs through finalization", async () => {
+  const root = await tempDir();
+  const compendiumRoot = join(root, "compendium");
+  const base = new MemImportService();
+  const compendia = new MemImportCompendiumService(base);
+  const proposals = new MemImportProposalService(base);
+  const u2 = new MemImportU2Service(base);
+
+  async function importWork(workId: string, sourceFile: string, sentence: string, person: string, artifactId: string) {
+    const input = join(root, `${workId}-input`);
+    await mkdir(input);
+    await writeFile(join(input, sourceFile), `<html><body><p>${sentence}</p></body></html>`, "utf-8");
+    const run = await compendia.begin({ compendiumRoot, compendiumId: "glass-series", workId });
+    const normalized = await compendia.normalize({ ...run, input });
+    const unit = normalized.manifest.units[0]!;
+    const extractor = await base.assignExtractor({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-extract`, unitIds: [unit.unitId] });
+    const extracted = await base.submitExtraction({
+      ...extractor,
+      unitId: unit.unitId,
+      stage: {
+        version: 1,
+        kind: "extraction",
+        unitId: unit.unitId,
+        sourceId: unit.sourceId,
+        candidates: [{ id: "person", group: "people", title: person, provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] }],
+      },
+    });
+    const artifact = { id: artifactId, group: "people", title: person, description: sentence, sections: [{ heading: "Summary", body: sentence }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }], metadata: { representedCandidateIds: [`${unit.unitId}:person`] } };
+    const proposer = await base.assignWorker({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-propose`, role: "proposer", unitIds: [unit.unitId] });
+    const proposal = await proposals.submitWorkerProposal({ ...proposer, packet: { version: 1, kind: "mem-import-proposal", id: `${workId}-shard`, inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash, candidateIds: ["person"] }], artifacts: [artifact], candidateDispositions: [{ unitId: unit.unitId, candidateId: "person", disposition: "represented", artifactId }], rationale: `Propose ${person} from ${workId}.` } });
+    const merger = await base.assignWorker({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-merge`, role: "merger" });
+    const state = await u2.mergeState(run);
+    const lease = await u2.acquireWorkerLease(merger);
+    const result = await u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: state.revision, expectedContentHash: state.contentHash, batch: { proposalHashes: [proposal.contentHash], readSet: [{ artifactId, contentHash: null }], operations: [{ kind: "upsert", artifact }], candidateDispositions: [{ unitId: unit.unitId, candidateId: "person", disposition: "represented", artifactId }], rationale: `Accept ${person}.` } });
+    await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
+    return { run, result };
+  }
+
+  const first = await importWork("book-one", "one.html", "Ada guards the glass tower.", "Ada", "ada");
+  const second = await importWork("book-two", "two.html", "Bea carries the silver key.", "Bea", "bea");
+  assert.equal(second.result.revision, 2);
+  const checks = await u2.checks(second.run);
+  assert.equal(checks.deterministic.passed, false, "pre-finalization checks correctly require an emitted shared projection");
+  const finalizeLease = await u2.acquireCoordinatorLease({ ...second.run, taskId: "compendium-finalize" });
+  const final = await u2.finalize({ ...second.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
+  assert.equal(final.finalized, true);
+  assert.ok(existsSync(join(compendiumRoot, "world", "people", "ada.md")));
+  assert.ok(existsSync(join(compendiumRoot, "world", "people", "bea.md")));
+  await u2.releaseCoordinatorLease({ ...second.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
+});
+
 test("mem-import merger workers can read any normalized unit and extraction packet", async () => {
   const { output, run, units } = await setup();
   const service = new MemImportService();
