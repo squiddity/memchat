@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { readManifest, writeJson } from "../world-import/staging.js";
+import { readExtractionStages, readManifest, readNormalizedUnit, writeExtractionStage, writeJson, writeManifest, writeNormalizedUnit } from "../world-import/staging.js";
 import type { SourceManifest } from "../world-import/types.js";
 import { MemImportService, type BeginRunResult, type MemImportActorAudit } from "./service.js";
 
@@ -39,11 +39,56 @@ function sourceHash(manifest: SourceManifest): string {
   return hash(manifest.units.map((unit) => ({ unitId: unit.unitId, sourceId: unit.sourceId, contentHash: unit.contentHash })).sort((left, right) => left.unitId.localeCompare(right.unitId)));
 }
 
+async function readCompendium(root: string): Promise<CompendiumRecord | undefined> {
+  if (!existsSync(recordPath(root))) return undefined;
+  const record = JSON.parse(await readFile(recordPath(root), "utf-8")) as Partial<CompendiumRecord>;
+  if (record.version !== 1 || record.kind !== "mem-import-compendium" || typeof record.compendiumId !== "string" || record.root !== root || !Array.isArray(record.runs)) throw new Error("Invalid mem-import compendium record");
+  return record as CompendiumRecord;
+}
+
 /**
  * Compendium registry and run-root allocator. Canonical transaction storage is
  * deliberately introduced separately so this layer never makes semantic merge
  * decisions or silently copies canonical artifacts into a new work run.
  */
+export type CompendiumProjection = { compendiumRoot: string; sourceUnits: number; extractionPackets: number; sourceLocatorPath: string };
+
+/** Build a deterministic shared source/extraction projection for checks and Markdown emission. */
+export async function projectCompendium(compendiumRootInput: string): Promise<CompendiumProjection> {
+  const compendiumRoot = resolve(compendiumRootInput);
+  const record = await readCompendium(compendiumRoot);
+  if (!record) throw new Error("Mem-import compendium does not exist");
+  const entries: SourceManifest["units"] = [];
+  const seenUnits = new Map<string, string>();
+  const locator: Array<{ unitId: string; sourceId: string; runId: string; runRoot: string; contentHash: string }> = [];
+  const extractionUnitIds = new Set<string>();
+  for (const run of record.runs) {
+    const manifestPath = join(run.runRoot, "sources", "manifest.json");
+    if (!existsSync(manifestPath)) continue;
+    const manifest = await readManifest(run.runRoot);
+    for (const entry of manifest.units) {
+      const prior = seenUnits.get(entry.unitId);
+      if (prior && prior !== entry.contentHash) throw new Error(`Compendium source unit collision for ${entry.unitId}`);
+      if (prior) continue;
+      seenUnits.set(entry.unitId, entry.contentHash);
+      const unit = await readNormalizedUnit(run.runRoot, entry.unitId);
+      const order = entries.length;
+      await writeNormalizedUnit(compendiumRoot, { ...unit, order });
+      entries.push({ ...entry, order, normalizedPath: `sources/normalized/${entry.unitId}.json` });
+      locator.push({ unitId: entry.unitId, sourceId: entry.sourceId, runId: run.runId, runRoot: run.runRoot, contentHash: entry.contentHash });
+    }
+    for (const stage of await readExtractionStages(run.runRoot)) {
+      if (!stage.unitId || extractionUnitIds.has(stage.unitId)) continue;
+      extractionUnitIds.add(stage.unitId);
+      await writeExtractionStage(compendiumRoot, stage);
+    }
+  }
+  await writeManifest({ version: 1, createdAt: new Date().toISOString(), inputRoot: "compendium", outputRoot: compendiumRoot, units: entries, diagnostics: [] });
+  const sourceLocatorPath = join(compendiumRoot, "stages", "source-locator.json");
+  await writeJson(sourceLocatorPath, { version: 1, kind: "mem-import-source-locator", compendiumId: record.compendiumId, units: locator });
+  return { compendiumRoot, sourceUnits: entries.length, extractionPackets: extractionUnitIds.size, sourceLocatorPath: "stages/source-locator.json" };
+}
+
 export class MemImportCompendiumService {
   constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {}
 
@@ -82,10 +127,7 @@ export class MemImportCompendiumService {
   }
 
   private async read(root: string): Promise<CompendiumRecord | undefined> {
-    if (!existsSync(recordPath(root))) return undefined;
-    const record = JSON.parse(await readFile(recordPath(root), "utf-8")) as Partial<CompendiumRecord>;
-    if (record.version !== 1 || record.kind !== "mem-import-compendium" || typeof record.compendiumId !== "string" || record.root !== root || !Array.isArray(record.runs)) throw new Error("Invalid mem-import compendium record");
-    return record as CompendiumRecord;
+    return readCompendium(root);
   }
 
   private async require(root: string): Promise<CompendiumRecord> {

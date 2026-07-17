@@ -16,6 +16,7 @@ import {
   writeMergeStage,
 } from "../world-import/staging.js";
 import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
+import { projectCompendium } from "./compendium-service.js";
 import { MemImportService, type AssignmentRole, type MemImportAssignmentRecord, type MemImportCapability } from "./service.js";
 
 const LEASE_HEARTBEAT_MS = 60_000;
@@ -273,16 +274,20 @@ export class MemImportU2Service {
 
   async checks(options: CoordinatorAuthority): Promise<{ deterministic: Awaited<ReturnType<typeof deterministicWorldImportChecks>>; lint: Awaited<ReturnType<typeof lintWorldImport>>; coverage: Awaited<ReturnType<typeof buildCoveragePlan>>; provenance: Awaited<ReturnType<typeof provenanceAudit>> }> {
     const run = await this.base.authorizeCoordinator(options);
-    if (run.compendiumRoot) throw new Error("Compendium checks require the shared canonical projection migration");
+    if (run.compendiumRoot) {
+      await projectCompendium(run.compendiumRoot);
+      return this.collectChecks(run.compendiumRoot);
+    }
     return this.collectChecks(run.outputRoot);
   }
 
   async finalize(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<{ finalized: boolean; auditPath: string; checksPath: string; errors: number; warnings: number }> {
     const run = await this.base.authorizeCoordinator(options);
-    if (run.compendiumRoot) throw new Error("Compendium finalization requires the shared canonical projection migration");
-    await this.requireLease(run.outputRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
-    await emitWorldLibrary(run.outputRoot);
-    const checks = await this.collectChecks(run.outputRoot);
+    const projectionRoot = this.canonicalRoot(run);
+    await this.requireLease(projectionRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
+    if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
+    await emitWorldLibrary(projectionRoot);
+    const checks = await this.collectChecks(projectionRoot);
     const diagnostics = [
       ...checks.lint.diagnostics,
       ...checks.coverage.recommendations,
@@ -292,14 +297,14 @@ export class MemImportU2Service {
     ];
     const errors = diagnostics.filter((item) => item.level === "error").length;
     const warnings = diagnostics.filter((item) => item.level === "warning").length;
-    const state = await this.readMergeState(run.outputRoot);
+    const state = await this.readMergeState(projectionRoot);
     if (!state.contentHash) throw new Error("Cannot finalize before a canonical merge revision exists");
-    const checksPath = join(run.outputRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
+    const checksPath = join(projectionRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
     await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, checks });
-    const receiptPath = this.relative(run.outputRoot, this.revisionReceiptPath(run.outputRoot, state.revision, state.contentHash));
-    const audit = await this.updateAudit(run.outputRoot, run.runId, {
+    const receiptPath = this.relative(projectionRoot, this.revisionReceiptPath(projectionRoot, state.revision, state.contentHash));
+    const audit = await this.updateAudit(projectionRoot, run.runId, {
       kind: "finalization",
-      path: this.relative(run.outputRoot, checksPath),
+      path: this.relative(projectionRoot, checksPath),
       contentHash: hash({ errors, warnings, state }),
       at: this.now().toISOString(),
       taskId: options.taskId,
@@ -307,10 +312,10 @@ export class MemImportU2Service {
       status: errors === 0 ? "finalized" : "failed",
       finalizedAt: this.now().toISOString(),
       merge: { revision: state.revision, contentHash: state.contentHash, revisionReceiptPath: receiptPath },
-      finalization: { passed: errors === 0, errorCount: errors, warningCount: warnings, checksPath: this.relative(run.outputRoot, checksPath) },
+      finalization: { passed: errors === 0, errorCount: errors, warningCount: warnings, checksPath: this.relative(projectionRoot, checksPath) },
     });
-    await this.recordEvent(run.outputRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(run.outputRoot, checksPath), errors, warnings, status: audit.status });
-    return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(run.outputRoot, checksPath), errors, warnings };
+    await this.recordEvent(projectionRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(projectionRoot, checksPath), errors, warnings, status: audit.status });
+    return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(projectionRoot, checksPath), errors, warnings };
   }
 
   private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "readSet" | "operations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {

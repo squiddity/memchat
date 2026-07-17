@@ -8,7 +8,7 @@ import test from "node:test";
 import { MemImportService } from "./mem-import/service.js";
 import { MemImportU2Service } from "./mem-import/u2-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
-import { MemImportCompendiumService } from "./mem-import/compendium-service.js";
+import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -124,6 +124,10 @@ test("mem-import compendia isolate run roots and record duplicate work sources",
   const record = await compendia.inspect(compendiumRoot);
   assert.equal(record.runs.length, 2);
   assert.equal(record.runs[1]!.duplicateOfRunId, first.runId);
+  const projection = await projectCompendium(compendiumRoot);
+  assert.equal(projection.sourceUnits, firstNormalized.manifest.units.length);
+  assert.ok(existsSync(join(compendiumRoot, "sources", "manifest.json")));
+  assert.ok(existsSync(join(compendiumRoot, projection.sourceLocatorPath)));
 
   const u2 = new MemImportU2Service(base);
   const unit = firstNormalized.manifest.units[0]!;
