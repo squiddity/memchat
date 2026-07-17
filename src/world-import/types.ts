@@ -161,6 +161,10 @@ export type WorldImportRunAudit = {
 export type StageEnvelope = {
   version: 1;
   kind: "extraction" | "merge" | "review";
+  /** mem-import U2 control metadata for the canonical latest merge snapshot. */
+  revision?: number;
+  contentHash?: string;
+  parentContentHash?: string;
   unitId?: string;
   sourceId?: string;
   candidates?: ExtractionCandidate[];
@@ -350,6 +354,20 @@ export type LintDiagnostic = {
 export type WorldImportLintResult = {
   passed: boolean;
   diagnostics: LintDiagnostic[];
+};
+
+export type MemImportRunAuditV2 = {
+  version: 2;
+  kind: "mem-import-run";
+  runId: string;
+  status: "running" | "finalized" | "failed";
+  createdAt: string;
+  finalizedAt?: string;
+  source: { normalizedUnits: number; manifestHash: string };
+  merge?: { revision: number; contentHash: string; revisionReceiptPath: string };
+  finalization?: { passed: boolean; errorCount: number; warningCount: number; checksPath: string };
+  effects: Array<{ kind: "merge" | "review" | "finalization"; path: string; contentHash: string; at: string; taskId?: string }>;
+  error?: string;
 };
 
 export type EvaluationResult = {

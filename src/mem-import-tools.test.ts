@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { MemImportService } from "./mem-import/service.js";
+import { MemImportU2Service } from "./mem-import/u2-service.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -101,6 +102,19 @@ test("mem-import typed extraction flow normalizes, scopes reads, and atomically 
   assert.match(await readFile(join(input, "one.html"), "utf-8"), /Ada guards/);
 });
 
+test("mem-import merger workers can read any normalized unit and extraction packet", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "extract-for-merger", unitIds: [units[0]!.unitId] });
+  await service.submitExtraction({ ...extractor, unitId: units[0]!.unitId, stage: validStage(units[0]!) });
+  const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "merger-reader", role: "merger" });
+  const source = await service.readWorkerUnit({ ...merger, unitId: units[1]!.unitId, maxChars: 1000 });
+  assert.match(source.content, /Bea carries the silver key/);
+  const filtered = await service.readWorkerExtractions({ ...merger, unitId: units[0]!.unitId });
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]!.unitId, units[0]!.unitId);
+});
+
 test("mem-import validates literal single- and multi-block provenance quotes", async () => {
   const root = await tempDir();
   const input = join(root, "input");
@@ -132,6 +146,40 @@ test("mem-import validates literal single- and multi-block provenance quotes", a
       quote,
     );
   }
+});
+
+test("mem-import derives omitted provenance quotes with exact Unicode source typography", async () => {
+  const root = await tempDir();
+  const input = join(root, "input");
+  const output = join(root, "output");
+  await mkdir(input);
+  await writeFile(join(input, "chapter.html"), "<html><body><p>Alice’s question wasn’t answered.</p></body></html>", "utf-8");
+  const service = new MemImportService();
+  const run = await service.begin(output);
+  const unit = (await service.normalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, input })).units[0]!;
+  const assignment = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "derived-quote", unitIds: [unit.unitId] });
+  const stage = {
+    version: 1,
+    kind: "extraction",
+    unitId: unit.unitId,
+    sourceId: unit.sourceId,
+    candidates: [{
+      id: "alice-question",
+      group: "facts",
+      title: "Alice’s unanswered question",
+      provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0], endAnchor: unit.anchors[0] }],
+    }],
+  } as unknown as StageEnvelope;
+  const submitted = await service.submitExtraction({ ...assignment, unitId: unit.unitId, stage });
+  assert.equal(submitted.candidateCount, 1);
+  const persisted = JSON.parse(await readFile(join(output, "stages", "extraction", `${unit.unitId}.json`), "utf-8")) as StageEnvelope;
+  assert.equal(persisted.candidates?.[0]?.provenance[0]?.quote, "Alice’s question wasn’t answered.");
+  const normalizedQuote = persisted.candidates![0]!.provenance[0]!;
+  normalizedQuote.quote = "Alice's question wasn't answered.";
+  await assert.rejects(
+    service.validateExtraction({ ...assignment, unitId: unit.unitId, stage: persisted }),
+    /literal contiguous excerpt/,
+  );
 });
 
 test("mem-import source reads use a monotonic cursor even inside one oversized block", async () => {
@@ -299,6 +347,132 @@ test("mem-import rejects missing normalization, invalid anchors, revoked, expire
     service.readAssignedUnit({ ...expiry, unitId: unit.unitId }),
     /has expired/,
   );
+});
+
+test("mem-import U2 fences merge writes, preserves immutable revisions, and binds reviews", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "u2-extract", unitIds: [unit.unitId] });
+  await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+
+  const firstLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-merge" });
+  const stage = {
+    version: 1 as const,
+    kind: "merge" as const,
+    artifacts: [{
+      id: "ada",
+      group: "people" as const,
+      title: "Ada",
+      description: "A guard at the glass tower.",
+      sections: [{ heading: "Summary", body: "Ada guards the glass tower." }],
+      provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }],
+      metadata: { representedCandidateIds: [`${unit.unitId}:local-candidate`] },
+    }],
+    candidateDispositions: [],
+    diagnostics: [],
+  };
+  const written = await u2.writeCoordinatorMerge({
+    outputRoot: output,
+    runId: run.runId,
+    coordinatorGrant: run.coordinatorGrant,
+    taskId: "parent-merge",
+    fence: firstLease.fence,
+    expectedRevision: 0,
+    expectedContentHash: null,
+    stage,
+    rationale: "Create the initial canonical Ada artifact from the submitted extraction.",
+  });
+  assert.equal(written.revision, 1);
+  assert.match(written.contentHash!, /^[a-f0-9]{64}$/);
+  const persisted = JSON.parse(await readFile(join(output, "stages", "merge", "merged-candidates.json"), "utf-8")) as Record<string, unknown>;
+  assert.equal(persisted.revision, 1);
+  assert.equal(persisted.contentHash, written.contentHash);
+  assert.equal(((persisted.artifacts as Array<Record<string, unknown>>)[0]!.provenance as Array<Record<string, unknown>>)[0]!.quote, "Ada guards the glass tower.");
+  const revisionFiles = await readdir(join(output, "stages", "merge", "revisions"));
+  assert.equal(revisionFiles.length, 1);
+  await assert.rejects(
+    u2.writeCoordinatorMerge({
+      outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-merge", fence: firstLease.fence,
+      expectedRevision: 0, expectedContentHash: null, stage, rationale: "Attempt stale replacement.",
+    }),
+    /Stale merge compare-and-swap/,
+  );
+
+  const reviewer = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "u2-review", role: "reviewer" });
+  const review = await u2.submitReview({
+    ...reviewer,
+    packet: {
+      version: 1,
+      kind: "mem-import-review",
+      checkpointId: "quality-1",
+      reviewedMergeRevision: written.revision,
+      reviewedMergeHash: written.contentHash!,
+      findings: [{ id: "finding-1", severity: "warning", summary: "Only one source unit has been extracted." }],
+      requestedActions: [{ id: "action-1", type: "record-omission", severity: "repair", summary: "Extract the remaining body unit.", rationale: "Coverage diagnostics identify an unprocessed unit." }],
+    },
+  });
+  assert.match(review.path, /^stages\/reviews\/quality-1\/u2-review-/);
+  const reviewPacket = JSON.parse(await readFile(join(output, review.path), "utf-8")) as Record<string, unknown>;
+  assert.equal(reviewPacket.reviewedMergeHash, written.contentHash);
+  assert.doesNotMatch(JSON.stringify(reviewPacket), new RegExp(reviewer.grant));
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-merge", fence: firstLease.fence });
+
+  await assert.rejects(
+    service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "unbounded-repair", role: "repairer" }),
+    /require explicit checkpointIds and actionIds/,
+  );
+  const finalLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize" });
+  const final = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize", fence: finalLease.fence });
+  assert.equal(final.finalized, false, "one unextracted body unit remains a hard blocker");
+  const audit = JSON.parse(await readFile(join(output, "stages", "import-run.json"), "utf-8")) as Record<string, unknown>;
+  assert.equal(audit.version, 2);
+  assert.equal(audit.status, "failed");
+  assert.equal((audit.finalization as Record<string, unknown>).passed, false);
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize", fence: finalLease.fence });
+});
+
+test("mem-import records a terminal safe failure when mandatory delegation is unavailable", async () => {
+  const root = await tempDir();
+  const output = join(root, "output");
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const run = await service.begin(output);
+  const receipt = await u2.fail({
+    outputRoot: output,
+    runId: run.runId,
+    coordinatorGrant: run.coordinatorGrant,
+    reasonCode: "no-enforced-subagent-facility",
+    message: "No facility could enforce the extractor and merger tool allowlists.",
+  });
+  assert.equal(receipt.auditPath, "stages/import-run.json");
+  const audit = JSON.parse(await readFile(join(output, "stages", "import-run.json"), "utf-8")) as Record<string, unknown>;
+  assert.equal(audit.version, 2);
+  assert.equal(audit.status, "failed");
+  assert.match(String(audit.error), /no-enforced-subagent-facility/);
+  assert.doesNotMatch(JSON.stringify(audit), new RegExp(run.coordinatorGrant));
+});
+
+test("mem-import U2 rejects concurrent and stale fenced merge writers", async () => {
+  let current = new Date("2026-07-16T00:00:00.000Z");
+  const service = new MemImportService(() => current);
+  const u2 = new MemImportU2Service(service, () => current);
+  const { output, run } = await setup(service);
+  const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "merger", role: "merger" });
+  const first = await u2.acquireWorkerLease(merger);
+  await assert.rejects(
+    u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent" }),
+    /live merge writer lease/,
+  );
+  current = new Date("2026-07-16T00:06:00.000Z");
+  const recovered = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent" });
+  assert.ok(recovered.fence > first.fence);
+  await assert.rejects(
+    u2.heartbeatWorkerLease({ ...merger, fence: first.fence }),
+    /expired|fence or owner/,
+  );
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent", fence: recovered.fence });
 });
 
 test("a child process independently rejects a forged cross-process extractor grant", async () => {

@@ -34,7 +34,7 @@ For a proposed extractor dispatch, identify observable controls for:
 - requested role/profile or exact child tool restrictions;
 - interruption, stop, resume, and lifecycle telemetry.
 
-Known profiles are evidence, not a trust verdict. If the host cannot make the bounded task reasonable, work inline or explain the limitation; do not build/install an adapter during an import.
+Known profiles are evidence, not a trust verdict. For a delegated mem-import run, extraction and merge require an actual subagent facility that can launch workers and enforce the requested exact role allowlist. If no such facility is available, call `mem_import_fail` with a concise credential-free reason and stop; do not build/install an adapter or work those roles inline during an import.
 
 ## 2. Establish deterministic source state
 
@@ -59,7 +59,7 @@ The durable assignment validates the run/root, role, allowed capability, expiry/
 
 ## 4. Dispatch, wait, and inspect
 
-The parent chooses one worker, parallel disjoint workers, a chain, or inline work. U1 does not hard-code a topology. Start with a small disjoint wave (normally one to three); after inspecting its durable packets and lifecycle/provider behavior, increase concurrency gradually only when that evidence is clean and the parent can keep up with completions. Reduce or stop fanout on repeated validation/schema errors, incomplete source coverage, provider/adapter failures, or parent backlog. Do not launch an entire corpus at maximum fanout before early evidence is available.
+The parent chooses one worker, parallel disjoint workers, or a facility-native chain; it must use the selected facility for extraction. Start with a small disjoint wave (normally one to three); after inspecting durable packets and lifecycle/provider behavior, increase concurrency gradually only when that evidence is clean and the parent can keep up with completions. Reduce or stop fanout on repeated validation/schema errors, incomplete source coverage, provider/adapter failures, or parent backlog. Do not launch an entire corpus at maximum fanout before early evidence is available.
 
 After a worker returns or fails:
 
@@ -69,6 +69,28 @@ After a worker returns or fails:
 4. Decide whether to accept the packet, re-extract, escalate the model, try another adapter, assign more units, or stop.
 5. Revoke superseded/interrupted assignments before replacing them.
 
-## 5. Current stopping point
+## 5. Merge through a single fenced writer
 
-U1 ends after a small, artifact-backed extraction pass. Do not merge, emit, lint, review, finalize, or have TypeScript choose the next semantic stage. Those are later typed surfaces and parent decisions.
+After the parent judges extraction evidence sufficient, it must assign one `merger` worker through the selected facility with a host-enforced role allowlist. Read [the merger role](merger-role.md) before delegation. If that facility can no longer meet the requirement, record a terminal `mem_import_fail` rather than merging inline.
+
+1. Read the authoritative merge state and extraction packets; do not rely on worker prose.
+2. Acquire the global merge lease. Its fence, 60-second heartbeat, and five-minute expiry protect the whole merge state; only recover it after expiry.
+3. Write a complete semantic snapshot with the exact revision/hash read in step 1. Every accepted write produces a new immutable content-addressed receipt under `stages/merge/revisions/`.
+4. On stale CAS or fence failure, re-read durable state and make a fresh semantic decision. Never retry an old snapshot blindly.
+5. Release the lease when the mutation is complete.
+
+Coordinator merge/write tools remain for deterministic inspection and explicit administrative recovery tests; they are not an alternative to the mandatory delegated merger in a delegated import run.
+
+## 6. Review and bounded repair
+
+Read [the reviewer role](reviewer-role.md) and [repairer role](repairer-role.md) before delegation.
+
+- A reviewer receives read tools and `mem_review_submit` only. Its immutable packet must name the exact merge revision/hash reviewed; it cannot change world state.
+- The parent inspects packets and decides which recommendations to accept. It may reject them, request another lens, or work inline.
+- A repairer assignment must name explicit checkpoint/action IDs. It may acquire the same global merge lease and write only a full revised snapshot that cites those IDs.
+
+## 7. Checks and finalization
+
+The parent may run deterministic checks at any time. When it judges the world ready, it acquires a coordinator merge lease and calls finalization. Finalization emits Markdown, reruns deterministic lint/coverage/provenance/readiness checks, stores a check packet, and writes `stages/import-run.json` schema v2.
+
+Warnings remain inspectable evidence. Error-level diagnostics prevent a finalized-success state. Typed tools never choose whether a semantic repair is warranted; the parent does.

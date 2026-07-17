@@ -3,7 +3,7 @@ title: "feat: Move world-import to model-led subagent orchestration with typed t
 type: feat
 date: 2026-07-15
 origin: conversation and subagent-extension research
-status: in progress; U0/U1/U1a implemented and validated, U2 next
+status: in progress; U0/U1/U1a implemented, U2 safety kernel validated but production merge design reopened as U2b; U3 blocked on U2b
 ---
 
 # feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
@@ -34,6 +34,16 @@ The two retained U1 Frankenstein bundles were reinspected with the new literal-q
 
 A fresh tiered extraction then completed with `openrouter/deepseek/deepseek-v4-pro` (coordinator, high thinking) and `openrouter/deepseek/deepseek-v4-flash` (workers, medium thinking): 30/30 submitted assignments, 490 candidates, and 570/570 literal provenance refs. All 30 assignments carry sanitized model/thinking, adapter/profile, and submitted lifecycle evidence; there were no retries, supersessions, or failures. Its durable audit is at `.memchat-agent-testing/.memchat-agent-testing/output/frankenstein-u1a-deepseek-tiered/stages/orchestration/u1a-quote-integrity-audit.json`. The nested path is retained as historical run evidence; coordinator guidance now requires an absolute output root or an `output/<run-name>` root relative to the test workspace.
 
+## Progress Update — 2026-07-17 (U2 Alice post-mortem; U2b required)
+
+The first full tiered Alice merge exposed two production blockers that deterministic unit tests did not catch. Extraction completed for all 13 normalized units with 108 candidates, but no canonical merge revision was persisted.
+
+First, the coordinator correctly tried two ordinary `subagent` merger workers, then improperly changed facilities after provider-stream failures. Later merge attempts, including `merge-005`, were launched with `herdr_agent_start`. That tool creates a managed Herdr agent suitable for an isolated orchestrator; it is not the ordinary semantic-worker `subagent` facility required by this workflow. The fallback violated the run's fail-closed delegation gate and produced incompatible lifecycle behavior: ordinary subagent interruption/result handling could not control the managed agent. A model-authored adapter label in assignment audit did not prove which facility actually launched the worker.
+
+Second, U2 replaced the legacy path's proven persist-first 5–12 artifact batch workflow with one complete-snapshot `mem_merge_write` call under a five-minute lease. The `merge-005` session acquired a lease and began two complete-snapshot tool calls, but both assistant turns were interrupted before tool execution. The first partial tool argument had only 18 artifacts and no candidate dispositions; the second had one artifact and no dispositions. Neither reached authorization or persistence. This was not a service-side rejection. It demonstrated that all-or-nothing model generation, lease heartbeats, and durable progress are incompatible at realistic merge sizes. The current unfiltered extraction read, complete merge read/write, full-snapshot revision receipts, and one-run-per-output-root layout will scale worse for large books and incremental multi-book series.
+
+U2's authorization, fencing, CAS, immutable review binding, and finalization safety remain useful. U2b below replaces the monolithic semantic merge surface before U3 proceeds.
+
 ## Goal Capsule
 
 Build `mem-import` as a **thin, model-led orchestration workflow** alongside the legacy `world-import` TypeScript program that hard-codes semantic session sequencing:
@@ -46,11 +56,17 @@ Build `mem-import` as a **thin, model-led orchestration workflow** alongside the
 - deterministic contracts reject invalid operations and finalization refuses incomplete output;
 - model choice, thinking level, worker topology, escalation, repeated review, and repair strategy remain visible experimental variables;
 - a future `mem-import-cli`, if warranted, may host the same skill and tools while preserving output artifact parity; and
-- legacy `world-import` remains available unchanged until the explicit U4a parity/rollback gate permits deprecation.
+- legacy `world-import` is retained only until the explicit U4 cleanup gate removes it after U3.
 
 This plan is self-contained so a new session can resume design or implementation without replaying the originating discussion.
 
 ## Decision Summary
+
+### Superseding cleanup decision — 2026-07-16
+
+After U3, complete a final **U4 world-import cleanup** before merging this work to `main`. It supersedes prior compatibility/parity/retention language in this plan: do not retain aliases, dual paths, artifact projections, or deprecated type names merely to preserve `world-import` behavior.
+
+The canonical product is `mem-import`. Its default durable surface is a self-contained compendium at `compendia/<compendium-id>/`, where the compendium root contains `sources/`, `stages/`, emitted category directories (`people/`, `places/`, `things/`, `facts/`, `style/`), `index.md`, `coverage.md`, and `log.md`. `world/`, “world library,” `world-import`, and `WorldImport*` identifiers must not survive U4 except in historical Git commits. This does not require rewriting imported source prose that itself uses the ordinary word “world.”
 
 ### Confirmed decisions
 
@@ -63,7 +79,7 @@ This plan is self-contained so a new session can resume design or implementation
 7. **Use hybrid review.** Deterministic review remains code; semantic review is performed inline by the parent or by constrained reviewer subagents.
 8. **Require an existing compatible subagent facility.** If none is available, fail with concrete setup guidance. Do not ask the model to create a new worker extension during an import.
 9. **Support model tiering as a first-class experiment.** Parent and workers may use different models/thinking levels, and actual resolved runtime and usage should be audited.
-10. **Build `mem-import` alongside legacy `world-import`.** New skills, worker profiles, typed-tool extensions, and `mem-import-cli` use the new name; legacy command paths remain intact through U4a rather than being renamed in place.
+10. **Build `mem-import` alongside legacy `world-import` only during the migration.** New skills, worker profiles, typed-tool extensions, and any future CLI use the new name; U4 removes the legacy paths after U3 rather than retaining aliases.
 11. **Defer the `mem-import-cli` host decision.** The interactive `mem-import` path is host-agent-led; do not recreate the legacy hermetic embedded-Pi design by default. Decide later whether a CLI is useful and, if it is, make it a thin non-semantic host rather than a stage scheduler.
 12. **Preserve artifact parity, not exact runner behavior.** Existing output layouts, semantic stage contracts, readiness checks, and audit intent remain stable; invocation/session mechanics may change.
 13. **Hold off on building a custom SDK subagent wrapper or bundling `pi-subagents` into memchat.** Evaluate installed host-agent facilities first. A pinned project-local adapter remains a disposable compatibility-test setup, not the intended interactive deployment model.
@@ -78,7 +94,7 @@ This plan is self-contained so a new session can resume design or implementation
 
 For initial parity, the new path continues to consume and produce the existing world-import source, stage, checkpoint, world-output, and audit artifacts. Do **not** rename those on-disk contracts merely because the host/skill is named `mem-import`. A future expansion beyond world-source imports may revisit the artifact vocabulary; that is out of scope for this migration.
 
-`world-import` and its CLI remain the legacy/reference implementation through U4a. After its parity gate passes, choose explicitly whether to deprecate/remove it or retain it as a supported legacy mode; do not silently repoint existing `world-import` commands.
+`world-import` and its CLI are temporary migration/reference implementation only through U3. U4 removes them and establishes `mem-import` compendia as the only product surface; do not silently retain aliases or repoint legacy commands.
 
 ### Important terminology
 
@@ -922,6 +938,198 @@ The legacy `world-import` path is useful comparison evidence but does not alread
 - Update the coordinator skill with merge/review/repair/finalization decision rules while preserving semantic guidance and allowing model-selected parallelism, chains, and DAGs.
 - Separate hard errors from diagnostics and add output-root/run scoping, forged-grant, atomic-write, lease-contention, and stale-writer tests.
 
+#### U2 canonical-contract decisions (2026-07-16)
+
+U2 is a clean `mem-import` break, not a legacy-artifact compatibility layer. The current merge stage is the latest canonical snapshot and contains a run-global `revision`, a canonical semantic `contentHash` (computed without control metadata), and its parent hash. Every accepted mutation also writes an immutable, content-addressed revision receipt containing the exact snapshot, its extraction-input hashes, the actor/task and grant-safe audit identity, supplied checkpoint action IDs, and prior revision linkage. This makes rollback, comparison, and forensic review possible without treating an overwritable latest file as history.
+
+The merge writer lease remains separate operational state. It is grant-bound, has a fencing generation, receives a 60-second heartbeat, expires after five minutes, is explicitly released on normal completion, and may be recovered only after expiry. Every mutation requires both the current fence and expected revision/hash, so a recovered or stale holder cannot write. Parent direct merge/repair is allowed, but it produces the same input/effect/rationale audit record as a worker mutation.
+
+Reviewer findings are immutable task-keyed packets only, hash-bound to the reviewed merge and extraction revisions. Repair grants name explicit checkpoint/action IDs. `stages/import-run.json` becomes explicit schema v2, recording terminal/finalization state and derived/linked audit evidence. Durable authorization, merge, review, and finalization events must be credential-free and never contain hidden reasoning or raw bearer grants.
+
+### U2b. Replace monolithic merge with delegated proposals and bounded canonical transactions
+
+**Gate:** complete this unit before U3. Do not run another full-corpus model import against the complete-snapshot merge surface.
+
+#### Required outcomes
+
+1. Every semantic worker—extractor, proposal author, identity reconciler, canonical merger, reviewer, and repairer—is launched through the selected ordinary `subagent` facility with an exact role tool allowlist. `herdr_agent_start` may host a coordinator or a deliberately isolated orchestrator, but it is never a semantic-worker fallback.
+2. If the selected `subagent` facility cannot launch, enforce the allowlist, resume, or complete within bounded retry policy, the coordinator records `mem_import_fail` and stops. It must not change to a managed-agent or inline semantic fallback.
+3. Parallelize semantic preparation, identity analysis, and review, while retaining one logical canonical commit queue. Do not permit uncontrolled parallel canonical writers.
+4. Replace complete-snapshot model writes with bounded, resumable transactions. A worker failure or interruption must preserve all earlier accepted batches.
+5. Separate compendium identity from import-run identity so repeated book/edition runs can update one series compendium without recreating or rereading the entire corpus.
+6. Keep entity identity, canon, conflicts, retcons, and proposal acceptance model-owned. Deterministic services validate scope, hashes, references, accounting, and atomicity only.
+
+#### Target topology
+
+```text
+parallel source extraction
+  -> parallel immutable shard proposals
+  -> parallel identity/reconciliation proposals
+  -> serialized bounded canonical commit queue
+  -> parallel revision-bound reviewers
+  -> serialized bounded repair commits
+  -> deterministic checks and finalization
+```
+
+The canonical authority may be a sequence of fresh strong merger subagents rather than one ever-growing chat session. Continuity must live in durable canonical artifacts, an entity registry, conflict records, proposal decisions, and revision receipts—not worker conversation history.
+
+#### Compendium and run boundary
+
+Adopt one persistent compendium root and run-scoped input/effect records. The exact final names land in U4, but U2b behavior must support this shape:
+
+```text
+compendia/<compendium-id>/
+  sources/<work-or-edition-id>/...
+  stages/runs/<run-id>/extraction/...
+  stages/proposals/...
+  stages/identity/...
+  stages/conflicts/...
+  stages/merge/...
+  stages/reviews/...
+  people/ places/ things/ facts/ style/
+```
+
+- `begin` creates a new run beneath an existing compendium and records its baseline canonical root/revision; it must no longer reject every existing compendium root.
+- Source/work/edition content hashes provide idempotency and duplicate detection while preserving distinct provenance occurrences.
+- Candidate identity is globally namespaced by run/source/unit/candidate, while canonical entity identity is scoped to the compendium or series—not to one book.
+- A new book normally reads and changes only its affected canonical closure. Untouched artifacts remain referenced by the next canonical root.
+- Re-importing an edition must produce an explicit no-op, replacement, or conflict decision rather than silently duplicating entities.
+
+#### Bounded read surfaces
+
+Replace routine whole-corpus responses with cursor-based, projection-aware reads:
+
+- extraction inventory: counts, groups, source/work, candidate IDs, packet hashes, and bounded summaries;
+- extraction packet/candidate reads filtered by run, work, unit, group, candidate IDs, or cursor;
+- canonical control read returning revision/root and counts without embedding every artifact;
+- canonical inventory filtered by group, work, tags, canonical IDs, changed-since revision, or cursor;
+- artifact/entity reads by explicit IDs plus an optionally bounded relationship neighborhood;
+- conflict/proposal/review inventory and packet reads by hash/ID.
+
+Every list/read tool must have a deterministic maximum item/character budget and monotonic continuation cursor. No role prompt should instruct a worker to fetch “all extraction packets” or the complete canonical merge for a substantive corpus.
+
+#### Immutable semantic proposal packets
+
+Add grant-scoped proposal roles that cannot mutate canonical state. A shard proposal packet contains at least:
+
+- schema version, packet ID/hash, compendium/work/run IDs, task/partition identity;
+- baseline canonical revision/root;
+- exact extraction packet hashes and assigned source units/candidate IDs;
+- provisional artifact packets and candidate dispositions;
+- provenance anchors with service-derived exact quotes;
+- unresolved local references, proposed links, and dependency packet IDs;
+- possible matches to existing canonical IDs, uncertainty/conflict notes, and concise auditable rationale.
+
+Partition shard synthesis primarily by `(workId, contiguous source-order range)` so scenes and narrative causality remain local. Bound assignments by candidate count and estimated context, not only chapter count. Workers submit multiple bounded proposal packets rather than one corpus packet.
+
+#### Identity and conflict reconciliation
+
+Add immutable identity proposal packets. Identity workers inspect a provisional mention plus a bounded canonical neighborhood and propose `match`, `create`, or `ambiguous`, including alternatives, inspected artifact hashes, evidence refs, and cross-partition referrals.
+
+- Known canonical entities are owned/routed by canonical ID.
+- Unknown mentions may be routed by `(compendiumId, entity kind, normalized mention-family bucket)`, but the bucket is only a work queue—not a deterministic identity decision.
+- Aliases, titles, renames, reincarnations, edition differences, timeline disagreements, retcons, and contradictory claims become explicit reconciliation edges or durable conflict records.
+- Oversized connected components receive an identity decision first, then split into bounded artifact transactions.
+- Blocking unresolved identity collisions and unaccounted candidates prevent finalization. Nonblocking ambiguity remains visible in canonical metadata and review.
+
+#### Bounded canonical transaction contract
+
+Replace the normal complete-snapshot write with a merger-only bounded transaction, recommended surface `mem_merge_apply_batch`. A transaction should contain roughly 5–12 coupled artifact operations and the dispositions/conflict decisions that belong with them:
+
+- expected global parent revision/root;
+- proposal packet hashes;
+- exact read set of artifact/entity/conflict IDs and expected content hashes;
+- artifact upserts and, when explicitly supported, deletions/tombstones;
+- candidate disposition additions/replacements;
+- provisional-to-canonical ID mappings;
+- conflict create/resolve/defer operations;
+- concise rationale.
+
+The service deterministically applies the transaction to the current materialized manifest, validates changed packets and cross-references, derives exact provenance quotes, and creates a new canonical root. Global revision/CAS remains the final ordering guard. Per-artifact/entity read-set hashes distinguish a relevant stale decision from an unrelated intervening commit, allowing the model to rebase only affected work.
+
+Keep merger and repair schemas distinct. A normal merger tool must not expose repair-only `checkpointId` or `actionIds`. A repair transaction tool requires its assigned checkpoint/action IDs and cannot modify unrelated artifacts.
+
+Semantic preparation and proposal persistence happen before lease acquisition. Acquire the fenced writer lease only after the bounded transaction is ready; re-read the transaction read set under the fence, commit, and release. Tool-call generation must be small enough that routine commits do not depend on lease heartbeats.
+
+#### Canonical storage and history
+
+Avoid copying the complete compendium into every revision receipt:
+
+- store immutable content-addressed artifact/entity/conflict blobs;
+- store an immutable transaction receipt with parent root, operation hashes, proposal hashes, read-set hashes, actor/task/fence, accepted/rejected/deferred decisions, and resulting root;
+- maintain an atomically replaced materialized latest manifest/index;
+- emit deterministic complete snapshots only for periodic checkpoints, export, or final projection;
+- prove that any canonical revision can be reconstructed from a checkpoint plus transactions.
+
+History growth should be proportional to changed content and transaction metadata, not `revision count × entire compendium size`. Input dependency hashes should name the extraction/proposal packets actually used by the transaction rather than rehashing every historical extraction packet on every commit.
+
+#### Review and repair topology
+
+Run independent reviewer subagents in parallel against one exact canonical root:
+
+- proposal/candidate accounting and omission;
+- provenance/claim support;
+- per-work narrative continuity and scene ordering;
+- entity/relationship consistency;
+- cross-book identity, timeline, canon, conflict, and retcon handling;
+- style and reusable narrative surfaces.
+
+Reviewers use bounded inventories and targeted reads, then submit immutable packets naming their read sets. One strong global reviewer reads deterministic inventories, unresolved conflicts, reviewer summaries, and targeted evidence—not the complete corpus. Accepted findings become bounded repair proposals and pass through the same serialized canonical commit queue. A repair invalidates only reviews whose declared read sets changed; final approval binds to the final canonical root.
+
+#### Facility enforcement and lifecycle audit
+
+Prompt guidance alone is insufficient. Implement the strongest evidence the installed adapter can provide:
+
+- assignment records declare the required facility class/profile and exact tool allowlist;
+- dispatch records capture the host-issued subagent task/session identity, requested and observed model/thinking, resolved tool set, lifecycle outcome, retry/resume/supersession links, and timestamps;
+- finalization rejects privileged semantic effects lacking a correlated accepted subagent dispatch record;
+- model-authored adapter labels are metadata, not facility attestation;
+- grants, prompts, hidden reasoning, and raw credentials never enter durable audit.
+
+Where the host cannot provide an independently correlatable dispatch receipt, record that limitation and fail the privileged production gate rather than claiming enforcement. The local Alice regression must explicitly prove that managed Herdr agents cannot satisfy semantic-worker assignments.
+
+#### Implementation sequence
+
+1. Freeze U3 and retain the legacy CLI as comparison evidence until U2b passes.
+2. Add failing scale/delegation fixtures before replacing contracts: managed-agent fallback, interrupted partial merge, stale proposal, duplicate cross-book identity, and incremental existing-compendium begin.
+3. Introduce semantic production modules for compendium/run state, bounded inventories, proposal packets, canonical manifests/blobs, transactions, and conflicts. Do not add new roadmap-numbered production filenames or identifiers.
+4. Add cursor/filter read tools and remove whole-corpus reads from role guidance; retain any complete debug read as coordinator-only and explicitly non-routine.
+5. Add proposal and identity worker assignments/submission tools with candidate/source scope and immutable packet hashes.
+6. Add bounded merger and repair transaction tools, short lease usage, per-object read-set CAS, delta receipts, materialized latest state, and deterministic reconstruction tests.
+7. Add actual subagent dispatch/lifecycle correlation and make unsupported facility/fallback behavior terminal.
+8. Rewrite coordinator and role prompts to be concise, execution-first, and packet-oriented. The coordinator controls adaptive fanout/backpressure and waits for durable packets rather than prose.
+9. Add parallel partitioned review plus read-set invalidation and bounded repair transactions.
+10. Port emission, lint, coverage, provenance audit, and finalization to the canonical manifest/transaction model.
+11. Run focused unit/concurrency/storage tests, then the full suite, then a fresh Alice import through ordinary subagents only.
+12. Run the large-book and incremental-series stress matrix below before unblocking U3.
+
+#### Stress and failure matrix
+
+- **Large single work:** at least 500 normalized units, 5,000 extraction candidates, and 1,000 canonical artifacts; no worker tool response or mutation requires whole-corpus payloads.
+- **Incremental series:** at least 10 sequential book runs in one compendium with recurring entities, aliases, renamed titles, shared places, and cross-book relationships; each run changes only the affected closure.
+- **Edition repeat:** identical source hash is idempotent; a changed edition retains distinct provenance and produces explicit continuity/conflict decisions.
+- **Parallel pressure:** at least 20 proposal workers may complete out of order while canonical commits remain serial and backpressured.
+- **Identity collision:** two shards propose the same new person/place/thing and cannot create duplicate canonical identities without an explicit conflict or reviewed decision.
+- **Stale proposal:** unrelated canonical changes permit a bounded rebase; changed read-set hashes require semantic reconsideration.
+- **Interruption:** provider failure, cancellation, or malformed proposal leaves prior proposal/commit artifacts intact and resumable.
+- **Lease/fence:** expiry, recovery, stale fence, and stale global CAS cannot lose accepted transactions.
+- **Storage:** hundreds of small transactions demonstrate changed-content-proportional history rather than repeated full snapshots.
+- **Review invalidation:** reviewers bind to exact roots/read sets; affected reviews become stale after repair while unrelated reviews remain valid.
+- **Facility:** every semantic worker effect correlates to an ordinary subagent lifecycle record and exact allowlist; managed-agent and inline fallbacks fail finalization.
+
+#### U2b acceptance gate
+
+U2b is complete only when:
+
+1. A fresh Alice run finalizes through ordinary subagents with no managed-agent or inline semantic fallback.
+2. Merge progress is visible after the first bounded accepted transaction and survives interruption.
+3. No normal merger/reviewer must load every extraction packet or the entire canonical compendium.
+4. Canonical commits are serialized, fenced, CAS-checked, immutable, reconstructable, and bounded.
+5. Cross-shard and cross-book identity decisions are explicit and reviewable.
+6. An existing compendium accepts a new run and preserves unaffected canonical content.
+7. The large-work and incremental-series fixtures pass deterministic accounting, provenance, conflict, reconstruction, storage-growth, and finalization checks.
+8. The full TypeScript suite and relevant smoke tests pass.
+
 ### U3. Add worker-aware orchestration audit and skill-level evaluations
 
 - Extend or version `stages/import-run.json` and orchestration projections with parent/worker model, tool, task, artifact, adapter-profile, redacted authorization metadata, and sanitized allow/deny authorization decisions.
@@ -929,24 +1137,33 @@ The legacy `world-import` path is useful comparison evidence but does not alread
 - Ingest adapter telemetry when available and preserve compact/redacted audit policy.
 - Add model-led skill fixtures: cheap extraction fleet plus strong coordinator/merger/reviewer; strong workers plus weaker coordinator; targeted re-extraction; inline versus delegated review; bounded repeated review; facility-native chain versus incremental dispatch; and no-compatible-subagent failure.
 
-### U4. Revisit whether `mem-import-cli` is needed
+### U4. Remove world-import and establish canonical compendia
+
+- Gate this unit on U3 completion and execute it as the final pre-`main` migration, not as an optional compatibility task.
+- Move/rewrite reusable deterministic code under `src/mem-import/`; remove `src/world-import/`, `world-import-cli`, helper commands, the old embedded model runner, old skills, old tests, old docs, and all `WorldImport*`/`world-import` identifiers.
+- Replace the emitted `world/` projection with the canonical compendium-root layout at `compendia/<compendium-id>/`: source/stage evidence and rendered category/index/coverage/log Markdown live in that single compendium directory.
+- Rename types, schemas, diagnostics, audit records, command/help text, paths, fixtures, and documentation so the implementation reads as a first-generation `mem-import` design. Do not preserve aliases, compatibility readers, byte-parity gates, or migration shims.
+- Port only deterministic behavior that remains useful—normalization, span/provenance validation, artifact rendering, lint, coverage, checks, and audit logic—under `MemImport*` names and contracts. Retain semantic decisions in model-led skills.
+- Add deletion-oriented regression checks: source/build output contains no legacy identifiers or `world/` artifact paths, the default compendia layout is emitted, and all active tools/docs reference only mem-import/compendium vocabulary.
+- Remove roadmap milestone labels from the product implementation. `U0`, `U1`, `U1a`, `U2`, `U2b`, and similar labels belong only in planning/history documents—not runtime class names, variables, filenames, comments, tool descriptions, schemas, tests, active skills, or user-facing docs. In particular, replace `src/mem-import/u2-service.ts`, `MemImportU2Service`, the `u2` extension variable, `mem-import U2` comments/headings, and remaining U-number role/tool prose with semantic production names such as canonical store, merge service, extraction service, or orchestration service.
+- Add a cleanup assertion equivalent to `rg -n '\bU[0-9]+[a-z]?\b|u[0-9]+-' src extensions skills docs --glob '!docs/plans/**'` and require no matches in active product code/docs; apply the same rule to production/test filenames. Historical roadmap plans may retain milestone labels.
+- Delete legacy fixture output and stale plans/docs or explicitly mark historically retained documents as non-product archival material outside the active docs tree.
+
+### U5. Revisit whether `mem-import-cli` is needed
 
 - Do not implement a CLI by default. First evaluate whether the host-agent-led interactive path has made a separate CLI unnecessary.
 - If a CLI is still desired, make an explicit host/resource-policy decision rather than inheriting legacy embedded-Pi, `.memchat/pi`, or project-local-adapter assumptions.
 - Only after that decision, design any lifecycle plumbing as a thin non-semantic host: stream events, wait for authoritative terminal state, deliver bounded coordinator continuations, enforce budgets, and propagate cancellation/cleanup. It never selects an import stage.
 
-### U4a. Conditional CLI promotion/parity gate
+### U5a. Conditional CLI gate
 
-- Apply this gate only if U4 explicitly chooses to build `mem-import-cli`.
-- Run legacy `world-import` and the chosen new CLI path against deterministic stubbed worker fixtures and small model-backed fixtures.
-- Compare normalized layout, extraction/merge envelope validity, readiness/checkpoint behavior, emitted indexes/source pages, lint/accounting, audit completeness/redaction, failure/cancellation state, and CLI exit semantics.
-- Normalize nondeterministic timestamps/run IDs/model prose rather than requiring byte-identical semantic output.
-- Define CLI flag/default migration, legacy rollback command, and deprecation/removal/retention criteria for `world-import`.
-- Promote a new CLI only after parity gates pass and legacy `world-import` has a documented rollback window. Do not remove the legacy path in the same change as promotion.
+- Apply this gate only if U5 explicitly chooses to build `mem-import-cli`.
+- Validate the chosen host against deterministic stubbed-worker and small model-backed compendium fixtures: normalized layout, extraction/merge envelopes, readiness/checkpoint behavior, emitted category/index/source pages, lint/accounting, audit completeness/redaction, and failure/cancellation state.
+- Define CLI flag/default behavior and terminal semantics for `mem-import`; no legacy command or rollback surface is retained.
 
-### U5. Update docs and smoke tests
+### U6. Update docs and smoke tests
 
-- `docs/world-import.md`
+- `docs/mem-import.md`
 - `README.md`
 - `docs/smoke-tests.md`
 - coordinator/worker skill references and adapter setup notes.
@@ -1091,13 +1308,13 @@ These are implementation decisions, not blockers to the architectural direction.
 
 ## Recommended Next Session
 
-Resume with **U2 only**. U1a's correctness gate is complete; do not migrate the CLI. Start by designing the coordinator-facing typed merge/review surface, single-writer merge lease, and revision/CAS contract. Preserve the legacy `world-import` runner during that work.
+Resume with **U2b only**. Do not begin U3 and do not run another full model-backed import against the complete-snapshot merge contract. Start with the failing delegation/scale fixtures, then implement bounded reads, immutable proposal packets, serialized bounded canonical transactions, compendium/run separation, and actual subagent lifecycle correlation in the sequence above. Keep the legacy CLI unchanged as comparison evidence. U3 begins only after the U2b acceptance gate passes; U4 then removes legacy `world-import` vocabulary plus all roadmap milestone labels from production code, filenames, active skills, tests, and user-facing docs before merging to `main`.
 
 ## New-Session Resume Checklist
 
 A new planning/implementation session should know:
 
-- `mem-import` is the new thin model-led coordinator/worker path; `world-import` remains the legacy reference path through U4a.
+- `mem-import` is the new thin model-led coordinator/worker path; `world-import` is a temporary reference path scheduled for complete removal in U4 after U3.
 - The parent is explicitly allowed to choose facility-native chains, dynamic DAGs, or incremental calls.
 - Typed tools and artifact/finalization contracts provide the deterministic safety boundary.
 - U0 deliberately begins with coordinator-led, low-risk adapter trials; judge worker infrastructure by durable artifact quality, deterministic outcomes, and observable lifecycle behavior rather than assuming a schema proves trust.
@@ -1114,7 +1331,7 @@ A new planning/implementation session should know:
 - `pi-subagents` is a candidate that an account-level host agent may already have installed. The U0 disposable test showed usable lifecycle/correlation signals plus profile/acceptance limitations; it is not a memchat dependency or chosen CLI backend.
 - We agreed not to ask the model to build a worker extension live.
 - We agreed to hold off on our own SDK worker and defer all CLI/backend decisions until the interactive host-agent path supplies evidence.
-- U0, U1, and U1a are implemented; U1a has deterministic and model-backed extraction evidence. U2 remains unimplemented.
+- The extraction slices and U2 safety kernel are implemented, but the Alice post-mortem reopened merge architecture as U2b. Preserve fencing/CAS/review binding/finalization safety while replacing complete-snapshot semantics with proposals and bounded transactions. U3 is blocked until U2b passes; U4 removes roadmap labels from all production surfaces.
 
 ## Sources and Evidence
 

@@ -11,7 +11,7 @@ Read only the normalized units assigned in your bootstrap and submit provenance-
 1. Read `mem_extraction_status` and the assigned unit(s) with `mem_source_read_unit`.
 2. If a source read returns `truncated: true`, read successive bounded anchor ranges (or use a larger allowed `maxChars`) until you have the evidence needed for the packet. Do not present a prefix-only read as full-unit coverage.
 3. Use only local anchors returned for that exact unit. Do not infer anchors from chapter numbers, other units, or source order.
-4. Draft rich model-owned candidates with exact provenance quotes.
+4. Draft rich model-owned candidates with exact provenance anchors. **Omit `provenance.quote`** so the service derives the durable exact-Unicode text; do not transcribe or typography-normalize source text yourself.
 5. Call `mem_extraction_validate` before submission when the packet is complex or uncertain.
 6. Call `mem_extraction_submit` for each assigned unit.
 7. Return a concise receipt naming submitted unit IDs, uncertainty, and any suggested re-read. Do not claim that prose is canonical.
@@ -36,8 +36,7 @@ The child task must include this contract directly. Do not assume the worker can
           "sourceId": "the assigned sourceId",
           "unitId": "the assigned unitId",
           "startAnchor": "local returned anchor",
-          "endAnchor": "local returned anchor",
-          "quote": "exact source excerpt"
+          "endAnchor": "local returned anchor"
         }
       ],
       "payload": { "modelOwned": "rich semantic detail" }
@@ -47,7 +46,7 @@ The child task must include this contract directly. Do not assume the worker can
 }
 ```
 
-`mem_extraction_validate` and `mem_extraction_submit` expose this same structure through their TypeBox tool schema. The assignment-specific source/unit identity and anchor bounds are still independently enforced at runtime.
+`mem_extraction_validate` and `mem_extraction_submit` expose this same structure through their TypeBox tool schema. `quote` is deliberately omitted: the service derives it from the selected normalized anchor range, preserving exact Unicode text such as curly quotes. A non-empty model-supplied quote is accepted only if it is a literal source substring. The assignment-specific source/unit identity and anchor bounds are still independently enforced at runtime.
 
 ## Allowed capabilities
 

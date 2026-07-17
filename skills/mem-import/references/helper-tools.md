@@ -1,4 +1,4 @@
-# U1 typed tool contracts
+# Typed tool contracts
 
 These are typed deterministic tools supplied by `extensions/mem-import-tools.ts`. They call the existing TypeScript normalization/staging services directly; do not replace them with shell/helper CLI commands.
 
@@ -45,8 +45,7 @@ The submitted `stage` must be a version-1 extraction envelope:
           "sourceId": "assigned-source-id",
           "unitId": "assigned-unit-id",
           "startAnchor": "b0001",
-          "endAnchor": "b0001",
-          "quote": "Exact source excerpt."
+          "endAnchor": "b0001"
         }
       ],
       "payload": { "modelOwned": "rich semantic detail" }
@@ -56,8 +55,22 @@ The submitted `stage` must be a version-1 extraction envelope:
 }
 ```
 
-The tool validates operational facts only: envelope shape, assigned source/unit identity, candidate uniqueness, provenance presence, local anchor validity, and quote integrity. Each non-empty quote must be a literal contiguous excerpt of the cited normalized blocks, whose canonical multi-block representation is block text joined with exactly `\n\n` (no rendered `[bNNNN]` labels, ellipses, or typography normalization). It does **not** decide identity, canon, importance, candidate quality, excerpt selection, or whether a candidate should be merged.
+The tool validates operational facts only: envelope shape, assigned source/unit identity, candidate uniqueness, provenance presence, local anchor validity, and quote integrity. **Normally omit `provenance.quote`.** The service derives the durable quote from the cited normalized blocks, joined with exactly `\n\n`; this preserves exact Unicode typography (including curly quotes) without asking the model to transcribe it. A non-empty quote supplied by a model remains allowed only when it is a literal contiguous excerpt of that same range—no rendered `[bNNNN]` labels, ellipses, or typography normalization. The tool does **not** decide identity, canon, importance, candidate quality, excerpt selection, or whether a candidate should be merged.
 
 ## Parent decision after submission
 
-A successful tool return means only that a structurally valid packet was atomically persisted in the authorized scope. The coordinator must inspect the packet and status, then decide whether to dispatch another unit, re-extract, escalate a weak unit, or stop. U1 does not authorize merge/review/finalization work.
+A successful tool return means only that a structurally valid packet was atomically persisted in the authorized scope. The coordinator must inspect the packet and status, then decide whether to dispatch another unit, re-extract, escalate a weak unit, merge, review, repair, or stop.
+
+## U2 merge, review, and finalization tools
+
+`mem_import_assign_worker` issues a bounded `merger`, `reviewer`, or `repairer` bootstrap. Repairer assignments require explicit checkpoint and action IDs. Every worker tool independently validates the hashed grant, active run/root, role, capability, expiry/revocation state, and relevant unit/checkpoint/action scope. Sanitized allow/deny decisions are persisted as immutable authorization events; raw grants and rejected source payloads are never recorded.
+
+- `mem_merge_read` / `mem_import_merge_state` read the canonical merge snapshot and its revision/hash controls.
+- `mem_merge_acquire_lease`, heartbeat, and release are worker operations; `mem_import_*_merge_lease` variants are for explicit parent-authored work. The lease has a fence generation, 60-second heartbeat, five-minute expiry, and conservative post-expiry recovery.
+- `mem_merge_write` / `mem_import_write_merge` require the active fence plus exact expected revision/hash. They persist the latest snapshot and an immutable content-addressed receipt under `stages/merge/revisions/`. A stale lease or CAS fails without overwriting newer work.
+- `mem_review_submit` writes one immutable reviewer packet, bound to an existing merge revision/hash. It is the only reviewer write and cannot mutate world state.
+- `mem_check_run` reads deterministic lint, coverage, provenance, and readiness evidence.
+- `mem_import_finalize` requires a coordinator lease. It emits Markdown, reruns checks, and writes `stages/import-run.json` schema v2. Error-level diagnostics yield a failed finalization record rather than finalized success.
+- `mem_import_fail` records a concise coordinator-only terminal failure when the mandatory delegated-worker capability/allowlist gate cannot be met. It never stores grants, prompts, or hidden reasoning.
+
+Merge-stage `revision`, `contentHash`, and optional parent hash are service-derived control fields. Workers submit semantic stage content; tools do not decide semantic quality. Each merge receipt records the input extraction hash, parent linkage, actor/task, fence, compact rationale, and checkpoint/action scope where applicable.

@@ -7,7 +7,7 @@ description: Coordinate a model-led, artifact-driven world import with installed
 
 `mem-import` is the new model-led coordinator path. It works alongside the legacy `world-import` runner; do not redirect, modify, or depend on the legacy runner as part of this skill.
 
-## Current scope: U1a hardened extraction vertical slice
+## Current scope: U2 canonical merge, review, and finalization surface
 
 The parent coordinator is the model following this skill, not a tool. It chooses models, workers, fanout, waits, retries, escalation, and whether to work inline.
 
@@ -17,17 +17,21 @@ This slice supports:
 
 - run-scoped deterministic normalization and manifest inspection;
 - bounded monotonic source reads and literal-provenance extraction validation/submission for assigned units only;
-- durable, exclusive extractor assignments with revocation/supersession and sanitized audit evidence; and
-- artifact-backed parent decisions after each worker result.
+- durable, exclusive extractor assignments with revocation/supersession and sanitized authorization evidence;
+- grant-bound merger/reviewer/repairer assignments with role-specific tool boundaries;
+- one fenced global merge writer, revision/hash CAS, immutable content-addressed merge history, and source/extraction input hashes;
+- immutable reviewer packets bound to a precise merge revision; and
+- coordinator-only deterministic checks and finalization into `stages/import-run.json` schema v2.
 
-It does **not** merge, emit, lint, review, finalize, migrate a CLI, or change legacy `world-import`.
+It does **not** choose semantic identity, canon, merge meaning, review correctness, model tiering, worker topology, or a CLI host policy.
 
 ## Core posture
 
 - Inspect the active tool catalog and available local documentation before selecting a worker/delegation facility. Do not assume its name is `subagent`.
 - Known adapter profiles are evidence and invocation guidance, not an automatic trust verdict.
 - Durable source, extraction, merge, review, and diagnostic artifacts are authoritative. Worker prose and chain values are receipts, never world truth.
-- A strong coordinator judges adapters and worker quality from observable lifecycle behavior and—during import—persisted artifacts plus deterministic diagnostics. It may retry, escalate, change topology/facility, work inline, or stop.
+- A strong coordinator judges adapters and worker quality from observable lifecycle behavior and—during import—persisted artifacts plus deterministic diagnostics. It may retry, escalate, change topology/facility, or stop.
+- **Delegated-run gate:** extraction and merge are actual subagent roles, not inline coordinator work. Before dispatch, the coordinator must locate a facility that can launch workers and enforce each role's exact typed-tool allowlist. If it cannot, call `mem_import_fail` with a concise safe reason and stop; do not substitute inline extraction or merge.
 - Do not claim that allowlists, isolation, recursive-spawn prevention, or cancellation are formally proven merely from a schema or worker report.
 - Do not use `bash`, generic filesystem writes, or legacy helper CLI commands for this new path. Use the typed `mem_*` tools.
 
@@ -53,21 +57,24 @@ Read [the coordinator workflow](references/workflow.md), [the capability guide](
 4. Start with a small wave of disjoint workers (normally one to three), wait using the adapter's native mechanism, then inspect `mem_extraction_status`, submitted packets, and source evidence yourself.
 5. Increase fanout only gradually after early waves show clean durable packets, manageable parent lifecycle traffic, and no provider/adapter failures. Reduce or stop fanout immediately on schema failures, source-coverage gaps, provider errors, or parent backlog. The parent chooses re-extraction, escalation, more workers, or the next phase.
 
-U1 permits one worker, parallel workers on disjoint units, or an inline extraction by the parent if its active tool policy includes the necessary typed tools. It does not prescribe a fixed worker count or stage sequence.
+A delegated run permits one worker or parallel workers on disjoint units, but extraction and merge must be delegated through the selected facility. It does not prescribe a fixed worker count or stage sequence.
 
 ## Durable handoff rule
 
 - Source truth: normalized units and manifest.
 - Extraction truth: `stages/extraction/<unit>.json` packets submitted through typed tools.
-- Later merge/review truth: their own durable artifacts; they are outside U1.
+- Merge truth: the latest canonical merge snapshot plus its immutable content-addressed receipt under `stages/merge/revisions/`.
+- Review truth: immutable task-keyed packets under `stages/reviews/`, hash-bound to the reviewed merge revision.
+- Completion truth: deterministic check artifacts and `stages/import-run.json` schema v2.
 
-Do not report extraction success solely because a worker says it finished. Verify the persisted packet and deterministic status.
+Do not report success solely because a worker says it finished. Verify persisted artifacts, current revision/hash, and deterministic status.
 
 ## References
 
 - [workflow](references/workflow.md) — model-owned adapter and outcome evaluation.
 - [typed helper tools](references/helper-tools.md) — U1 run, assignment, source-read, and extraction contracts.
-- [extractor role](references/extractor-role.md) — worker prompt/profile boundary.
+- [extractor role](references/extractor-role.md) — extraction worker prompt/profile boundary.
+- [merger role](references/merger-role.md), [reviewer role](references/reviewer-role.md), and [repairer role](references/repairer-role.md) — privileged U2 worker boundaries.
 - [subagent capabilities](references/subagent-capabilities.md) — adapter decision aid.
 - [pi-subagents](references/adapters/pi-subagents.md) and [pi-herdr-subagents](references/adapters/pi-herdr-subagents.md) — load only after detecting a matching facility.
 - [scout role](references/scout-role.md) — retained for a non-mutating adapter trial.

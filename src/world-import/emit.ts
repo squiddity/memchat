@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type MarkdownSection, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type WorldImportGroup } from "./types.js";
+import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type MarkdownSection, type MemImportRunAuditV2, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type WorldImportGroup } from "./types.js";
 import { classifyNarrativeSurface } from "./narrative-surfaces.js";
 import { readImportRun, readManifest, readMergeStage, readNormalizedUnit, validateStageEnvelope } from "./staging.js";
 import type { WorldImportRunAudit } from "./types.js";
@@ -296,8 +296,24 @@ function auditPurposeLabel(purpose: WorldImportRunAudit["invocations"][number]["
   return ({ full: "Full import", extract: "Extract", merge: "Merge", "merge-readiness-repair": "Readiness repair", "post-merge-review": "Post-merge review", "semantic-repair": "Semantic repair", "final-review": "Final review" })[purpose];
 }
 
-function renderAuditLog(audit: WorldImportRunAudit | undefined): string[] {
+function renderAuditLog(audit: WorldImportRunAudit | MemImportRunAuditV2 | undefined): string[] {
   if (!audit) return [];
+  if (audit.version === 2 && audit.kind === "mem-import-run") {
+    return [
+      "## Import Details",
+      "",
+      `- **Run:** \`${audit.runId}\``,
+      `- **Source units:** ${audit.source.normalizedUnits}`,
+      ...(audit.merge ? [`- **Canonical merge:** revision ${audit.merge.revision}, \`${audit.merge.contentHash}\``] : []),
+      `- **Result:** ${audit.status}${audit.finalization ? `; ${audit.finalization.errorCount} error(s), ${audit.finalization.warningCount} warning(s)` : ""}`,
+      "- **Audit record:** [`stages/import-run.json`](../stages/import-run.json)",
+      "",
+      "## Durable Evidence",
+      "",
+      ...audit.effects.map((effect) => `- \`${effect.kind}\`: [\`${effect.path}\`](../${effect.path}) — \`${effect.contentHash}\``),
+      "",
+    ];
+  }
   const importModels = [...new Set(audit.invocations.filter((item) => item.purpose !== "post-merge-review" && item.purpose !== "final-review").map((item) => item.resolvedModel ?? item.requestedModel).filter((item): item is string => Boolean(item)))];
   const reviewerModels = [...new Set(audit.invocations.filter((item) => item.purpose === "post-merge-review" || item.purpose === "final-review").map((item) => item.resolvedModel ?? item.requestedModel).filter((item): item is string => Boolean(item)))];
   const result = audit.result;
@@ -321,7 +337,7 @@ function renderAuditLog(audit: WorldImportRunAudit | undefined): string[] {
   ];
 }
 
-function renderLog(createdAt: string, artifacts: ArtifactPacket[], sourceCount: number, degradedCitationCount: number, audit?: WorldImportRunAudit): string {
+function renderLog(createdAt: string, artifacts: ArtifactPacket[], sourceCount: number, degradedCitationCount: number, audit?: WorldImportRunAudit | MemImportRunAuditV2): string {
   const date = createdAt.slice(0, 10);
   const groupCounts = groups.map((group) => `${group}: ${artifacts.filter((artifact) => artifact.group === group).length}`).join(", ");
   return [

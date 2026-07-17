@@ -2,8 +2,10 @@ import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { MemImportService } from "../src/mem-import/service.js";
+import { MemImportU2Service } from "../src/mem-import/u2-service.js";
 
 const service = new MemImportService();
+const u2 = new MemImportU2Service(service);
 
 function result(value: unknown) {
   return {
@@ -57,6 +59,13 @@ const coordinatorSchema = {
   coordinatorGrant: Type.String({ description: "Coordinator authority returned by mem_import_begin. Do not place this value in import artifacts or audit prose." }),
 };
 
+const workerSchema = {
+  outputRoot: Type.String({ description: "Output root returned in the worker assignment bootstrap." }),
+  runId: Type.String({ description: "Run identifier returned in the worker assignment bootstrap." }),
+  taskId: Type.String({ description: "Worker task identifier returned by mem_import_assign_worker." }),
+  grant: Type.String({ description: "Worker assignment grant. Use only for this assigned run/task; never persist it in artifacts." }),
+};
+
 const extractorSchema = {
   outputRoot: Type.String({ description: "Output root returned in the extractor assignment bootstrap." }),
   runId: Type.String({ description: "Run identifier returned in the extractor assignment bootstrap." }),
@@ -77,7 +86,7 @@ const extractionProvenanceSchema = Type.Object({
   unitId: Type.String({ minLength: 1, description: "Must exactly equal the assigned unitId." }),
   startAnchor: Type.String({ minLength: 1, description: "Inclusive local anchor returned by mem_source_read_unit." }),
   endAnchor: Type.String({ minLength: 1, description: "Inclusive local anchor returned by mem_source_read_unit." }),
-  quote: Type.String({ minLength: 1, description: "Exact source excerpt supporting this candidate." }),
+  quote: Type.Optional(Type.String({ minLength: 1, description: "Optional literal source excerpt. Omit it to have the service derive the exact canonical text from the cited anchor range; never normalize typography yourself." })),
 }, { additionalProperties: true });
 
 const extractionCandidateSchema = Type.Object({
@@ -109,8 +118,42 @@ export const extractionStageSchema = Type.Object({
   metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Optional model-owned packet metadata." })),
 }, {
   additionalProperties: true,
-  description: "Version-1 extraction envelope. Do not guess this shape from validation errors; construct this exact envelope before calling validate or submit.",
+  description: "Version-1 extraction envelope. Select exact local anchors; normally omit provenance.quote so the service derives exact Unicode text from that range. Do not guess this shape from validation errors.",
 });
+
+const mergeStageSchema = Type.Object({
+  version: Type.Literal(1),
+  kind: Type.Literal("merge"),
+  artifacts: Type.Array(Type.Unknown(), { description: "Model-authored world artifacts. Runtime validation enforces full artifact/provenance structure." }),
+  candidateDispositions: Type.Optional(Type.Array(Type.Unknown(), { description: "Model-authored extraction candidate accounting dispositions." })),
+  diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
+  metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+}, { additionalProperties: true, description: "Canonical merge semantic content. Do not supply revision/contentHash controls; the service derives them atomically." });
+
+const reviewPacketSchema = Type.Object({
+  version: Type.Literal(1),
+  kind: Type.Literal("mem-import-review"),
+  checkpointId: Type.String({ minLength: 1 }),
+  reviewedMergeRevision: Type.Integer({ minimum: 1 }),
+  reviewedMergeHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+  findings: Type.Array(Type.Object({
+    id: Type.String({ minLength: 1 }),
+    severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]),
+    summary: Type.String({ minLength: 1 }),
+    sourceRefs: Type.Optional(Type.Array(Type.Unknown())),
+    requestedActionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  }, { additionalProperties: true })),
+  requestedActions: Type.Array(Type.Object({
+    id: Type.String({ minLength: 1 }),
+    type: Type.String({ minLength: 1 }),
+    severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]),
+    summary: Type.String({ minLength: 1 }),
+    rationale: Type.Optional(Type.String({ minLength: 1, description: "Concise user-visible rationale; never hidden reasoning." })),
+    sourceRefs: Type.Optional(Type.Array(Type.Unknown())),
+  }, { additionalProperties: true })),
+  diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
+  metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+}, { additionalProperties: false, description: "Immutable reviewer packet, explicitly bound to a canonical merge revision/hash." });
 
 export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
@@ -241,6 +284,210 @@ export default function memImportTools(pi: ExtensionAPI) {
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }), stage: extractionStageSchema }),
     async execute(_id, params) {
       try { return result(await service.submitExtraction(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_assign_worker",
+    label: "Assign Mem Import Worker",
+    description: "Issue a bounded merger, reviewer, or repairer assignment. Repairers must be scoped to explicit checkpoint and action IDs.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      taskId: Type.String({ minLength: 1 }),
+      role: Type.Union([Type.Literal("merger"), Type.Literal("reviewer"), Type.Literal("repairer")]),
+      expiresAt: Type.Optional(Type.String()),
+      checkpointIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      audit: Type.Optional(assignmentAuditSchema),
+    }),
+    async execute(_id, params) {
+      try { return result(await service.assignWorker(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_source_read_worker",
+    label: "Read Worker Source Unit",
+    description: "Read a bounded normalized source unit for an authorized merger, reviewer, or repairer. Use continuationCursor unchanged after a truncated response.",
+    parameters: Type.Object({
+      ...workerSchema,
+      unitId: Type.String({ minLength: 1 }),
+      startAnchor: Type.Optional(Type.String({ minLength: 1 })),
+      endAnchor: Type.Optional(Type.String({ minLength: 1 })),
+      continuationCursor: Type.Optional(Type.String({ minLength: 1 })),
+      maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 50000 })),
+    }),
+    async execute(_id, params) {
+      try { return result(await service.readWorkerUnit(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_extraction_read_worker",
+    label: "Read Worker Extractions",
+    description: "Read persisted extraction packets for an authorized merger, reviewer, or repairer. The optional unit filter is informational, not a write scope.",
+    parameters: Type.Object({ ...workerSchema, unitId: Type.Optional(Type.String({ minLength: 1 })) }),
+    async execute(_id, params) {
+      try { return result(await service.readWorkerExtractions(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_read",
+    label: "Read Canonical Merge",
+    description: "Read the latest canonical merge snapshot and its required revision/hash controls for an authorized merger, reviewer, or repairer.",
+    parameters: Type.Object(workerSchema),
+    async execute(_id, params) {
+      try { return result(await u2.readMergeForWorker(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_merge_state",
+    label: "Read Merge State",
+    description: "Read the latest canonical merge snapshot and revision/hash controls as the coordinator.",
+    parameters: Type.Object(coordinatorSchema),
+    async execute(_id, params) {
+      try { return result(await u2.mergeState(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_acquire_lease",
+    label: "Acquire Merge Lease",
+    description: "Acquire the fenced global merge writer lease for an authorized merger or repairer. Heartbeat every 60 seconds and release it when done; stale recovery is allowed only after expiry.",
+    parameters: Type.Object(workerSchema),
+    async execute(_id, params) {
+      try { return result(await u2.acquireWorkerLease(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_acquire_merge_lease",
+    label: "Acquire Coordinator Merge Lease",
+    description: "Acquire the fenced global merge writer lease for explicit coordinator-authored merge/repair work.",
+    parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await u2.acquireCoordinatorLease(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_heartbeat_lease",
+    label: "Heartbeat Merge Lease",
+    description: "Extend a merger/repairer-owned merge lease only when its fence and assignment remain valid.",
+    parameters: Type.Object({ ...workerSchema, fence: Type.Integer({ minimum: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await u2.heartbeatWorkerLease(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_heartbeat_merge_lease",
+    label: "Heartbeat Coordinator Lease",
+    description: "Extend the coordinator-owned merge lease only when its fence remains current.",
+    parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), fence: Type.Integer({ minimum: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await u2.heartbeatCoordinatorLease(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_write",
+    label: "Write Canonical Merge",
+    description: "Atomically write a complete semantic merge snapshot only with a current worker lease fence and matching expected revision/hash. The service creates an immutable content-addressed revision receipt.",
+    parameters: Type.Object({
+      ...workerSchema,
+      fence: Type.Integer({ minimum: 1 }),
+      expectedRevision: Type.Integer({ minimum: 0 }),
+      expectedContentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
+      stage: mergeStageSchema,
+      rationale: Type.String({ minLength: 1, description: "Concise rationale, not hidden reasoning." }),
+      checkpointId: Type.Optional(Type.String({ minLength: 1 })),
+      actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    }),
+    async execute(_id, params) {
+      try { return result(await u2.writeWorkerMerge(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_write_merge",
+    label: "Write Coordinator Merge",
+    description: "Atomically write a complete coordinator-authored merge snapshot with the same lease, CAS, immutable-history, and audit guarantees as a worker mutation.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      taskId: Type.String({ minLength: 1 }),
+      fence: Type.Integer({ minimum: 1 }),
+      expectedRevision: Type.Integer({ minimum: 0 }),
+      expectedContentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
+      stage: mergeStageSchema,
+      rationale: Type.String({ minLength: 1, description: "Concise rationale, not hidden reasoning." }),
+      checkpointId: Type.Optional(Type.String({ minLength: 1 })),
+      actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    }),
+    async execute(_id, params) {
+      try { return result(await u2.writeCoordinatorMerge(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_release_lease",
+    label: "Release Merge Lease",
+    description: "Release a merger/repairer merge lease after the final mutation.",
+    parameters: Type.Object({ ...workerSchema, fence: Type.Integer({ minimum: 1 }) }),
+    async execute(_id, params) {
+      try { await u2.releaseWorkerLease(params); return result({ released: true }); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_release_merge_lease",
+    label: "Release Coordinator Lease",
+    description: "Release an explicit coordinator-owned merge lease after the final mutation or finalization.",
+    parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), fence: Type.Integer({ minimum: 1 }) }),
+    async execute(_id, params) {
+      try { await u2.releaseCoordinatorLease(params); return result({ released: true }); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_review_submit",
+    label: "Submit Immutable Review",
+    description: "Persist one immutable reviewer packet bound to an existing canonical merge revision. This cannot mutate world state.",
+    parameters: Type.Object({ ...workerSchema, packet: reviewPacketSchema }),
+    async execute(_id, params) {
+      try { return result(await u2.submitReview(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_check_run",
+    label: "Run Import Checks",
+    description: "Run deterministic lint, coverage, provenance, and readiness checks without choosing semantic repairs.",
+    parameters: Type.Object(coordinatorSchema),
+    async execute(_id, params) {
+      try { return result(await u2.checks(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_fail",
+    label: "Record Import Failure",
+    description: "Coordinator-only terminal failure record for an unmet capability or required-delegation gate. Keep the message concise and credential-free.",
+    parameters: Type.Object({ ...coordinatorSchema, reasonCode: Type.String({ minLength: 1, maxLength: 80 }), message: Type.String({ minLength: 1, maxLength: 1000 }) }),
+    async execute(_id, params) {
+      try { return result(await u2.fail(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_finalize",
+    label: "Finalize Mem Import",
+    description: "Coordinator-only finalization. With a current coordinator lease, emit Markdown, rerun deterministic checks, write import-run v2, and refuse finalized success on error diagnostics.",
+    parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), fence: Type.Integer({ minimum: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await u2.finalize(params)); } catch (error) { return failure(error); }
     },
   });
 }

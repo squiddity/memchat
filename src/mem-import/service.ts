@@ -17,10 +17,20 @@ import type { SourceManifest, SourceManifestEntry, StageEnvelope } from "../worl
 
 export const MEM_IMPORT_RUN_VERSION = 1;
 export const EXTRACTOR_CAPABILITIES = ["source:read", "extraction:read", "extraction:validate", "extraction:submit"] as const;
+export const MEM_IMPORT_CAPABILITIES = [
+  ...EXTRACTOR_CAPABILITIES,
+  "merge:read",
+  "merge:lease",
+  "merge:write",
+  "review:read",
+  "review:submit",
+  "check:read",
+] as const;
 
 export type ExtractorCapability = (typeof EXTRACTOR_CAPABILITIES)[number];
-export type AssignmentRole = "extractor" | "reviewer";
-export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded";
+export type MemImportCapability = (typeof MEM_IMPORT_CAPABILITIES)[number];
+export type AssignmentRole = "extractor" | "merger" | "reviewer" | "repairer";
+export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
 
 /** Deliberately small, credential-free runtime identity supplied by the parent. */
 export type MemImportActorAudit = {
@@ -54,7 +64,10 @@ export type MemImportAssignmentRecord = {
   role: AssignmentRole;
   outputRoot: string;
   allowedUnitIds: string[];
-  capabilities: ExtractorCapability[];
+  /** Repair grants name the checkpoint actions they may implement; other roles leave these empty. */
+  allowedCheckpointIds?: string[];
+  allowedActionIds?: string[];
+  capabilities: MemImportCapability[];
   tokenHash: string;
   issuedAt: string;
   expiresAt: string;
@@ -85,6 +98,18 @@ export type ExtractorAssignmentResult = {
   units: ExtractorAssignmentUnit[];
   expiresAt: string;
   capabilities: ExtractorCapability[];
+};
+
+export type WorkerAssignmentResult = {
+  runId: string;
+  taskId: string;
+  outputRoot: string;
+  grant: string;
+  role: Exclude<AssignmentRole, "extractor">;
+  expiresAt: string;
+  capabilities: MemImportCapability[];
+  checkpointIds: string[];
+  actionIds: string[];
 };
 
 export type SourceReadResult = {
@@ -131,6 +156,16 @@ function assignmentPath(outputRoot: string, taskId: string): string {
 
 function assignmentEffectPath(outputRoot: string, taskId: string, unitId: string): string {
   return `${orchestrationDir(outputRoot)}/effects/${taskId}/${createHash("sha256").update(unitId).digest("hex")}.json`;
+}
+
+async function writeAuthorizationEvent(outputRoot: string, event: Record<string, unknown>): Promise<void> {
+  const nonce = randomBytes(6).toString("hex");
+  await writeJson(`${orchestrationDir(outputRoot)}/authorization-events/${new Date().toISOString().replace(/[:.]/g, "-")}-${nonce}.json`, {
+    version: 1,
+    kind: "mem-import-authorization-event",
+    at: new Date().toISOString(),
+    ...event,
+  });
 }
 
 function unitLockPath(outputRoot: string, unitId: string): string {
@@ -231,10 +266,12 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || value.kind !== "mem-import-assignment"
     || typeof value.runId !== "string"
     || typeof value.taskId !== "string"
-    || (value.role !== "extractor" && value.role !== "reviewer")
+    || !["extractor", "merger", "reviewer", "repairer"].includes(String(value.role))
     || typeof value.outputRoot !== "string"
     || !Array.isArray(value.allowedUnitIds) || !value.allowedUnitIds.every((item) => typeof item === "string")
-    || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => EXTRACTOR_CAPABILITIES.includes(item as ExtractorCapability))
+    || (value.allowedCheckpointIds !== undefined && (!Array.isArray(value.allowedCheckpointIds) || !value.allowedCheckpointIds.every((item) => typeof item === "string")))
+    || (value.allowedActionIds !== undefined && (!Array.isArray(value.allowedActionIds) || !value.allowedActionIds.every((item) => typeof item === "string")))
+    || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => MEM_IMPORT_CAPABILITIES.includes(item as MemImportCapability))
     || typeof value.tokenHash !== "string"
     || typeof value.issuedAt !== "string"
     || typeof value.expiresAt !== "string"
@@ -243,7 +280,7 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || (value.supersededByTaskId !== undefined && typeof value.supersededByTaskId !== "string")
     || (value.supersedesTaskIds !== undefined && (!Array.isArray(value.supersedesTaskIds) || !value.supersedesTaskIds.every((item) => typeof item === "string")))
     || (value.retriesTaskId !== undefined && typeof value.retriesTaskId !== "string")
-    || (value.lifecycleOutcome !== undefined && !["assigned", "submitted", "revoked", "superseded"].includes(String(value.lifecycleOutcome)))) {
+    || (value.lifecycleOutcome !== undefined && !["assigned", "submitted", "revoked", "superseded", "completed"].includes(String(value.lifecycleOutcome)))) {
     throw new Error("Invalid mem-import assignment record");
   }
   // U1 records predate lifecycle evidence; treat them as live assigned records until changed by U1a operations.
@@ -471,8 +508,64 @@ export class MemImportService {
         };
       }),
       expiresAt: assignment.expiresAt,
-      capabilities: assignment.capabilities,
+      capabilities: [...EXTRACTOR_CAPABILITIES],
     };
+  }
+
+  async assignWorker(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    role: Exclude<AssignmentRole, "extractor">;
+    expiresAt?: string;
+    checkpointIds?: string[];
+    actionIds?: string[];
+    audit?: MemImportAssignmentAudit;
+  }): Promise<WorkerAssignmentResult> {
+    const run = await this.authorizeCoordinator(options);
+    if (!run.normalizedAt || !existsSync(`${run.outputRoot}/sources/manifest.json`)) throw new Error("Normalize the run before issuing worker assignments");
+    assertTaskId(options.taskId);
+    if (!["merger", "reviewer", "repairer"].includes(options.role)) throw new Error("role must be merger, reviewer, or repairer");
+    if (existsSync(assignmentPath(run.outputRoot, options.taskId))) throw new Error(`Assignment ${options.taskId} already exists; use a fresh taskId`);
+    const checkpointIds = [...new Set(options.checkpointIds ?? [])];
+    const actionIds = [...new Set(options.actionIds ?? [])];
+    checkpointIds.forEach(assertTaskId);
+    actionIds.forEach(assertTaskId);
+    if (options.role === "repairer" && (checkpointIds.length === 0 || actionIds.length === 0)) {
+      throw new Error("Repairer assignments require explicit checkpointIds and actionIds");
+    }
+    if (options.role !== "repairer" && (checkpointIds.length > 0 || actionIds.length > 0)) {
+      throw new Error("Only repairer assignments may carry checkpoint/action scope");
+    }
+    const issuedAt = this.now();
+    const expiresAt = options.expiresAt ? asIsoDate(options.expiresAt, "expiresAt") : new Date(issuedAt.getTime() + 60 * 60 * 1000);
+    if (expiresAt.getTime() <= issuedAt.getTime()) throw new Error("expiresAt must be in the future");
+    const capabilities: Record<Exclude<AssignmentRole, "extractor">, MemImportCapability[]> = {
+      merger: ["source:read", "extraction:read", "merge:read", "merge:lease", "merge:write", "check:read"],
+      reviewer: ["source:read", "extraction:read", "merge:read", "review:read", "review:submit", "check:read"],
+      repairer: ["source:read", "extraction:read", "merge:read", "merge:lease", "merge:write", "check:read"],
+    };
+    const grant = newToken();
+    const assignment: MemImportAssignmentRecord = {
+      version: MEM_IMPORT_RUN_VERSION,
+      kind: "mem-import-assignment",
+      runId: run.runId,
+      taskId: options.taskId,
+      role: options.role,
+      outputRoot: run.outputRoot,
+      allowedUnitIds: [],
+      ...(checkpointIds.length ? { allowedCheckpointIds: checkpointIds } : {}),
+      ...(actionIds.length ? { allowedActionIds: actionIds } : {}),
+      capabilities: capabilities[options.role],
+      tokenHash: hashToken(grant),
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      lifecycleOutcome: "assigned",
+      ...(sanitizeAudit(options.audit) ? { audit: sanitizeAudit(options.audit) } : {}),
+    };
+    await writeJson(assignmentPath(run.outputRoot, assignment.taskId), assignment);
+    return { runId: assignment.runId, taskId: assignment.taskId, outputRoot: assignment.outputRoot, grant, role: assignment.role as Exclude<AssignmentRole, "extractor">, expiresAt: assignment.expiresAt, capabilities: assignment.capabilities, checkpointIds, actionIds };
   }
 
   async revokeAssignment(options: { outputRoot: string; runId: string; coordinatorGrant: string; taskId: string }): Promise<{ taskId: string; revokedAt: string }> {
@@ -488,6 +581,43 @@ export class MemImportService {
     });
   }
 
+  async authorizeWorker(options: {
+    outputRoot: string;
+    runId: string;
+    taskId: string;
+    grant: string;
+    capability: MemImportCapability;
+    role?: AssignmentRole;
+    unitId?: string;
+    checkpointId?: string;
+    actionIds?: string[];
+  }): Promise<MemImportAssignmentRecord> {
+    const outputRoot = canonicalOutputRoot(options.outputRoot);
+    let runId: string | undefined;
+    try {
+      assertTaskId(options.taskId);
+      const [run, assignment] = await Promise.all([readRun(outputRoot), readAssignment(outputRoot, options.taskId)]);
+      runId = run.runId;
+      assertRunScope(run, outputRoot, options.runId);
+      if (assignment.version !== MEM_IMPORT_RUN_VERSION || assignment.kind !== "mem-import-assignment") throw new Error("Invalid mem-import assignment record");
+      if (assignment.outputRoot !== outputRoot || assignment.runId !== run.runId) throw new Error("Assignment scope does not match the active run");
+      if (options.role && assignment.role !== options.role) throw new Error(`Assignment role is not ${options.role}`);
+      if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
+      if (assignment.revokedAt) throw new Error(`Assignment ${assignment.taskId} was revoked at ${assignment.revokedAt}`);
+      if (assignment.supersededAt) throw new Error(`Assignment ${assignment.taskId} was superseded at ${assignment.supersededAt}`);
+      if (asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() <= this.now().getTime()) throw new Error(`Assignment ${assignment.taskId} has expired`);
+      if (!assignment.capabilities.includes(options.capability)) throw new Error(`Assignment does not allow capability ${options.capability}`);
+      if (options.unitId && !assignment.allowedUnitIds.includes(options.unitId)) throw new Error(`Unit ${options.unitId} is outside this extractor assignment`);
+      if (options.checkpointId && !assignment.allowedCheckpointIds?.includes(options.checkpointId)) throw new Error(`Checkpoint ${options.checkpointId} is outside this assignment`);
+      if (options.actionIds?.some((actionId) => !assignment.allowedActionIds?.includes(actionId))) throw new Error("One or more repair actions are outside this assignment");
+      await writeAuthorizationEvent(outputRoot, { runId, taskId: assignment.taskId, role: assignment.role, capability: options.capability, ...(options.unitId ? { unitId: options.unitId } : {}), ...(options.checkpointId ? { checkpointId: options.checkpointId } : {}), ...(options.actionIds?.length ? { actionIds: [...options.actionIds] } : {}), outcome: "allowed" });
+      return assignment;
+    } catch (error) {
+      await writeAuthorizationEvent(outputRoot, { ...(runId ? { runId } : {}), taskId: options.taskId, capability: options.capability, outcome: "denied", reasonCode: "authorization-rejected" }).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async authorizeExtractor(options: {
     outputRoot: string;
     runId: string;
@@ -496,20 +626,7 @@ export class MemImportService {
     capability: ExtractorCapability;
     unitId?: string;
   }): Promise<MemImportAssignmentRecord> {
-    const outputRoot = canonicalOutputRoot(options.outputRoot);
-    assertTaskId(options.taskId);
-    const [run, assignment] = await Promise.all([readRun(outputRoot), readAssignment(outputRoot, options.taskId)]);
-    assertRunScope(run, outputRoot, options.runId);
-    if (assignment.version !== MEM_IMPORT_RUN_VERSION || assignment.kind !== "mem-import-assignment") throw new Error("Invalid mem-import assignment record");
-    if (assignment.outputRoot !== outputRoot || assignment.runId !== run.runId) throw new Error("Assignment scope does not match the active run");
-    if (assignment.role !== "extractor") throw new Error("Assignment role is not extractor");
-    if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
-    if (assignment.revokedAt) throw new Error(`Assignment ${assignment.taskId} was revoked at ${assignment.revokedAt}`);
-    if (assignment.supersededAt) throw new Error(`Assignment ${assignment.taskId} was superseded at ${assignment.supersededAt}`);
-    if (asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() <= this.now().getTime()) throw new Error(`Assignment ${assignment.taskId} has expired`);
-    if (!assignment.capabilities.includes(options.capability)) throw new Error(`Assignment does not allow capability ${options.capability}`);
-    if (options.unitId && !assignment.allowedUnitIds.includes(options.unitId)) throw new Error(`Unit ${options.unitId} is outside this extractor assignment`);
-    return assignment;
+    return this.authorizeWorker({ ...options, role: "extractor" });
   }
 
   async readAssignedUnit(options: {
@@ -578,12 +695,69 @@ export class MemImportService {
     };
   }
 
+  /** Bounded source read for a merger/reviewer/repairer; their grants are run-wide rather than extractor unit-scoped. */
+  async readWorkerUnit(options: {
+    outputRoot: string;
+    runId: string;
+    taskId: string;
+    grant: string;
+    unitId: string;
+    startAnchor?: string;
+    endAnchor?: string;
+    continuationCursor?: string;
+    maxChars?: number;
+  }): Promise<SourceReadResult> {
+    // A requested unit is not an extractor assignment scope, so do not pass it
+    // to authorizeWorker for run-wide merger/reviewer/repairer read grants.
+    const { unitId: requestedUnitId, ...authority } = options;
+    await this.authorizeWorker({ ...authority, capability: "source:read" });
+    const outputRoot = canonicalOutputRoot(options.outputRoot);
+    const [manifest, unit] = await Promise.all([readManifest(outputRoot), readNormalizedUnit(outputRoot, requestedUnitId)]);
+    const entry = manifest.units.find((item) => item.unitId === requestedUnitId);
+    if (!entry) throw new Error(`Unit ${requestedUnitId} is not present in the normalized manifest`);
+    if (options.continuationCursor && (options.startAnchor || options.endAnchor)) throw new Error("continuationCursor cannot be combined with startAnchor or endAnchor");
+    if ((options.startAnchor && !options.endAnchor) || (!options.startAnchor && options.endAnchor)) throw new Error("startAnchor and endAnchor must be provided together");
+    const cursor = options.continuationCursor ? decodeCursor(options.continuationCursor) : undefined;
+    if (cursor && (cursor.unitId !== requestedUnitId || cursor.contentHash !== unit.contentHash)) throw new Error("Stale source continuation cursor for this normalized unit");
+    const requestedStart = cursor?.startAnchor ?? options.startAnchor;
+    const requestedEnd = cursor?.endAnchor ?? options.endAnchor;
+    const startIndex = requestedStart ? unit.blocks.findIndex((block) => block.anchor === requestedStart) : 0;
+    const endIndex = requestedEnd ? unit.blocks.findIndex((block) => block.anchor === requestedEnd) : unit.blocks.length - 1;
+    if (startIndex < 0 || endIndex < startIndex) throw new Error("Invalid local source anchor range");
+    const selectedBlocks = unit.blocks.slice(startIndex, endIndex + 1);
+    const fullContent = renderedSourceRange(selectedBlocks);
+    const maxChars = options.maxChars ?? 12_000;
+    if (!Number.isInteger(maxChars) || maxChars < 1 || maxChars > 50_000) throw new Error("maxChars must be an integer between 1 and 50000");
+    const offset = cursor?.offset ?? 0;
+    if (offset >= fullContent.length) throw new Error("Stale source continuation cursor is already at the end of its source range");
+    const content = fullContent.slice(offset, offset + maxChars);
+    const nextOffset = offset + content.length;
+    const truncated = nextOffset < fullContent.length;
+    const nextCursor = truncated ? encodeCursor({ version: 1, unitId: unit.unitId, contentHash: unit.contentHash, startAnchor: selectedBlocks[0]!.anchor, endAnchor: selectedBlocks.at(-1)!.anchor, offset: nextOffset }) : undefined;
+    return {
+      unit: { unitId: entry.unitId, sourceId: entry.sourceId, order: entry.order, ...(entry.title ? { title: entry.title } : {}), ...(entry.role ? { role: entry.role } : {}), anchors: entry.anchors, blockCount: entry.blockCount },
+      content,
+      totalChars: fullContent.length,
+      returnedChars: content.length,
+      truncated,
+      ...(nextCursor ? { continuationCursor: nextCursor } : {}),
+    };
+  }
+
   async extractionStatus(options: { outputRoot: string; runId: string; taskId: string; grant: string }): Promise<ExtractionStatusResult> {
     const assignment = await this.authorizeExtractor({ ...options, capability: "extraction:read" });
     const stages = await readExtractionStages(canonicalOutputRoot(options.outputRoot));
     const submitted = new Set(stages.map((stage) => stage.unitId).filter((unitId): unitId is string => Boolean(unitId)));
     const submittedUnitIds = assignment.allowedUnitIds.filter((unitId) => submitted.has(unitId));
     return { assignedUnitIds: assignment.allowedUnitIds, submittedUnitIds, missingUnitIds: assignment.allowedUnitIds.filter((unitId) => !submitted.has(unitId)) };
+  }
+
+  async readWorkerExtractions(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId?: string }): Promise<StageEnvelope[]> {
+    const { unitId, ...authority } = options;
+    const assignment = await this.authorizeWorker({ ...authority, capability: "extraction:read" });
+    const stages = await readExtractionStages(assignment.outputRoot);
+    if (!unitId) return stages;
+    return stages.filter((stage) => stage.unitId === unitId);
   }
 
   async readExtraction(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId: string }): Promise<StageEnvelope | undefined> {
@@ -624,15 +798,35 @@ export class MemImportService {
 
   private async assertExtractionStage(outputRoot: string, unitId: string, value: unknown): Promise<StageEnvelope> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Extraction stage must be an object");
-    const stage = value as StageEnvelope;
+    // The submitted object may omit a provenance quote. Copy it before deriving
+    // durable quote text so callers never observe a mutation of their input packet.
+    const stage = structuredClone(value) as StageEnvelope;
     if (stage.kind !== "extraction") throw new Error("Extraction stage kind must be extraction");
     if (stage.unitId !== unitId) throw new Error(`Extraction stage unitId must match assigned unit ${unitId}`);
     const manifest = await readManifest(outputRoot);
     const entry = manifest.units.find((item) => item.unitId === unitId);
     if (!entry) throw new Error(`Assigned unit ${unitId} is absent from the normalized manifest`);
     if (stage.sourceId !== entry.sourceId) throw new Error(`Extraction stage sourceId must match assigned unit sourceId ${entry.sourceId}`);
-    validateStageEnvelope(stage, { requireCandidates: true });
     const unit = await readNormalizedUnit(outputRoot, unitId);
+    // Anchor selection is model-owned; durable quote transcription is not. For an
+    // omitted/empty quote, derive the exact canonical block range before generic
+    // envelope validation. Non-empty model-provided quotes remain literal-checked.
+    for (const candidate of Array.isArray(stage.candidates) ? stage.candidates : []) {
+      if (!isRecord(candidate) || !Array.isArray(candidate.provenance)) continue;
+      for (const ref of candidate.provenance) {
+        if (!isRecord(ref)
+          || typeof ref.sourceId !== "string"
+          || typeof ref.unitId !== "string"
+          || typeof ref.startAnchor !== "string"
+          || typeof ref.endAnchor !== "string") continue;
+        if (ref.unitId !== unitId || ref.sourceId !== entry.sourceId) continue;
+        const startIndex = unit.blocks.findIndex((block) => block.anchor === ref.startAnchor);
+        const endIndex = unit.blocks.findIndex((block) => block.anchor === ref.endAnchor);
+        if (startIndex < 0 || endIndex < startIndex) continue;
+        if (ref.quote === undefined || ref.quote === "") ref.quote = canonicalQuoteRange(unit.blocks.slice(startIndex, endIndex + 1));
+      }
+    }
+    validateStageEnvelope(stage, { requireCandidates: true });
     for (const [candidateIndex, candidate] of (stage.candidates ?? []).entries()) {
       for (const [refIndex, ref] of candidate.provenance.entries()) {
         const path = `stage.candidates[${candidateIndex}].provenance[${refIndex}]`;
