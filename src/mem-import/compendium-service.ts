@@ -54,7 +54,7 @@ export class MemImportCompendiumService {
     const existing = await this.read(compendiumRoot);
     if (existing && existing.compendiumId !== options.compendiumId) throw new Error(`Compendium root already belongs to ${existing.compendiumId}`);
     const nonce = randomBytes(8).toString("hex");
-    const run = await this.base.begin(join(compendiumRoot, "stages", "runs", `pending-${nonce}`), options.audit);
+    const run = await this.base.begin(join(compendiumRoot, "stages", "runs", `pending-${nonce}`), options.audit, { compendiumRoot });
     const runRoot = run.outputRoot;
     const record: CompendiumRecord = existing ?? { version: 1, kind: "mem-import-compendium", compendiumId: options.compendiumId, root: compendiumRoot, createdAt: this.now().toISOString(), runs: [] };
     record.runs.push({ runId: run.runId, workId: options.workId, runRoot, createdAt: this.now().toISOString() });

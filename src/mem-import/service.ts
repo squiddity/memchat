@@ -54,6 +54,8 @@ export type MemImportRunRecord = {
   coordinatorTokenHash: string;
   createdAt: string;
   normalizedAt?: string;
+  /** Present for runs allocated under a persistent compendium; canonical state lives there. */
+  compendiumRoot?: string;
   audit?: { parent?: MemImportActorAudit };
 };
 
@@ -303,7 +305,8 @@ function parseRunRecord(value: unknown): MemImportRunRecord {
     || typeof value.outputRoot !== "string"
     || typeof value.coordinatorTokenHash !== "string"
     || typeof value.createdAt !== "string"
-    || (value.normalizedAt !== undefined && typeof value.normalizedAt !== "string")) {
+    || (value.normalizedAt !== undefined && typeof value.normalizedAt !== "string")
+    || (value.compendiumRoot !== undefined && typeof value.compendiumRoot !== "string")) {
     throw new Error("Invalid mem-import run record");
   }
   const audit = value.audit === undefined ? undefined : (() => {
@@ -423,7 +426,7 @@ function canonicalQuoteRange(blocks: Array<{ text: string }>): string {
 export class MemImportService {
   constructor(private readonly now: Clock = () => new Date()) {}
 
-  async begin(outputRootInput: string, audit?: { parent?: MemImportActorAudit }): Promise<BeginRunResult> {
+  async begin(outputRootInput: string, audit?: { parent?: MemImportActorAudit }, scope?: { compendiumRoot?: string }): Promise<BeginRunResult> {
     const outputRoot = canonicalOutputRoot(outputRootInput);
     const existing = existsSync(runPath(outputRoot)) ? await readRun(outputRoot) : undefined;
     if (existing) throw new Error(`A mem-import run already exists for outputRoot (${existing.runId}); use its coordinator grant or choose a fresh outputRoot`);
@@ -436,10 +439,16 @@ export class MemImportService {
       outputRoot,
       coordinatorTokenHash: hashToken(coordinatorGrant),
       createdAt: this.now().toISOString(),
+      ...(scope?.compendiumRoot ? { compendiumRoot: canonicalOutputRoot(scope.compendiumRoot) } : {}),
       ...(parent ? { audit: { parent } } : {}),
     };
     await writeJson(runPath(outputRoot), record);
     return { runId: record.runId, outputRoot, coordinatorGrant };
+  }
+
+  async canonicalRootForRun(outputRootInput: string): Promise<string> {
+    const run = await readRun(canonicalOutputRoot(outputRootInput));
+    return run.compendiumRoot ?? run.outputRoot;
   }
 
   async authorizeCoordinator(options: { outputRoot: string; runId: string; coordinatorGrant: string }): Promise<MemImportRunRecord> {

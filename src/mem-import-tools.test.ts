@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,6 +124,31 @@ test("mem-import compendia isolate run roots and record duplicate work sources",
   const record = await compendia.inspect(compendiumRoot);
   assert.equal(record.runs.length, 2);
   assert.equal(record.runs[1]!.duplicateOfRunId, first.runId);
+
+  const u2 = new MemImportU2Service(base);
+  const unit = firstNormalized.manifest.units[0]!;
+  const lease = await u2.acquireCoordinatorLease({ outputRoot: first.outputRoot, runId: first.runId, coordinatorGrant: first.coordinatorGrant, taskId: "compendium-merge" });
+  const merged = await u2.writeCoordinatorMerge({
+    outputRoot: first.outputRoot,
+    runId: first.runId,
+    coordinatorGrant: first.coordinatorGrant,
+    taskId: "compendium-merge",
+    fence: lease.fence,
+    expectedRevision: 0,
+    expectedContentHash: null,
+    rationale: "Seed the shared compendium canonical state.",
+    stage: {
+      version: 1,
+      kind: "merge",
+      artifacts: [{ id: "ada", group: "people", title: "Ada", description: "A guard.", sections: [{ heading: "Summary", body: "Ada guards the glass tower." }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] }],
+      candidateDispositions: [],
+      diagnostics: [],
+    },
+  });
+  assert.equal(merged.revision, 1);
+  assert.ok(existsSync(join(compendiumRoot, "stages", "merge", "merged-candidates.json")));
+  assert.equal(existsSync(join(first.outputRoot, "stages", "merge", "merged-candidates.json")), false);
+  await u2.releaseCoordinatorLease({ outputRoot: first.outputRoot, runId: first.runId, coordinatorGrant: first.coordinatorGrant, taskId: "compendium-merge", fence: lease.fence });
 });
 
 test("mem-import merger workers can read any normalized unit and extraction packet", async () => {

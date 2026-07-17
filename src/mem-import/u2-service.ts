@@ -134,67 +134,67 @@ export class MemImportU2Service {
 
   async mergeState(options: CoordinatorAuthority): Promise<MergeState> {
     const run = await this.base.authorizeCoordinator(options);
-    return this.readMergeState(run.outputRoot);
+    return this.readMergeState(this.canonicalRoot(run));
   }
 
   async readMergeForWorker(options: WorkerAuthority): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
-    return this.readMergeState(assignment.outputRoot);
+    return this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
   }
 
   async mergeInventory(options: CoordinatorAuthority & { group?: string; continuationCursor?: string; maxItems?: number }): Promise<MergeInventoryResult> {
     const run = await this.base.authorizeCoordinator(options);
-    return this.inventoryMerge(run.outputRoot, options);
+    return this.inventoryMerge(this.canonicalRoot(run), options);
   }
 
   async readMergeInventoryForWorker(options: WorkerAuthority & { group?: string; continuationCursor?: string; maxItems?: number }): Promise<MergeInventoryResult> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
-    return this.inventoryMerge(assignment.outputRoot, options);
+    return this.inventoryMerge(await this.base.canonicalRootForRun(assignment.outputRoot), options);
   }
 
   async readMergeArtifactForWorker(options: WorkerAuthority & { artifactId: string }): Promise<{ revision: number; contentHash: string | null; artifact?: NonNullable<StageEnvelope["artifacts"]>[number] }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
     assertId(options.artifactId, "artifactId");
-    const state = await this.readMergeState(assignment.outputRoot);
+    const state = await this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
     return { revision: state.revision, contentHash: state.contentHash, ...(state.stage.artifacts?.find((artifact) => artifact.id === options.artifactId) ? { artifact: state.stage.artifacts.find((artifact) => artifact.id === options.artifactId)! } : {}) };
   }
 
   async acquireCoordinatorLease(options: CoordinatorAuthority & { taskId: string }): Promise<MergeLeaseResult> {
     const run = await this.base.authorizeCoordinator(options);
     assertId(options.taskId, "taskId");
-    return this.acquireLease(run.outputRoot, run.runId, { kind: "coordinator", taskId: options.taskId });
+    return this.acquireLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId });
   }
 
   async acquireWorkerLease(options: WorkerAuthority): Promise<MergeLeaseResult> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:lease" });
     if (assignment.role !== "merger" && assignment.role !== "repairer") throw new Error("Only merger or repairer assignments may acquire the global merge lease");
-    return this.acquireLease(assignment.outputRoot, assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role });
+    return this.acquireLease(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role });
   }
 
   async heartbeatCoordinatorLease(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<MergeLeaseResult> {
     const run = await this.base.authorizeCoordinator(options);
-    return this.heartbeatLease(run.outputRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
+    return this.heartbeatLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
   }
 
   async heartbeatWorkerLease(options: WorkerAuthority & { fence: number }): Promise<MergeLeaseResult> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:lease" });
-    return this.heartbeatLease(assignment.outputRoot, assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role }, options.fence);
+    return this.heartbeatLease(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role }, options.fence);
   }
 
   async releaseCoordinatorLease(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<void> {
     const run = await this.base.authorizeCoordinator(options);
-    await this.releaseLease(run.outputRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
+    await this.releaseLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
   }
 
   async releaseWorkerLease(options: WorkerAuthority & { fence: number }): Promise<void> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:lease" });
-    await this.releaseLease(assignment.outputRoot, assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role }, options.fence);
+    await this.releaseLease(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role }, options.fence);
   }
 
   async writeCoordinatorMerge(options: CoordinatorAuthority & { taskId: string; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
     const run = await this.base.authorizeCoordinator(options);
     const { outputRoot: _outputRoot, runId: _runId, coordinatorGrant: _coordinatorGrant, ...mutation } = options;
-    return this.writeMerge({ outputRoot: run.outputRoot, runId: run.runId, actor: { kind: "coordinator", taskId: options.taskId }, ...mutation });
+    return this.writeMerge({ outputRoot: this.canonicalRoot(run), sourceRoot: run.outputRoot, runId: run.runId, actor: { kind: "coordinator", taskId: options.taskId }, ...mutation });
   }
 
   async writeWorkerMerge(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
@@ -202,19 +202,21 @@ export class MemImportU2Service {
     if (assignment.role !== "merger" && assignment.role !== "repairer") throw new Error("Only merger or repairer assignments may mutate merge state");
     if (assignment.role === "repairer" && (!options.checkpointId || !options.actionIds?.length)) throw new Error("Repairer mutations must cite assigned checkpointId and actionIds");
     const { outputRoot: _outputRoot, runId: _runId, taskId: _taskId, grant: _grant, ...mutation } = options;
-    return this.writeMerge({ outputRoot: assignment.outputRoot, runId: assignment.runId, actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role }, ...mutation });
+    return this.writeMerge({ outputRoot: await this.base.canonicalRootForRun(assignment.outputRoot), sourceRoot: assignment.outputRoot, runId: assignment.runId, actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role }, ...mutation });
   }
 
   /** Apply a small proposal-backed artifact delta; normal mergers cannot use repair scope here. */
   async applyWorkerBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
+    const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
-    const before = await this.readMergeState(assignment.outputRoot);
+    const before = await this.readMergeState(canonicalRoot);
     this.assertReadSet(before.stage, batch.readSet);
     const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
     const stage = this.applyBatch(before.stage, batch);
     return this.writeMerge({
-      outputRoot: assignment.outputRoot,
+      outputRoot: canonicalRoot,
+      sourceRoot: assignment.outputRoot,
       runId: assignment.runId,
       actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role },
       fence: options.fence,
@@ -229,8 +231,9 @@ export class MemImportU2Service {
   async submitReview(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "review:submit", role: "reviewer" });
     const packet = this.validateReviewPacket(options.packet);
-    const state = await this.readMergeState(assignment.outputRoot);
-    const receipt = await this.findRevisionReceipt(assignment.outputRoot, packet.reviewedMergeRevision, packet.reviewedMergeHash);
+    const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+    const state = await this.readMergeState(canonicalRoot);
+    const receipt = await this.findRevisionReceipt(canonicalRoot, packet.reviewedMergeRevision, packet.reviewedMergeHash);
     if (!receipt && !(state.revision === packet.reviewedMergeRevision && state.contentHash === packet.reviewedMergeHash)) {
       throw new Error("Review packet must bind to an existing immutable merge revision");
     }
@@ -270,11 +273,13 @@ export class MemImportU2Service {
 
   async checks(options: CoordinatorAuthority): Promise<{ deterministic: Awaited<ReturnType<typeof deterministicWorldImportChecks>>; lint: Awaited<ReturnType<typeof lintWorldImport>>; coverage: Awaited<ReturnType<typeof buildCoveragePlan>>; provenance: Awaited<ReturnType<typeof provenanceAudit>> }> {
     const run = await this.base.authorizeCoordinator(options);
+    if (run.compendiumRoot) throw new Error("Compendium checks require the shared canonical projection migration");
     return this.collectChecks(run.outputRoot);
   }
 
   async finalize(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<{ finalized: boolean; auditPath: string; checksPath: string; errors: number; warnings: number }> {
     const run = await this.base.authorizeCoordinator(options);
+    if (run.compendiumRoot) throw new Error("Compendium finalization requires the shared canonical projection migration");
     await this.requireLease(run.outputRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
     await emitWorldLibrary(run.outputRoot);
     const checks = await this.collectChecks(run.outputRoot);
@@ -308,7 +313,7 @@ export class MemImportU2Service {
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(run.outputRoot, checksPath), errors, warnings };
   }
 
-  private async writeMerge(options: { outputRoot: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "readSet" | "operations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
+  private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "readSet" | "operations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
     assertId(options.actor.taskId, "taskId");
     requireNonEmpty(options.rationale, "rationale");
     await this.requireLease(options.outputRoot, options.runId, options.actor, options.fence);
@@ -321,13 +326,13 @@ export class MemImportU2Service {
     submitted.version = 1;
     submitted.kind = "merge";
     if (!Array.isArray(submitted.artifacts)) throw new Error("Merge stage must contain artifacts array");
-    await this.deriveArtifactProvenanceQuotes(options.outputRoot, submitted);
+    await this.deriveArtifactProvenanceQuotes(options.sourceRoot ?? options.outputRoot, submitted, options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined);
     const contentHash = hash(submitted);
     const stage: StageEnvelope = { ...submitted, revision: before.revision + 1, contentHash, ...(before.contentHash ? { parentContentHash: before.contentHash } : {}) };
     const { validateStageEnvelope } = await import("../world-import/staging.js");
     validateStageEnvelope(stage, { requireArtifacts: true });
-    await this.assertLiteralArtifactProvenance(options.outputRoot, stage);
-    const extractionHash = await this.extractionHash(options.outputRoot);
+    await this.assertLiteralArtifactProvenance(options.sourceRoot ?? options.outputRoot, stage, options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined);
+    const extractionHash = await this.extractionHash(options.sourceRoot ?? options.outputRoot);
     const receipt = options.transaction ? {
       version: 1,
       kind: "mem-import-merge-transaction",
@@ -548,8 +553,9 @@ export class MemImportU2Service {
   }
 
   /** Derive durable artifact quotes from model-selected anchors to avoid Unicode transcription drift. */
-  private async deriveArtifactProvenanceQuotes(outputRoot: string, stage: StageEnvelope): Promise<void> {
+  private async deriveArtifactProvenanceQuotes(outputRoot: string, stage: StageEnvelope, artifactIds?: Set<string>): Promise<void> {
     for (const artifact of stage.artifacts ?? []) {
+      if (artifactIds && !artifactIds.has(artifact.id)) continue;
       for (const ref of artifact.provenance ?? []) {
         const mutable = ref as unknown as Record<string, unknown>;
         if (mutable.quote !== undefined && mutable.quote !== "") continue;
@@ -564,8 +570,9 @@ export class MemImportU2Service {
     }
   }
 
-  private async assertLiteralArtifactProvenance(outputRoot: string, stage: StageEnvelope): Promise<void> {
+  private async assertLiteralArtifactProvenance(outputRoot: string, stage: StageEnvelope, artifactIds?: Set<string>): Promise<void> {
     for (const artifact of stage.artifacts ?? []) {
+      if (artifactIds && !artifactIds.has(artifact.id)) continue;
       for (const [index, ref] of artifact.provenance.entries()) {
         const unit = await readNormalizedUnit(outputRoot, ref.unitId);
         if (unit.sourceId !== ref.sourceId) throw new Error(`Artifact ${artifact.id} provenance[${index}] sourceId does not match normalized source`);
@@ -636,6 +643,10 @@ export class MemImportU2Service {
     const next: MemImportRunAuditV2 = { ...audit, ...update, effects: effect ? [...audit.effects, effect] : audit.effects };
     await writeJson(importRunPath(outputRoot), next);
     return next;
+  }
+
+  private canonicalRoot(run: { outputRoot: string; compendiumRoot?: string }): string {
+    return run.compendiumRoot ?? run.outputRoot;
   }
 
   private relative(outputRoot: string, path: string): string {
