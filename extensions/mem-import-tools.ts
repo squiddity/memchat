@@ -4,10 +4,12 @@ import { Type } from "typebox";
 import { MemImportService } from "../src/mem-import/service.js";
 import { MemImportU2Service } from "../src/mem-import/u2-service.js";
 import { MemImportProposalService } from "../src/mem-import/proposal-service.js";
+import { MemImportCompendiumService } from "../src/mem-import/compendium-service.js";
 
 const service = new MemImportService();
 const u2 = new MemImportU2Service(service);
 const proposals = new MemImportProposalService(service);
+const compendia = new MemImportCompendiumService(service);
 
 function result(value: unknown) {
   return {
@@ -199,12 +201,47 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_import_begin_compendium",
+    label: "Begin Compendium Run",
+    description: "Create a new run under a persistent compendium root. Compendium identity and work identity are durable; semantic merge remains model-owned.",
+    parameters: Type.Object({
+      compendiumRoot: Type.String({ minLength: 1 }),
+      compendiumId: Type.String({ minLength: 1 }),
+      workId: Type.String({ minLength: 1 }),
+      audit: Type.Optional(Type.Object({ parent: Type.Optional(actorAuditSchema) }, { additionalProperties: false })),
+    }),
+    async execute(_id, params) {
+      try { return result(await compendia.begin(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_import_normalize",
     label: "Normalize Sources",
     description: "Deterministically normalize an input under an authorized mem-import run. It does not extract semantic candidates.",
     parameters: Type.Object({ ...coordinatorSchema, input: Type.String({ description: "Input HTML/XHTML directory, ZIP, or EPUB-like archive." }) }),
     async execute(_id, params) {
       try { return result(await service.normalize(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_normalize_compendium_run",
+    label: "Normalize Compendium Run",
+    description: "Normalize a compendium run and record a content-derived duplicate-work decision without choosing semantic merge behavior.",
+    parameters: Type.Object({ ...coordinatorSchema, compendiumRoot: Type.String({ minLength: 1 }), input: Type.String({ minLength: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await compendia.normalize(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_inspect_compendium",
+    label: "Inspect Compendium",
+    description: "Read persistent compendium/run records and duplicate-source decisions.",
+    parameters: Type.Object({ compendiumRoot: Type.String({ minLength: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await compendia.inspect(params.compendiumRoot)); } catch (error) { return failure(error); }
     },
   });
 

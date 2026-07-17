@@ -7,6 +7,7 @@ import test from "node:test";
 import { MemImportService } from "./mem-import/service.js";
 import { MemImportU2Service } from "./mem-import/u2-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
+import { MemImportCompendiumService } from "./mem-import/compendium-service.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -101,6 +102,27 @@ test("mem-import typed extraction flow normalizes, scopes reads, and atomically 
 
   // The legacy input remains usable, but this new path never invoked its helper CLI.
   assert.match(await readFile(join(input, "one.html"), "utf-8"), /Ada guards/);
+});
+
+test("mem-import compendia isolate run roots and record duplicate work sources", async () => {
+  const root = await tempDir();
+  const input = join(root, "input");
+  const compendiumRoot = join(root, "compendium");
+  await mkdir(input);
+  await writeFile(join(input, "chapter.html"), "<html><body><p>Ada guards the glass tower.</p></body></html>", "utf-8");
+  const base = new MemImportService();
+  const compendia = new MemImportCompendiumService(base);
+  const first = await compendia.begin({ compendiumRoot, compendiumId: "glass-series", workId: "book-one" });
+  const firstNormalized = await compendia.normalize({ ...first, input });
+  assert.equal(firstNormalized.duplicateOfRunId, undefined);
+  const second = await compendia.begin({ compendiumRoot, compendiumId: "glass-series", workId: "book-one-edition-two" });
+  const secondNormalized = await compendia.normalize({ ...second, input });
+  assert.equal(secondNormalized.duplicateOfRunId, first.runId);
+  assert.notEqual(first.outputRoot, second.outputRoot);
+  assert.match(first.outputRoot, /stages\/runs\/pending-/);
+  const record = await compendia.inspect(compendiumRoot);
+  assert.equal(record.runs.length, 2);
+  assert.equal(record.runs[1]!.duplicateOfRunId, first.runId);
 });
 
 test("mem-import merger workers can read any normalized unit and extraction packet", async () => {

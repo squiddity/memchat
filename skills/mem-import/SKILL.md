@@ -15,7 +15,7 @@ Typed tools are deterministic capabilities. An **extractor** is a worker role: a
 
 This slice supports:
 
-- run-scoped deterministic normalization and manifest inspection;
+- run-scoped deterministic normalization and manifest inspection, plus persistent compendium records that allocate isolated work runs and detect duplicate source hashes;
 - bounded monotonic source reads and literal-provenance extraction validation/submission for assigned units only;
 - durable, exclusive extractor assignments with revocation/supersession and sanitized authorization evidence;
 - compact cursor-paginated extraction inventories plus bounded candidate reads for merger/reviewer/repairer roles;
@@ -77,6 +77,7 @@ Do not report success solely because a worker says it finished. Verify persisted
 - [workflow](references/workflow.md) — model-owned adapter and outcome evaluation.
 - [typed helper tools](references/helper-tools.md) — U1 run, assignment, source-read, and extraction contracts.
 - [extractor role](references/extractor-role.md) — extraction worker prompt/profile boundary.
+- [compendium runs](references/compendium-runs.md) — persistent series/run identity and duplicate-source evidence.
 - [proposal role](references/proposal-role.md), [merger role](references/merger-role.md), [reviewer role](references/reviewer-role.md), and [repairer role](references/repairer-role.md) — privileged worker boundaries.
 - [subagent capabilities](references/subagent-capabilities.md) — adapter decision aid.
 - [pi-subagents](references/adapters/pi-subagents.md) and [pi-herdr-subagents](references/adapters/pi-herdr-subagents.md) — load only after detecting a matching facility.
