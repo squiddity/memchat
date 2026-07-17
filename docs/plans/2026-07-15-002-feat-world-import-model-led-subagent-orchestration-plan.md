@@ -3,7 +3,7 @@ title: "feat: Move world-import to model-led subagent orchestration with typed t
 type: feat
 date: 2026-07-15
 origin: conversation and subagent-extension research
-status: in progress; U0/U1/U1a implemented, U2 safety kernel validated but production merge design reopened as U2b; U3 blocked on U2b
+status: in progress; U0/U1/U1a implemented; U2b now has bounded read/proposal/batch/compendium foundations, but identity/conflict, dispatch enforcement, review/repair, and stress gates remain; U3 blocked on U2b
 ---
 
 # feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
@@ -43,6 +43,19 @@ First, the coordinator correctly tried two ordinary `subagent` merger workers, t
 Second, U2 replaced the legacy path's proven persist-first 5–12 artifact batch workflow with one complete-snapshot `mem_merge_write` call under a five-minute lease. The `merge-005` session acquired a lease and began two complete-snapshot tool calls, but both assistant turns were interrupted before tool execution. The first partial tool argument had only 18 artifacts and no candidate dispositions; the second had one artifact and no dispositions. Neither reached authorization or persistence. This was not a service-side rejection. It demonstrated that all-or-nothing model generation, lease heartbeats, and durable progress are incompatible at realistic merge sizes. The current unfiltered extraction read, complete merge read/write, full-snapshot revision receipts, and one-run-per-output-root layout will scale worse for large books and incremental multi-book series.
 
 U2's authorization, fencing, CAS, immutable review binding, and finalization safety remain useful. U2b below replaces the monolithic semantic merge surface before U3 proceeds.
+
+## Progress Update — U2b bounded transaction and compendium foundations
+
+The first U2b implementation slices are complete and committed. They deliberately establish bounded durable handoffs before identity/review semantics, rather than attempting another monolithic model merge:
+
+- `2055326` adds cursor-paginated extraction inventories, bounded candidate pages, scoped immutable shard proposals, and proposal-author grants.
+- `28ef120`, `41533fd`, and `5a9533c` add bounded proposal-backed canonical batches, delta receipts, canonical inventory/artifact reads, and per-artifact read-set validation. An unrelated intervening canonical revision can rebase only when every declared read-set hash still matches; changed dependencies fail stale.
+- `ed40636`, `2fdde78`, and `4b3f2c1` add persistent compendium/run records, isolated work roots, duplicate-source detection, shared canonical state/leases/receipts, and deterministic source/extraction projection with `stages/source-locator.json` for cross-run provenance lookup.
+- `0fc1243` adds a deterministic two-work integration test covering normalize → extract → propose → shared batch → projection → checks → finalization → emitted Markdown. The full suite passed with 115 tests, plus TypeScript build and `git diff --check`.
+
+This is service-level integration evidence, not the U2b facility gate: it does **not** launch ordinary semantic subagents or prove host-issued dispatch/lifecycle correlation. The complete-snapshot APIs remain legacy comparison surfaces; substantive coordinator guidance now uses bounded inventories and batch writes.
+
+**Next session:** continue U2b with immutable identity/conflict reconciliation proposals (`match`/`create`/`ambiguous`), global canonical-ID ownership, explicit aliases/retcons/conflicts, and blocking collision/accounting gates. Then add revision-bound parallel review and bounded repair batches, real ordinary-subagent dispatch/lifecycle enforcement, and the large-work/incremental-series stress matrix. Do not begin U3 yet.
 
 ## Goal Capsule
 
@@ -1308,7 +1321,7 @@ These are implementation decisions, not blockers to the architectural direction.
 
 ## Recommended Next Session
 
-Resume with **U2b only**. Do not begin U3 and do not run another full model-backed import against the complete-snapshot merge contract. Start with the failing delegation/scale fixtures, then implement bounded reads, immutable proposal packets, serialized bounded canonical transactions, compendium/run separation, and actual subagent lifecycle correlation in the sequence above. Keep the legacy CLI unchanged as comparison evidence. U3 begins only after the U2b acceptance gate passes; U4 then removes legacy `world-import` vocabulary plus all roadmap milestone labels from production code, filenames, active skills, tests, and user-facing docs before merging to `main`.
+Resume with **U2b only**. Do not begin U3 and do not run another full model-backed import against the complete-snapshot merge contract. Bounded reads, immutable proposal packets, serialized bounded canonical transactions, compendium/run separation, shared projection/finalization, and a deterministic two-work integration path are now implemented. Start next with immutable identity/conflict reconciliation and canonical-ID ownership, then revision-bound parallel review/repair, actual ordinary-subagent dispatch/lifecycle correlation, and the large-work/incremental-series stress matrix. Keep the legacy CLI unchanged as comparison evidence. U3 begins only after the U2b acceptance gate passes; U4 then removes legacy `world-import` vocabulary plus all roadmap milestone labels from production code, filenames, active skills, tests, and user-facing docs before merging to `main`.
 
 ## New-Session Resume Checklist
 
