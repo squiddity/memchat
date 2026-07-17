@@ -65,6 +65,8 @@ type MergeInventoryCursor = { version: 1; revision: number; contentHash: string 
 export type MergeLeaseResult = { fence: number; expiresAt: string; heartbeatEveryMs: number };
 export type MergeBatch = {
   proposalHashes: string[];
+  /** Exact hashes for artifacts inspected or replaced; null asserts an artifact was absent. */
+  readSet: Array<{ artifactId: string; contentHash: string | null }>;
   operations: Array<{ kind: "upsert"; artifact: unknown } | { kind: "delete"; artifactId: string }>;
   candidateDispositions?: unknown[];
   rationale: string;
@@ -208,18 +210,19 @@ export class MemImportU2Service {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
     const before = await this.readMergeState(assignment.outputRoot);
-    if (before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash) throw new Error(`Stale merge compare-and-swap: expected revision/hash ${options.expectedRevision}/${options.expectedContentHash ?? "absent"}, current is ${before.revision}/${before.contentHash ?? "absent"}`);
+    this.assertReadSet(before.stage, batch.readSet);
+    const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
     const stage = this.applyBatch(before.stage, batch);
     return this.writeMerge({
       outputRoot: assignment.outputRoot,
       runId: assignment.runId,
       actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role },
       fence: options.fence,
-      expectedRevision: options.expectedRevision,
-      expectedContentHash: options.expectedContentHash,
+      expectedRevision: before.revision,
+      expectedContentHash: before.contentHash,
       stage,
       rationale: batch.rationale,
-      transaction: { proposalHashes: batch.proposalHashes, operations: batch.operations },
+      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
     });
   }
 
@@ -305,7 +308,7 @@ export class MemImportU2Service {
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(run.outputRoot, checksPath), errors, warnings };
   }
 
-  private async writeMerge(options: { outputRoot: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "operations"> }): Promise<MergeState> {
+  private async writeMerge(options: { outputRoot: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "readSet" | "operations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
     assertId(options.actor.taskId, "taskId");
     requireNonEmpty(options.rationale, "rationale");
     await this.requireLease(options.outputRoot, options.runId, options.actor, options.fence);
@@ -337,7 +340,9 @@ export class MemImportU2Service {
       fence: options.fence,
       rationale: options.rationale,
       proposalHashes: options.transaction.proposalHashes,
+      readSet: options.transaction.readSet,
       operations: options.transaction.operations,
+      ...(options.transaction.rebasedFrom ? { rebasedFrom: options.transaction.rebasedFrom } : {}),
       createdAt: this.now().toISOString(),
     } : {
       version: 1,
@@ -480,11 +485,19 @@ export class MemImportU2Service {
     if (!Array.isArray(value.proposalHashes) || value.proposalHashes.length === 0 || value.proposalHashes.length > 12 || value.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Merge batch requires one to twelve SHA-256 proposalHashes");
     if (new Set(value.proposalHashes).size !== value.proposalHashes.length) throw new Error("Merge batch proposalHashes must be unique");
     if (!Array.isArray(value.operations) || value.operations.length === 0 || value.operations.length > 12) throw new Error("Merge batch requires one to twelve operations");
+    if (!Array.isArray(value.readSet) || value.readSet.length === 0 || value.readSet.length > 100) throw new Error("Merge batch requires one to one hundred readSet entries");
     requireNonEmpty(value.rationale, "batch.rationale");
     const proposedArtifactIds = new Set<string>();
     for (const proposalHash of value.proposalHashes) {
       const proposal = await this.readProposal(outputRoot, runId, proposalHash);
       for (const artifact of proposal.artifacts) if (artifact && typeof artifact === "object" && typeof (artifact as { id?: unknown }).id === "string") proposedArtifactIds.add((artifact as { id: string }).id);
+    }
+    const readSet = new Map<string, string | null>();
+    for (const item of value.readSet) {
+      if (!item || typeof item !== "object" || typeof item.artifactId !== "string" || (item.contentHash !== null && (typeof item.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(item.contentHash)))) throw new Error("Merge batch readSet entries require artifactId and SHA-256 contentHash or null");
+      assertId(item.artifactId, "batch readSet artifactId");
+      if (readSet.has(item.artifactId)) throw new Error(`Merge batch readSet duplicates artifact ${item.artifactId}`);
+      readSet.set(item.artifactId, item.contentHash);
     }
     const touched = new Set<string>();
     for (const operation of value.operations) {
@@ -494,9 +507,10 @@ export class MemImportU2Service {
       assertId(id, "batch artifact id");
       if (touched.has(id)) throw new Error(`Merge batch touches artifact ${id} more than once`);
       touched.add(id);
+      if (!readSet.has(id)) throw new Error(`Merge batch operation ${id} is missing a readSet entry`);
       if (operation.kind === "upsert" && !proposedArtifactIds.has(id)) throw new Error(`Merge batch upsert ${id} is not supported by a declared proposal`);
     }
-    return { proposalHashes: [...value.proposalHashes], operations: structuredClone(value.operations), ...(value.candidateDispositions ? { candidateDispositions: structuredClone(value.candidateDispositions) } : {}), rationale: value.rationale };
+    return { proposalHashes: [...value.proposalHashes], readSet: [...readSet.entries()].map(([artifactId, contentHash]) => ({ artifactId, contentHash })), operations: structuredClone(value.operations), ...(value.candidateDispositions ? { candidateDispositions: structuredClone(value.candidateDispositions) } : {}), rationale: value.rationale };
   }
 
   private async readProposal(outputRoot: string, runId: string, proposalHash: string): Promise<{ artifacts: unknown[] }> {
@@ -507,6 +521,15 @@ export class MemImportU2Service {
     const proposal = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; contentHash?: unknown; artifacts?: unknown };
     if (proposal.runId !== runId || proposal.contentHash !== proposalHash || !Array.isArray(proposal.artifacts)) throw new Error(`Declared proposal ${proposalHash} is invalid`);
     return { artifacts: proposal.artifacts };
+  }
+
+  private assertReadSet(stage: StageEnvelope, readSet: MergeBatch["readSet"]): void {
+    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    for (const item of readSet) {
+      const current = artifacts.get(item.artifactId);
+      const actual = current ? hash(current) : null;
+      if (actual !== item.contentHash) throw new Error(`Stale merge read set for artifact ${item.artifactId}`);
+    }
   }
 
   private applyBatch(before: StageEnvelope, batch: MergeBatch): StageEnvelope {

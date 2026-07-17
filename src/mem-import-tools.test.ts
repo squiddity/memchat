@@ -226,6 +226,7 @@ test("mem-import persists immutable scoped shard proposals against exact extract
     expectedContentHash: null,
     batch: {
       proposalHashes: [persisted.contentHash],
+      readSet: [{ artifactId: "ada", contentHash: null }],
       operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }],
       candidateDispositions: [],
       rationale: "Accept the bounded Ada shard proposal into canonical state.",
@@ -242,8 +243,8 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   assert.equal(transactionFiles.length, 1);
   await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
   await assert.rejects(
-    u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: 1, expectedContentHash: merged.contentHash, batch: { proposalHashes: [persisted.contentHash], operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }], rationale: "Cannot write without a current lease." } }),
-    /No active merge writer lease/,
+    u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: 1, expectedContentHash: merged.contentHash, batch: { proposalHashes: [persisted.contentHash], readSet: [{ artifactId: "ada", contentHash: merged.contentHash }], operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }], rationale: "Cannot write without a current lease." } }),
+    /Stale merge read set/,
   );
   await assert.rejects(
     proposals.submitWorkerProposal({ ...proposer, packet: { ...packet, id: "wrong-candidate", inputs: [{ ...packet.inputs[0]!, candidateIds: ["not-assigned"] }] } }),

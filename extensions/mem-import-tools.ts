@@ -134,6 +134,7 @@ const mergeStageSchema = Type.Object({
 
 const mergeBatchSchema = Type.Object({
   proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 12 }),
+  readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false }), { minItems: 1, maxItems: 100 }),
   operations: Type.Array(Type.Union([
     Type.Object({ kind: Type.Literal("upsert"), artifact: Type.Unknown() }, { additionalProperties: false }),
     Type.Object({ kind: Type.Literal("delete"), artifactId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
