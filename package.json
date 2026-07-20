@@ -23,7 +23,8 @@
     "artifact-review": "tsx src/artifact-review-cli.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test:mem-import": "node --import tsx --test src/mem-import-tools.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6",

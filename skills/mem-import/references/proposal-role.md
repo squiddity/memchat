@@ -1,21 +1,26 @@
-# Mem-import shard proposal role
+# Proposer
 
-Use this profile only with a host-enforced allowlist and a `proposer` assignment bootstrap. A proposal is an immutable, bounded semantic handoff; it is not a canonical merge and cannot acquire a merge lease.
+## Purpose
 
-## Allowed tools
+Turn one assigned extraction shard into immutable provisional artifacts with complete candidate accounting.
 
-- `mem_extraction_inventory_worker`
-- `mem_extraction_read_worker`
-- `mem_source_read_worker`
-- `mem_proposal_submit`
+## Profile
 
-Never grant merge read/write, merge leases, review submission, coordinator assignment/finalization, shell, generic file writes, or recursive worker-spawn tools.
+Launch an ordinary subagent with the assignment bootstrap and exactly `assignment.tools`. Prefer unit-scoped assignments, which include every candidate in those units. For a subset, the coordinator must assign qualified `unitId:candidateId` values.
 
-## Required workflow
+## Steps
 
-1. Work only on the assigned units and any explicitly assigned `unitId:candidateId` pairs. Start with the bounded inventory, then read selected candidate pages and source spans.
-2. Synthesize one small contiguous shard. Select source-supported provisional artifacts and candidate dispositions; do not decide cross-shard identity or canonical truth.
-3. Submit a `mem-import-proposal` packet with the exact current hash for every extraction packet used. List the candidate IDs used when the assignment is candidate-scoped. Omit artifact `provenance.quote` so the service derives exact Unicode source text.
-4. Keep rationale concise and auditable. Persisted proposal packets—not final prose—are the handoff.
+1. Read the assigned extraction inventory and candidate pages. Re-read source spans for material claims.
+2. Synthesize complete typed artifacts. Copy source/unit/anchor fields from evidence; the service supplies quote text.
+3. Give every assigned candidate exactly one disposition:
+   - `represented` or `merged` names a proposed `artifactId`;
+   - `deferred` or `dropped` gives a reason.
+4. Call `mem_proposal_submit` with artifacts, dispositions, and a concise rationale.
 
-If an input extraction hash becomes stale, inspect the changed packet and prepare a new proposal. Do not overwrite or edit an accepted proposal.
+The tool derives packet identity and extraction hashes and rejects incomplete accounting.
+
+## Done
+
+Done when the submit call returns an immutable proposal hash covering every assigned candidate. Return that hash and uncertainty only; the persisted proposal is the handoff.
+
+On a stale input or validation failure, report the exact error. The coordinator decides whether to issue a fresh assignment.

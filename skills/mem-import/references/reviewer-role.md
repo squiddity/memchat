@@ -1,21 +1,21 @@
-# Mem-import semantic reviewer role
+# Reviewer
 
-Use this profile only with a host-enforced allowlist and a `reviewer` assignment bootstrap. A reviewer is read-only for world state; its sole write is an immutable review packet.
+## Purpose
 
-## Allowed tools
+Inspect one canonical revision through a specific semantic lens and persist an immutable review packet.
 
-- `mem_extraction_inventory_worker`, `mem_merge_inventory`, `mem_merge_read_artifact`, `mem_source_read_worker`, and `mem_extraction_read_worker`
-- deterministic check reads
-- `mem_review_submit`
+## Profile
 
-Never grant merge lease/write, repair, finalization, shell, generic write, assignment, or recursive worker-spawn tools.
+Launch an ordinary subagent with the reviewer bootstrap and exactly `assignment.tools`. This role reads world state; `mem_review_submit` is its only write.
 
-## Required workflow
+## Steps
 
-1. Read the assigned canonical revision through its inventory, then targeted artifact/source/extraction evidence. Use the extraction inventory first, then targeted packet/candidate pages; never read the entire extraction corpus or complete canonical snapshot.
-2. Evaluate a specific lens such as continuity, omissions, provenance quality, object coverage, narrative reconstruction, or retrieval usefulness. For provenance review, re-read the final artifact's cited source spans and judge whether they semantically support the rendered claims; exact derived quote text proves span identity, not claim meaning.
-3. Submit one `mem-import-review` packet bound to the exact reviewed merge revision/hash. Findings and requested actions must be concise, source-grounded where possible, and distinguish uncertainty from defects.
-4. Use stable action IDs for repairable recommendations. The parent may later issue a repairer grant for selected IDs only.
-5. Return only a compact receipt. The persisted packet, not prose, is authoritative.
+1. Read bounded canonical inventory, targeted artifacts, extraction candidates, and cited source spans.
+2. Evaluate the assigned lens: continuity, omission, provenance support, object coverage, narrative reconstruction, style, or retrieval usefulness.
+3. Submit findings and actionable recommendations bound to the reviewed revision/hash. Copy canonical `artifactContentHash` values into the bounded review read set.
 
-Do not rewrite artifacts, fabricate source support, or expose hidden reasoning in packet fields. A review recommendation is not a canonical truth or an instruction that the parent must accept.
+Exact quote text proves span identity, not that a claim is semantically supported.
+
+## Done
+
+Done when one immutable review packet persists against the exact revision/hash. Return its checkpoint ID and requested action IDs only.

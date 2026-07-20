@@ -1,30 +1,31 @@
-# Worker-facility capability guide
+# Subagent facility gate
 
-A coordinator evaluates a facility from the tools actually present in its current harness. This guide is a decision aid, not a requirement to implement or install anything during an import.
+Select a facility from controls actually present in the current host.
 
-## Useful observable controls
+## Required evidence
 
-When available, inspect whether the facility exposes:
+A semantic worker facility must provide:
 
-- isolated child launch with a concrete task;
-- requested model, thinking level, cwd, and context controls;
-- an enforceable role-specific child-tool allowlist and the resolved effective child tool set;
-- a task/run/session identity and unambiguous completion/failure result;
-- waiting, interruption, stop, timeout, concurrency, resume, or lifecycle telemetry;
-- a way to prevent ordinary workers from recursively becoming coordinators.
+- a bounded child task with explicit model, thinking, cwd, and context;
+- a host-enforced model-visible tool allowlist;
+- terminal child/session identity and completed/failed/cancelled outcome;
+- interruption or cancellation for stuck work;
+- enough lifecycle telemetry to correlate the child with its durable assignment.
 
-## U0 decision rule
+Assignment grants enforce application scope independently. A tool allowlist is not an operating-system sandbox.
 
-For a harmless scout, the coordinator may make a provisional choice based on visible controls and an observed trial. It should prefer facilities that make correlation, lifecycle behavior, and the resolved child-tool set legible, but missing controls are evidence to weigh—not a mandate for a custom fixture.
+## Conformance probe
 
-If a facility cannot safely support the proposed limited task—or cannot enforce the worker's required tool restriction—do not delegate through it. Continue inline or explain the limitation.
+Before substantive dispatch:
 
-## Tool-restriction requirement
+1. launch a harmless fresh child with an exact test allowlist;
+2. call one allowed typed tool and observe normal authorization behavior;
+3. verify a known forbidden tool is absent;
+4. correlate the returned terminal child ID;
+5. record only controls actually observed.
 
-Before assigning a worker role, the coordinator must request the smallest role-specific child-tool allowlist and record the resolved effective tool set. For privileged workers, delegation is acceptable only when the facility enforces that allowlist rather than relying on prompt guidance. The effective set may include documented, non-mutating lifecycle controls required by the facility; all other tools must be the requested role tools that the child runtime actually exposes. If this cannot be observed or enforced, do not delegate privileged work through that facility.
+## Decision
 
-Tool restriction is not an OS sandbox or extension-isolation claim. Durable assignment grants, lifecycle controls, and concurrency safeguards remain independently required for scoped world-import mutations.
+Use the facility only when it enforces the role's returned `assignment.tools` array. Otherwise call `mem_import_fail` and stop the delegated import. Installation or adapter development is launcher work, not an inline import fallback.
 
-## Artifact-first quality rule
-
-Once semantic workers produce world-import output, judge them by canonical extraction/merge/review/checkpoint artifacts and deterministic diagnostics. A persuasive completion message cannot compensate for missing, structurally invalid, incomplete, or low-quality artifacts.
+Judge semantic workers by persisted packets, transactions, reviews, and checks. Completion prose cannot replace the ledger.

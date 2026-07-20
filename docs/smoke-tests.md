@@ -173,6 +173,7 @@ node --import tsx --test src/world-import-emit.test.ts
 node --import tsx --test src/world-import-eval.test.ts
 node --import tsx --test src/world-import.test.ts
 node --import tsx --test src/world-import-provenance-tools.test.ts
+npm run test:mem-import
 ```
 
 Expected:
@@ -183,6 +184,8 @@ Expected:
 - Orchestration tests confirm staged post-merge checkpoints, skipped-review reasons, repair-stage invocation fields, bounded repair attempts, and portable/redacted `stages/import-run.json` invocation records remain wired.
 - Emit tests confirm `world/log.md` projects the completed audit without duplicating prompt or credential data.
 - Provenance-tool tests confirm provenance-audit warnings still surface heading-only and sparse-citation risks.
+- Mem-import tests confirm proposer submission derives packet hashes and rejects incomplete candidate accounting; proposal/identity packets are bounded readable handoffs; canonical reads return artifact hashes; atomic merger commits accept proposal artifacts by reference, carry dispositions, and own lease/CAS lifecycle; work status reports unconsumed proposals and accounting gaps; identity ambiguity blocks finalization until resolved; repair scope and exact-profile dispatch gates remain enforced.
+- The mem-import large-work fixture verifies cursor-bounded inventory responses against 500 normalized units, 5,000 extraction candidates, and 1,000 canonical artifacts; the incremental fixture retains ten distinct sequential work runs in one shared compendium projection. The transaction-pressure fixture persists twenty asynchronously prepared proposals through one serialized commit queue, content-addresses changed artifacts, creates bounded replay checkpoints, reconstructs an older review target, and proves a malformed/interrupted successor cannot replace accepted state. Rebase coverage accepts a stale transaction only when its exact artifact read set remains unchanged, while a changed dependency fails. Lifecycle coverage records a cancelled worker and its completed retry. Compendium coverage matches an edition-repeat entity to its existing canonical artifact while retaining both editions' provenance.
 
 ## 10. Markdown review command smoke test
 

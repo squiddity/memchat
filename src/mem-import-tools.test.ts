@@ -5,14 +5,20 @@ import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { MemImportService } from "./mem-import/service.js";
+import { MEM_IMPORT_ROLE_TOOLS, MemImportService, type AssignmentRole } from "./mem-import/service.js";
 import { MemImportU2Service } from "./mem-import/u2-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
+import { MemImportIdentityService, canonicalHash } from "./mem-import/identity-service.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "memchat-mem-import-tools-"));
+}
+
+async function recordDispatch(service: MemImportService, run: { outputRoot: string; runId: string; coordinatorGrant: string }, taskId: string, role: AssignmentRole): Promise<void> {
+  const tools = MEM_IMPORT_ROLE_TOOLS[role];
+  await service.recordWorkerDispatch({ ...run, taskId, facility: "ordinary-subagent", hostTaskId: `host-${taskId}`, requestedTools: tools, observedTools: tools, outcome: "completed" });
 }
 
 async function setup(service = new MemImportService()): Promise<{
@@ -79,6 +85,10 @@ test("mem-import typed extraction flow normalizes, scopes reads, and atomically 
     ...(units[0]!.role ? { role: units[0]!.role } : {}),
     blockCount: units[0]!.blockCount,
   }]);
+  const brief = await service.assignmentBrief({ ...run, taskId: assignment.taskId, grant: assignment.grant });
+  assert.deepEqual(brief, { outputRoot: output, runId: run.runId, taskId: assignment.taskId, grant: assignment.grant, role: "extractor", units: [{ unitId: units[0]!.unitId, sourceId: units[0]!.sourceId }], candidateIds: [], proposalHashes: [], checkpointIds: [], actionIds: [], tools: MEM_IMPORT_ROLE_TOOLS.extractor });
+  assert.deepEqual(assignment.tools, MEM_IMPORT_ROLE_TOOLS.extractor);
+  await assert.rejects(service.assignmentBrief({ ...run, taskId: assignment.taskId, grant: "forged" }), /Invalid assignment grant/);
   const source = await service.readAssignedUnit({ ...assignment, unitId: units[0]!.unitId, maxChars: 1000 });
   assert.match(source.content, /Ada guards the glass tower/);
   assert.equal(source.unit.sourceId, units[0]!.sourceId);
@@ -161,9 +171,10 @@ test("mem-import compendium integration projects two work runs through finalizat
   const base = new MemImportService();
   const compendia = new MemImportCompendiumService(base);
   const proposals = new MemImportProposalService(base);
+  const identities = new MemImportIdentityService(base);
   const u2 = new MemImportU2Service(base);
 
-  async function importWork(workId: string, sourceFile: string, sentence: string, person: string, artifactId: string) {
+  async function importWork(workId: string, sourceFile: string, sentence: string, person: string, artifactId: string, matchExisting = false) {
     const input = join(root, `${workId}-input`);
     await mkdir(input);
     await writeFile(join(input, sourceFile), `<html><body><p>${sentence}</p></body></html>`, "utf-8");
@@ -171,6 +182,7 @@ test("mem-import compendium integration projects two work runs through finalizat
     const normalized = await compendia.normalize({ ...run, input });
     const unit = normalized.manifest.units[0]!;
     const extractor = await base.assignExtractor({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-extract`, unitIds: [unit.unitId] });
+    await recordDispatch(base, run, extractor.taskId, "extractor");
     const extracted = await base.submitExtraction({
       ...extractor,
       unitId: unit.unitId,
@@ -184,26 +196,62 @@ test("mem-import compendium integration projects two work runs through finalizat
     });
     const artifact = { id: artifactId, group: "people", title: person, description: sentence, sections: [{ heading: "Summary", body: sentence }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }], metadata: { representedCandidateIds: [`${unit.unitId}:person`] } };
     const proposer = await base.assignWorker({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-propose`, role: "proposer", unitIds: [unit.unitId] });
+    await recordDispatch(base, run, proposer.taskId, "proposer");
     const proposal = await proposals.submitWorkerProposal({ ...proposer, packet: { version: 1, kind: "mem-import-proposal", id: `${workId}-shard`, inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash, candidateIds: ["person"] }], artifacts: [artifact], candidateDispositions: [{ unitId: unit.unitId, candidateId: "person", disposition: "represented", artifactId }], rationale: `Propose ${person} from ${workId}.` } });
     const merger = await base.assignWorker({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-merge`, role: "merger" });
+    await recordDispatch(base, run, merger.taskId, "merger");
     const state = await u2.mergeState(run);
+    const existing = state.stage.artifacts?.find((item) => item.id === artifactId);
+    // The model-owned edition update explicitly preserves prior evidence so coverage remains cumulative.
+    const canonicalArtifact = matchExisting && existing ? { ...artifact, provenance: [...existing.provenance, ...artifact.provenance] } : artifact;
+    let identityProposalHash: string | undefined;
+    if (matchExisting) {
+      const reconciler = await base.assignWorker({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-reconcile`, role: "reconciler", proposalHashes: [proposal.contentHash] });
+      await recordDispatch(base, run, reconciler.taskId, "reconciler");
+      const identity = await identities.submitWorkerIdentity({ ...reconciler, packet: { version: 1, kind: "mem-import-identity", id: `${workId}-ada-match`, proposalHashes: [proposal.contentHash], baselineRevision: state.revision, baselineContentHash: state.contentHash, decisions: [{ id: `${workId}-ada-match-decision`, provisionalId: `${workId}-ada`, disposition: "match", canonicalId: artifactId, rationale: "The edition evidence identifies the existing canonical Ada." }], rationale: "Preserve continuity across the edition repeat." } });
+      identityProposalHash = identity.contentHash;
+    }
     const lease = await u2.acquireWorkerLease(merger);
-    const result = await u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: state.revision, expectedContentHash: state.contentHash, batch: { proposalHashes: [proposal.contentHash], readSet: [{ artifactId, contentHash: null }], operations: [{ kind: "upsert", artifact }], candidateDispositions: [{ unitId: unit.unitId, candidateId: "person", disposition: "represented", artifactId }], rationale: `Accept ${person}.` } });
+    const result = await u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: state.revision, expectedContentHash: state.contentHash, batch: { proposalHashes: [proposal.contentHash], ...(identityProposalHash ? { identityProposalHashes: [identityProposalHash] } : {}), readSet: [{ artifactId, contentHash: existing ? canonicalHash(existing) : null }], operations: [{ kind: "upsert", artifact: canonicalArtifact }], candidateDispositions: [{ unitId: unit.unitId, candidateId: "person", disposition: "represented", artifactId }], rationale: `Accept ${person}.` } });
     await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
     return { run, result };
   }
 
   const first = await importWork("book-one", "one.html", "Ada guards the glass tower.", "Ada", "ada");
   const second = await importWork("book-two", "two.html", "Bea carries the silver key.", "Bea", "bea");
+  const edition = await importWork("book-one-edition-two", "one-edition-two.html", "Ada returns to guard the glass tower.", "Ada", "ada", true);
   assert.equal(second.result.revision, 2);
-  const checks = await u2.checks(second.run);
+  assert.equal(edition.result.revision, 3);
+  assert.equal(edition.result.stage.artifacts?.filter((item) => item.id === "ada").length, 1, "edition repeat updates the matched canonical artifact instead of creating a duplicate");
+  const checks = await u2.checks(edition.run);
   assert.equal(checks.deterministic.passed, false, "pre-finalization checks correctly require an emitted shared projection");
-  const finalizeLease = await u2.acquireCoordinatorLease({ ...second.run, taskId: "compendium-finalize" });
-  const final = await u2.finalize({ ...second.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
-  assert.equal(final.finalized, true);
+  const finalizeLease = await u2.acquireCoordinatorLease({ ...edition.run, taskId: "compendium-finalize" });
+  const final = await u2.finalize({ ...edition.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
+  assert.equal(final.finalized, true, await readFile(join(compendiumRoot, final.checksPath), "utf-8"));
   assert.ok(existsSync(join(compendiumRoot, "world", "people", "ada.md")));
   assert.ok(existsSync(join(compendiumRoot, "world", "people", "bea.md")));
-  await u2.releaseCoordinatorLease({ ...second.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
+  await u2.releaseCoordinatorLease({ ...edition.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
+});
+
+test("mem-import compendium keeps ten sequential work runs distinct in its shared projection", async () => {
+  const root = await tempDir();
+  const compendiumRoot = join(root, "series");
+  const service = new MemImportService();
+  const compendia = new MemImportCompendiumService(service);
+  for (let index = 0; index < 10; index += 1) {
+    const input = join(root, `book-${index}`);
+    await mkdir(input);
+    await writeFile(join(input, `chapter-${index}.html`), `<html><body><p>Ada returns to the Glass Tower in book ${index}.</p></body></html>`, "utf-8");
+    const run = await compendia.begin({ compendiumRoot, compendiumId: "glass-series", workId: `book-${index}` });
+    await compendia.normalize({ ...run, input });
+  }
+  const record = await compendia.inspect(compendiumRoot);
+  assert.equal(record.runs.length, 10);
+  assert.equal(new Set(record.runs.map((run) => run.runId)).size, 10);
+  assert.equal(new Set(record.runs.map((run) => run.sourceHash)).size, 10);
+  const projection = await projectCompendium(compendiumRoot);
+  assert.equal(projection.sourceUnits, 10);
+  assert.equal(projection.extractionPackets, 0);
 });
 
 test("mem-import merger workers can read any normalized unit and extraction packet", async () => {
@@ -288,6 +336,8 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const unit = units[0]!;
   const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "proposal-extract", unitIds: [unit.unitId] });
   const submitted = await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const autoQualified = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "proposal-unqualified", role: "proposer", unitIds: [unit.unitId], candidateIds: ["local-candidate"] });
+  assert.deepEqual(autoQualified.candidateIds, [`${unit.unitId}:local-candidate`]);
   const proposer = await service.assignWorker({
     outputRoot: output,
     runId: run.runId,
@@ -313,40 +363,55 @@ test("mem-import persists immutable scoped shard proposals against exact extract
     candidateDispositions: [],
     rationale: "Preserve the local Ada evidence for later canonical reconciliation.",
   };
-  const persisted = await proposals.submitWorkerProposal({ ...proposer, packet });
-  assert.match(persisted.path, new RegExp(`^stages/runs/${run.runId}/proposals/ada-shard-`));
+  await assert.rejects(
+    proposals.submitWorkerProposalBody({ ...proposer, artifacts: packet.artifacts, candidateDispositions: [], rationale: packet.rationale }),
+    /must account for every assigned candidate/,
+  );
+  const persisted = await proposals.submitWorkerProposalBody({
+    ...proposer,
+    artifacts: packet.artifacts,
+    candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }],
+    rationale: packet.rationale,
+  });
+  assert.match(persisted.path, new RegExp(`^stages/runs/${run.runId}/proposals/proposal-author-`));
   const stored = JSON.parse(await readFile(join(output, persisted.path), "utf-8")) as Record<string, unknown>;
   assert.equal(stored.contentHash, persisted.contentHash);
   assert.equal((((stored.artifacts as Array<Record<string, unknown>>)[0]!.provenance as Array<Record<string, unknown>>)[0]!.quote), "Ada guards the glass tower.");
 
   const u2 = new MemImportU2Service(service);
   const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "proposal-merger", role: "merger" });
-  const lease = await u2.acquireWorkerLease(merger);
-  const merged = await u2.applyWorkerBatch({
+  assert.deepEqual(merger.tools, MEM_IMPORT_ROLE_TOOLS.merger);
+  const proposalInventory = await proposals.inventoryWorkerProposals({ ...merger, maxItems: 1 });
+  assert.deepEqual(proposalInventory.entries.map((entry) => entry.proposalHash), [persisted.contentHash]);
+  const proposalRead = await proposals.readWorkerProposal({ ...merger, proposalHash: persisted.contentHash, maxArtifacts: 1 });
+  assert.equal((proposalRead.artifacts[0] as { id: string }).id, "ada");
+  const beforeStatus = await u2.workStatus(run);
+  assert.equal(beforeStatus.unconsumedProposalCount, 1);
+  assert.equal(beforeStatus.unaccountedCandidateCount, 1);
+  const merged = await u2.commitWorkerBatch({
     ...merger,
-    fence: lease.fence,
-    expectedRevision: 0,
-    expectedContentHash: null,
-    batch: {
-      proposalHashes: [persisted.contentHash],
-      readSet: [{ artifactId: "ada", contentHash: null }],
-      operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }],
-      candidateDispositions: [],
-      rationale: "Accept the bounded Ada shard proposal into canonical state.",
-    },
+    proposalHashes: [persisted.contentHash],
+    readSet: [{ artifactId: "ada", contentHash: null }],
+    changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }],
+    rationale: "Accept the bounded Ada shard proposal into canonical state.",
   });
   assert.equal(merged.revision, 1);
   assert.equal(merged.stage.artifacts?.[0]?.id, "ada");
   const canonicalInventory = await u2.readMergeInventoryForWorker({ ...merger, maxItems: 1, group: "people" });
   assert.deepEqual(canonicalInventory.entries.map((entry) => entry.id), ["ada"]);
+  assert.match(canonicalInventory.entries[0]!.artifactContentHash, /^[a-f0-9]{64}$/);
   assert.equal(canonicalInventory.revision, merged.revision);
   const canonicalArtifact = await u2.readMergeArtifactForWorker({ ...merger, artifactId: "ada" });
   assert.equal(canonicalArtifact.artifact?.title, "Ada");
+  assert.equal(canonicalArtifact.artifactContentHash, canonicalInventory.entries[0]!.artifactContentHash);
+  assert.deepEqual(merged.stage.candidateDispositions, [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }]);
+  const afterStatus = await u2.workStatus(run);
+  assert.equal(afterStatus.unconsumedProposalCount, 0);
+  assert.equal(afterStatus.unaccountedCandidateCount, 0);
   const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
   assert.equal(transactionFiles.length, 1);
-  await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
   await assert.rejects(
-    u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: 1, expectedContentHash: merged.contentHash, batch: { proposalHashes: [persisted.contentHash], readSet: [{ artifactId: "ada", contentHash: merged.contentHash }], operations: [{ kind: "upsert", artifact: packet.artifacts[0]! }], rationale: "Cannot write without a current lease." } }),
+    u2.commitWorkerBatch({ ...merger, proposalHashes: [persisted.contentHash], readSet: [{ artifactId: "ada", contentHash: merged.contentHash }], changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }], rationale: "A global merge hash is not an artifact read token." }),
     /Stale merge read set/,
   );
   await assert.rejects(
@@ -363,7 +428,7 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   );
 });
 
-test("mem-import validates literal single- and multi-block provenance quotes", async () => {
+test("mem-import derives provenance quotes even when a worker supplies mismatched typography", async () => {
   const root = await tempDir();
   const input = join(root, "input");
   const output = join(root, "output");
@@ -375,25 +440,12 @@ test("mem-import validates literal single- and multi-block provenance quotes", a
   const assignment = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "quote-check", unitIds: [unit.unitId] });
   const stage = validStage(unit);
   const ref = stage.candidates![0]!.provenance[0]!;
-  ref.quote = "quotes can't be"; // A bounded literal excerpt inside one block.
-  await service.validateExtraction({ ...assignment, unitId: unit.unitId, stage });
   ref.endAnchor = unit.anchors[1]!;
-  ref.quote = "Straight quotes can't be changed.\n\nSecond block remains exact.";
+  ref.quote = "Straight quotes can’t be changed."; // Service must ignore this worker transcription.
   await service.validateExtraction({ ...assignment, unitId: unit.unitId, stage });
-
-  for (const quote of [
-    "[b0001] Straight quotes can't be changed.",
-    "Straight quotes…",
-    "Straight quotes can’t be changed.",
-    "Not present in this source.",
-  ]) {
-    ref.quote = quote;
-    await assert.rejects(
-      service.validateExtraction({ ...assignment, unitId: unit.unitId, stage }),
-      /literal contiguous excerpt/,
-      quote,
-    );
-  }
+  await service.submitExtraction({ ...assignment, unitId: unit.unitId, stage });
+  const persisted = JSON.parse(await readFile(join(output, "stages", "extraction", `${unit.unitId}.json`), "utf-8")) as StageEnvelope;
+  assert.equal(persisted.candidates![0]!.provenance[0]!.quote, "Straight quotes can't be changed.\n\nSecond block remains exact.");
 });
 
 test("mem-import derives omitted provenance quotes with exact Unicode source typography", async () => {
@@ -424,10 +476,7 @@ test("mem-import derives omitted provenance quotes with exact Unicode source typ
   assert.equal(persisted.candidates?.[0]?.provenance[0]?.quote, "Alice’s question wasn’t answered.");
   const normalizedQuote = persisted.candidates![0]!.provenance[0]!;
   normalizedQuote.quote = "Alice's question wasn't answered.";
-  await assert.rejects(
-    service.validateExtraction({ ...assignment, unitId: unit.unitId, stage: persisted }),
-    /literal contiguous excerpt/,
-  );
+  await service.validateExtraction({ ...assignment, unitId: unit.unitId, stage: persisted });
 });
 
 test("mem-import source reads use a monotonic cursor even inside one oversized block", async () => {
@@ -481,7 +530,10 @@ test("mem-import prevents live assignment overlap and stale submissions after re
   );
 
   await service.revokeAssignment({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: first.taskId });
+  const tools = MEM_IMPORT_ROLE_TOOLS.extractor;
+  await service.recordWorkerDispatch({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: first.taskId, facility: "ordinary-subagent", hostTaskId: "interrupted-extractor", requestedTools: tools, observedTools: tools, outcome: "cancelled" });
   const retry = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "retry", unitIds: [unit.unitId], retriesTaskId: first.taskId });
+  await service.recordWorkerDispatch({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: retry.taskId, facility: "ordinary-subagent", hostTaskId: "resumed-extractor", requestedTools: tools, observedTools: tools, outcome: "completed" });
   await service.submitExtraction({ ...retry, unitId: unit.unitId, stage: validStage(unit) });
   await assert.rejects(
     service.submitExtraction({ ...first, unitId: unit.unitId, stage: validStage(unit) }),
@@ -506,6 +558,12 @@ test("mem-import prevents live assignment overlap and stale submissions after re
   assert.equal(retryRecord.retriesTaskId, first.taskId);
   assert.equal(retryRecord.supersededByTaskId, replacement.taskId);
   assert.equal(retryRecord.lifecycleOutcome, "superseded");
+  const interruptedDispatch = JSON.parse(await readFile(join(output, "stages", "orchestration", "dispatches", "first.json"), "utf-8")) as { outcome: string; hostTaskId: string };
+  const resumedDispatch = JSON.parse(await readFile(join(output, "stages", "orchestration", "dispatches", "retry.json"), "utf-8")) as { outcome: string; hostTaskId: string };
+  assert.equal(interruptedDispatch.outcome, "cancelled");
+  assert.equal(interruptedDispatch.hostTaskId, "interrupted-extractor");
+  assert.equal(resumedDispatch.outcome, "completed");
+  assert.equal(resumedDispatch.hostTaskId, "resumed-extractor");
 });
 
 test("mem-import persists redacted run, assignment, and packet-effect audit evidence", async () => {
@@ -634,6 +692,11 @@ test("mem-import U2 fences merge writes, preserves immutable revisions, and bind
   });
   assert.equal(written.revision, 1);
   assert.match(written.contentHash!, /^[a-f0-9]{64}$/);
+  const leakedSnapshotMerger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "u2-leaked-snapshot", role: "merger" });
+  await assert.rejects(
+    u2.writeWorkerMerge({ ...leakedSnapshotMerger, fence: firstLease.fence, expectedRevision: written.revision, expectedContentHash: written.contentHash, stage, rationale: "A leaked snapshot tool must not bypass bounded merger batches." }),
+    /Worker complete snapshot writes are disabled/,
+  );
   const persisted = JSON.parse(await readFile(join(output, "stages", "merge", "merged-candidates.json"), "utf-8")) as Record<string, unknown>;
   assert.equal(persisted.revision, 1);
   assert.equal(persisted.contentHash, written.contentHash);
@@ -659,12 +722,23 @@ test("mem-import U2 fences merge writes, preserves immutable revisions, and bind
       reviewedMergeHash: written.contentHash!,
       findings: [{ id: "finding-1", severity: "warning", summary: "Only one source unit has been extracted." }],
       requestedActions: [{ id: "action-1", type: "record-omission", severity: "repair", summary: "Extract the remaining body unit.", rationale: "Coverage diagnostics identify an unprocessed unit." }],
+      readSet: [{ artifactId: "ada", contentHash: canonicalHash(written.stage.artifacts![0]) }],
     },
   });
   assert.match(review.path, /^stages\/reviews\/quality-1\/u2-review-/);
   const reviewPacket = JSON.parse(await readFile(join(output, review.path), "utf-8")) as Record<string, unknown>;
   assert.equal(reviewPacket.reviewedMergeHash, written.contentHash);
   assert.doesNotMatch(JSON.stringify(reviewPacket), new RegExp(reviewer.grant));
+  const currentValidity = JSON.parse(await readFile(join(output, "stages", "reviews", "validity.json"), "utf-8")) as { entries: Array<{ status: string }> };
+  assert.equal(currentValidity.entries[0]!.status, "current");
+  await u2.writeCoordinatorMerge({
+    outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-merge", fence: firstLease.fence,
+    expectedRevision: written.revision, expectedContentHash: written.contentHash,
+    stage: { ...stage, artifacts: [{ ...stage.artifacts[0]!, description: "Ada is the guard of the glass tower." }] },
+    rationale: "Change the reviewed Ada artifact to test read-set invalidation.",
+  });
+  const staleValidity = JSON.parse(await readFile(join(output, "stages", "reviews", "validity.json"), "utf-8")) as { entries: Array<{ status: string }> };
+  assert.equal(staleValidity.entries[0]!.status, "stale");
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-merge", fence: firstLease.fence });
 
   await assert.rejects(
@@ -679,6 +753,41 @@ test("mem-import U2 fences merge writes, preserves immutable revisions, and bind
   assert.equal(audit.status, "failed");
   assert.equal((audit.finalization as Record<string, unknown>).passed, false);
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize", fence: finalLease.fence });
+});
+
+test("mem-import finalization rejects inline, managed, or missing semantic dispatch receipts", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-extract", unitIds: units.map((unit) => unit.unitId) });
+  await service.submitExtraction({ ...extractor, unitId: units[0]!.unitId, stage: validStage(units[0]!) });
+  await service.submitExtraction({ ...extractor, unitId: units[1]!.unitId, stage: { version: 1, kind: "extraction", unitId: units[1]!.unitId, sourceId: units[1]!.sourceId, candidates: [] } });
+  const lease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-merge" });
+  await u2.writeCoordinatorMerge({
+    outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-merge", fence: lease.fence, expectedRevision: 0, expectedContentHash: null,
+    rationale: "Create a complete test merge.",
+    stage: { version: 1, kind: "merge", artifacts: [{ id: "ada", group: "people", title: "Ada", description: "A guard.", sections: [{ heading: "Summary", body: "Ada guards the glass tower." }], provenance: [{ sourceId: units[0]!.sourceId, unitId: units[0]!.unitId, startAnchor: units[0]!.anchors[0]!, endAnchor: units[0]!.anchors[0]! }, { sourceId: units[1]!.sourceId, unitId: units[1]!.unitId, startAnchor: units[1]!.anchors[0]!, endAnchor: units[1]!.anchors[0]! }], metadata: { representedCandidateIds: [`${units[0]!.unitId}:local-candidate`] } }], candidateDispositions: [{ unitId: units[0]!.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }], diagnostics: [] },
+  });
+  const missing = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-merge", fence: lease.fence });
+  assert.equal(missing.finalized, false);
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-merge", fence: lease.fence });
+
+  const tools = MEM_IMPORT_ROLE_TOOLS.extractor;
+  await assert.rejects(
+    service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "ordinary-subagent", hostTaskId: "/private/session.jsonl", requestedTools: tools, observedTools: tools, outcome: "completed" }),
+    /sanitized opaque identifier/,
+  );
+  await service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "managed-agent", hostTaskId: "managed-extract", requestedTools: tools, observedTools: tools, outcome: "completed" });
+  const managedLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize" });
+  const managed = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize", fence: managedLease.fence });
+  assert.equal(managed.finalized, false);
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize", fence: managedLease.fence });
+
+  await recordDispatch(service, run, extractor.taskId, "extractor");
+  const finalLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success" });
+  const final = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success", fence: finalLease.fence });
+  assert.equal(final.finalized, true, await readFile(join(output, final.checksPath), "utf-8"));
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success", fence: finalLease.fence });
 });
 
 test("mem-import records a terminal safe failure when mandatory delegation is unavailable", async () => {
@@ -721,6 +830,201 @@ test("mem-import U2 rejects concurrent and stale fenced merge writers", async ()
     /expired|fence or owner/,
   );
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent", fence: recovered.fence });
+});
+
+test("mem-import persists identity ambiguity, blocks finalization, and requires explicit reconciliation", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const identities = new MemImportIdentityService(service);
+  const u2 = new MemImportU2Service(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-extract", unitIds: units.map((item) => item.unitId) });
+  const extracted = await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  await service.submitExtraction({ ...extractor, unitId: units[1]!.unitId, stage: { version: 1, kind: "extraction", unitId: units[1]!.unitId, sourceId: units[1]!.sourceId, candidates: [] } });
+  const artifact = {
+    id: "ada", group: "people" as const, title: "Ada", description: "A guard at the glass tower.",
+    sections: [{ heading: "Summary", body: "Ada guards the glass tower." }],
+    provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }],
+    metadata: { representedCandidateIds: [`${unit.unitId}:local-candidate`] },
+  };
+  const proposer = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-propose", role: "proposer", unitIds: [unit.unitId] });
+  const proposal = await proposals.submitWorkerProposal({ ...proposer, packet: { version: 1, kind: "mem-import-proposal", id: "identity-shard", inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash }], artifacts: [artifact], candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }], rationale: "Preserve the Ada shard before reconciliation." } });
+  const reconciler = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-ambiguous", role: "reconciler", proposalHashes: [proposal.contentHash] });
+  const ambiguity = await identities.submitWorkerIdentity({ ...reconciler, packet: {
+    version: 1, kind: "mem-import-identity", id: "ada-ambiguity", proposalHashes: [proposal.contentHash], baselineRevision: 0, baselineContentHash: null,
+    decisions: [{ id: "ada-identity", provisionalId: "book-one-ada", disposition: "ambiguous", conflictId: "ada-identity-conflict", blocking: true, rationale: "The available evidence cannot distinguish a new Ada from an existing canonical Ada." }],
+    rationale: "Leave the identity unresolved rather than deciding it deterministically.",
+  } });
+  const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-merge", role: "merger" });
+  const identityInventory = await identities.inventoryWorkerIdentity({ ...merger, maxItems: 1 });
+  assert.deepEqual(identityInventory.entries.map((entry) => entry.identityProposalHash), [ambiguity.contentHash]);
+  const identityRead = await identities.readWorkerIdentity({ ...merger, identityProposalHash: ambiguity.contentHash, maxDecisions: 1 });
+  assert.equal(identityRead.decisions[0]!.disposition, "ambiguous");
+  const lease = await u2.acquireWorkerLease(merger);
+  const first = await u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: 0, expectedContentHash: null, batch: {
+    proposalHashes: [proposal.contentHash], identityProposalHashes: [ambiguity.contentHash], readSet: [{ artifactId: "ada", contentHash: null }], operations: [{ kind: "upsert", artifact }],
+    candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }],
+    conflictOperations: [{ kind: "create", conflictId: "ada-identity-conflict", blocking: true, summary: "Ada identity collision requires review.", identityDecisionId: "ada-identity" }],
+    rationale: "Accept the Ada artifact while retaining the blocking identity conflict.",
+  } });
+  const identityState = JSON.parse(await readFile(join(output, "stages", "identity", "state.json"), "utf-8")) as { conflicts: Record<string, { status: string; blocking: boolean; summary: string; identityDecisionId?: string }> };
+  assert.equal(identityState.conflicts["ada-identity-conflict"]!.status, "open");
+  assert.equal(identityState.conflicts["ada-identity-conflict"]!.blocking, true);
+  assert.equal(identityState.conflicts["ada-identity-conflict"]!.summary, "Ada identity collision requires review.");
+  assert.equal(identityState.conflicts["ada-identity-conflict"]!.identityDecisionId, "ada-identity");
+  await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
+
+  const finalLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-finalize" });
+  const blocked = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-finalize", fence: finalLease.fence });
+  assert.equal(blocked.finalized, false);
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-finalize", fence: finalLease.fence });
+
+  const reconciler2 = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-match", role: "reconciler", proposalHashes: [proposal.contentHash] });
+  const match = await identities.submitWorkerIdentity({ ...reconciler2, packet: {
+    version: 1, kind: "mem-import-identity", id: "ada-match", proposalHashes: [proposal.contentHash], baselineRevision: first.revision, baselineContentHash: first.contentHash,
+    decisions: [{ id: "ada-match-decision", provisionalId: "book-one-ada", disposition: "match", canonicalId: "ada", rationale: "The reviewer accepted the existing Ada canonical identity." }],
+    rationale: "Record the explicit model-owned identity resolution.",
+  } });
+  const resolveLease = await u2.acquireWorkerLease(merger);
+  await u2.applyWorkerBatch({ ...merger, fence: resolveLease.fence, expectedRevision: first.revision, expectedContentHash: first.contentHash, batch: {
+    proposalHashes: [proposal.contentHash], identityProposalHashes: [match.contentHash], readSet: [{ artifactId: "ada", contentHash: canonicalHash(first.stage.artifacts![0]) }], operations: [{ kind: "upsert", artifact }],
+    conflictOperations: [{ kind: "resolve", conflictId: "ada-identity-conflict" }], rationale: "Resolve the Ada identity conflict against the retained canonical artifact.",
+  } });
+  await u2.releaseWorkerLease({ ...merger, fence: resolveLease.fence });
+  const resolvedState = JSON.parse(await readFile(join(output, "stages", "identity", "state.json"), "utf-8")) as { conflicts: Record<string, { status: string }> };
+  assert.equal(resolvedState.conflicts["ada-identity-conflict"]!.status, "resolved");
+});
+
+test("mem-import rebases unrelated stale transactions and rejects changed read dependencies", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const u2 = new MemImportU2Service(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ ...run, taskId: "rebase-extract", unitIds: [unit.unitId] });
+  await recordDispatch(service, run, extractor.taskId, "extractor");
+  const extraction = await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const artifact = (id: string, description: string) => ({ id, group: "people" as const, title: id, description, sections: [{ heading: "Summary", body: description }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] });
+  const alpha = artifact("alpha", "Alpha is the initial canonical artifact.");
+  const beta = artifact("beta", "Beta is independent of Alpha.");
+  const alphaRebased = artifact("alpha", "Alpha is updated after an unrelated Beta commit.");
+  const alphaConcurrent = artifact("alpha", "Alpha is changed by a concurrent transaction.");
+  const alphaStale = artifact("alpha", "This stale Alpha update must be rejected.");
+  const proposer = await service.assignWorker({ ...run, taskId: "rebase-propose", role: "proposer", unitIds: [unit.unitId] });
+  await recordDispatch(service, run, proposer.taskId, "proposer");
+  const submit = async (id: string, value: ReturnType<typeof artifact>) => proposals.submitWorkerProposal({ ...proposer, packet: { version: 1, kind: "mem-import-proposal", id, inputs: [{ unitId: unit.unitId, packetHash: extraction.packetHash }], artifacts: [value], rationale: `Propose ${value.id}.` } });
+  const [alphaProposal, betaProposal, rebasedProposal, concurrentProposal, staleProposal] = await Promise.all([
+    submit("alpha-initial", alpha), submit("beta-independent", beta), submit("alpha-rebased", alphaRebased), submit("alpha-concurrent", alphaConcurrent), submit("alpha-stale", alphaStale),
+  ]);
+  const merger = await service.assignWorker({ ...run, taskId: "rebase-merger", role: "merger" });
+  await recordDispatch(service, run, merger.taskId, "merger");
+  const lease = await u2.acquireWorkerLease(merger);
+  const apply = async (proposalHash: string, value: ReturnType<typeof artifact>, expected: { revision: number; contentHash: string | null }, readHash: string | null) => u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: expected.revision, expectedContentHash: expected.contentHash, batch: { proposalHashes: [proposalHash], readSet: [{ artifactId: value.id, contentHash: readHash }], operations: [{ kind: "upsert", artifact: value }], rationale: `Apply ${value.id}.` } });
+  const initial = await apply(alphaProposal.contentHash, alpha, { revision: 0, contentHash: null }, null);
+  const staleBaseline = { revision: initial.revision, contentHash: initial.contentHash };
+  const alphaHash = canonicalHash(initial.stage.artifacts!.find((item) => item.id === "alpha")!);
+  const afterBeta = await apply(betaProposal.contentHash, beta, staleBaseline, null);
+  const afterRebase = await apply(rebasedProposal.contentHash, alphaRebased, staleBaseline, alphaHash);
+  assert.equal(afterRebase.revision, afterBeta.revision + 1);
+  const rebaseReceipt = JSON.parse(await readFile((await readdir(join(output, "stages", "merge", "transactions"))).filter((name) => name.startsWith(`${String(afterRebase.revision).padStart(8, "0")}-`)).map((name) => join(output, "stages", "merge", "transactions", name))[0]!, "utf-8")) as { rebasedFrom?: { revision: number; contentHash: string | null } };
+  assert.deepEqual(rebaseReceipt.rebasedFrom, staleBaseline);
+  const beforeConcurrent = { revision: afterRebase.revision, contentHash: afterRebase.contentHash };
+  const alphaRebasedHash = canonicalHash(afterRebase.stage.artifacts!.find((item) => item.id === "alpha")!);
+  await apply(concurrentProposal.contentHash, alphaConcurrent, beforeConcurrent, alphaRebasedHash);
+  await assert.rejects(
+    apply(staleProposal.contentHash, alphaStale, beforeConcurrent, alphaRebasedHash),
+    /Stale merge read set for artifact alpha/,
+  );
+  await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
+});
+
+test("mem-import serializes twenty out-of-order proposal transactions and preserves prior commits after interruption", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const u2 = new MemImportU2Service(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ ...run, taskId: "pressure-extract", unitIds: [unit.unitId] });
+  await recordDispatch(service, run, extractor.taskId, "extractor");
+  const extracted = await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const submitted = await Promise.all(Array.from({ length: 20 }, async (_, index) => {
+    const id = `pressure-${String(index).padStart(2, "0")}`;
+    const proposer = await service.assignWorker({ ...run, taskId: `pressure-propose-${String(index).padStart(2, "0")}`, role: "proposer", unitIds: [unit.unitId] });
+    await recordDispatch(service, run, proposer.taskId, "proposer");
+    const artifact = { id, group: "people" as const, title: `Pressure Person ${index}`, description: `Transaction pressure artifact ${index}.`, sections: [{ heading: "Summary", body: `Pressure Person ${index} appears in the source.` }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] };
+    return { artifact, proposal: await proposals.submitWorkerProposal({ ...proposer, packet: { version: 1, kind: "mem-import-proposal", id: `${id}-proposal`, inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash }], artifacts: [artifact], rationale: `Prepare bounded artifact ${index}.` } }) };
+  }));
+  const merger = await service.assignWorker({ ...run, taskId: "pressure-merger", role: "merger" });
+  await recordDispatch(service, run, merger.taskId, "merger");
+  const lease = await u2.acquireWorkerLease(merger);
+  for (const { artifact, proposal } of [...submitted].reverse()) {
+    const state = await u2.mergeState(run);
+    await u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: state.revision, expectedContentHash: state.contentHash, batch: { proposalHashes: [proposal.contentHash], readSet: [{ artifactId: artifact.id, contentHash: null }], operations: [{ kind: "upsert", artifact }], rationale: `Commit ${artifact.id} through the single transaction queue.` } });
+  }
+  const committed = await u2.mergeState(run);
+  assert.equal(committed.revision, 20);
+  assert.equal(committed.stage.artifacts?.length, 20);
+  const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
+  assert.equal(transactionFiles.length, 20);
+  const firstReceipt = JSON.parse(await readFile(join(output, "stages", "merge", "transactions", transactionFiles.find((name) => name.startsWith("00000001-"))!), "utf-8")) as { contentHash: string; stage?: unknown; operations: Array<{ artifactRef?: string }> };
+  assert.equal(firstReceipt.stage, undefined, "transaction receipts must not materialize complete merge stages");
+  assert.match(firstReceipt.operations[0]!.artifactRef ?? "", /^[a-f0-9]{64}$/);
+  assert.equal((await readdir(join(output, "stages", "merge", "artifacts"))).length, 20, "changed artifacts are content-addressed and deduplicated outside receipts");
+  assert.equal((await readdir(join(output, "stages", "merge", "checkpoints"))).length, 1, "a bounded checkpoint caps later replay length");
+  const reviewer = await service.assignWorker({ ...run, taskId: "pressure-history-review", role: "reviewer" });
+  await recordDispatch(service, run, reviewer.taskId, "reviewer");
+  await u2.submitReview({ ...reviewer, packet: { version: 1, kind: "mem-import-review", checkpointId: "pressure-history", reviewedMergeRevision: 1, reviewedMergeHash: firstReceipt.contentHash, readSet: [], findings: [], requestedActions: [] } });
+  const beforeFailure = committed.contentHash;
+  await assert.rejects(
+    u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: committed.revision, expectedContentHash: committed.contentHash, batch: { proposalHashes: ["0".repeat(64)], readSet: [{ artifactId: "interrupted", contentHash: null }], operations: [{ kind: "delete", artifactId: "interrupted" }], rationale: "This malformed interrupted transaction must not replace accepted state." } }),
+    /Declared proposal/,
+  );
+  const afterFailure = await u2.mergeState(run);
+  assert.equal(afterFailure.revision, 20);
+  assert.equal(afterFailure.contentHash, beforeFailure);
+  await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
+});
+
+test("mem-import large-work inventories stay bounded at 500 units, 5,000 candidates, and 1,000 artifacts", async () => {
+  const root = await tempDir();
+  const input = join(root, "input");
+  const output = join(root, "output");
+  await mkdir(input);
+  await Promise.all(Array.from({ length: 500 }, (_, index) => writeFile(join(input, `chapter-${String(index).padStart(3, "0")}.html`), `<html><body><p>Character ${index} appears at location ${index}.</p></body></html>`, "utf-8")));
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const run = await service.begin(output);
+  const units = (await service.normalize({ ...run, input })).units;
+  assert.equal(units.length, 500);
+  const extractor = await service.assignExtractor({ ...run, taskId: "large-extract", unitIds: units.map((unit) => unit.unitId) });
+  await recordDispatch(service, run, extractor.taskId, "extractor");
+  for (const [index, unit] of units.entries()) {
+    await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: {
+      version: 1, kind: "extraction", unitId: unit.unitId, sourceId: unit.sourceId,
+      candidates: Array.from({ length: 10 }, (_, candidate) => ({ id: `candidate-${candidate}`, group: "things" as const, title: `Object ${index}-${candidate}`, provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] })),
+    } });
+  }
+  const merger = await service.assignWorker({ ...run, taskId: "large-reader", role: "merger" });
+  const extractionPage = await service.readWorkerExtractionInventory({ ...merger, maxItems: 100 });
+  assert.equal(extractionPage.entries.length, 100);
+  assert.equal(extractionPage.truncated, true);
+  assert.equal(extractionPage.entries.reduce((total, entry) => total + entry.candidateCount, 0), 1_000);
+  assert.ok(extractionPage.continuationCursor);
+
+  const artifacts = Array.from({ length: 1_000 }, (_, index) => {
+    const unit = units[index % units.length]!;
+    return { id: `artifact-${String(index).padStart(4, "0")}`, group: "things" as const, title: `Artifact ${index}`, description: `A bounded canonical artifact ${index}.`, sections: [{ heading: "Summary", body: `Artifact ${index} is retained for inventory paging.` }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] };
+  });
+  const lease = await u2.acquireCoordinatorLease({ ...run, taskId: "large-seed" });
+  const written = await u2.writeCoordinatorMerge({ ...run, taskId: "large-seed", fence: lease.fence, expectedRevision: 0, expectedContentHash: null, stage: { version: 1, kind: "merge", artifacts, candidateDispositions: [], diagnostics: [] }, rationale: "Seed a large canonical inventory to verify bounded reads." });
+  assert.equal(written.stage.artifacts?.length, 1_000);
+  const mergePage = await u2.mergeInventory({ ...run, maxItems: 100 });
+  assert.equal(mergePage.totalArtifacts, 1_000);
+  assert.equal(mergePage.entries.length, 100);
+  assert.equal(mergePage.truncated, true);
+  assert.ok(mergePage.continuationCursor);
+  await u2.releaseCoordinatorLease({ ...run, taskId: "large-seed", fence: lease.fence });
 });
 
 test("a child process independently rejects a forged cross-process extractor grant", async () => {

@@ -16,11 +16,14 @@ import {
   writeMergeStage,
 } from "../world-import/staging.js";
 import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
-import { projectCompendium } from "./compendium-service.js";
+import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
 import { MemImportService, type AssignmentRole, type MemImportAssignmentRecord, type MemImportCapability } from "./service.js";
+import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
 
 const LEASE_HEARTBEAT_MS = 60_000;
 const LEASE_EXPIRY_MS = 5 * 60_000;
+/** Full reconstruction checkpoints bound replay cost without snapshotting every transaction. */
+const TRANSACTION_CHECKPOINT_INTERVAL = 16;
 
 type CoordinatorAuthority = { outputRoot: string; runId: string; coordinatorGrant: string };
 type WorkerAuthority = { outputRoot: string; runId: string; taskId: string; grant: string };
@@ -50,6 +53,8 @@ export type MergeInventoryEntry = {
   title: string;
   type?: string;
   tags?: string[];
+  /** Exact hash to copy into a bounded merge read set. */
+  artifactContentHash: string;
 };
 
 export type MergeInventoryResult = {
@@ -64,14 +69,49 @@ export type MergeInventoryResult = {
 type MergeInventoryCursor = { version: 1; revision: number; contentHash: string | null; group?: string; afterId: string };
 
 export type MergeLeaseResult = { fence: number; expiresAt: string; heartbeatEveryMs: number };
+export type ConflictOperation =
+  | { kind: "create"; conflictId: string; blocking: boolean; summary: string; identityDecisionId?: string }
+  | { kind: "resolve" | "defer"; conflictId: string };
+
+export type MergeCommitChange =
+  | { kind: "accept"; proposalHash: string; artifactId: string }
+  | { kind: "upsert"; artifact: unknown }
+  | { kind: "delete"; artifactId: string };
+
 export type MergeBatch = {
   proposalHashes: string[];
+  /** Immutable reconciler packets accepted with this transaction. */
+  identityProposalHashes?: string[];
   /** Exact hashes for artifacts inspected or replaced; null asserts an artifact was absent. */
   readSet: Array<{ artifactId: string; contentHash: string | null }>;
   operations: Array<{ kind: "upsert"; artifact: unknown } | { kind: "delete"; artifactId: string }>;
   candidateDispositions?: unknown[];
+  /** Explicit model-owned conflict state changes paired with accepted reconciliation evidence. */
+  conflictOperations?: ConflictOperation[];
   rationale: string;
 };
+type StoredTransactionOperation =
+  | { kind: "upsert"; artifactRef: string }
+  | { kind: "delete"; artifactId: string };
+
+type StoredTransactionReceipt = {
+  version: 1;
+  kind: "mem-import-merge-transaction";
+  revision: number;
+  contentHash: string;
+  parentContentHash: string | null;
+  operations: StoredTransactionOperation[];
+  candidateDispositions?: NonNullable<StageEnvelope["candidateDispositions"]>;
+};
+
+type MergeCheckpoint = {
+  version: 1;
+  kind: "mem-import-merge-checkpoint";
+  revision: number;
+  contentHash: string;
+  stage: StageEnvelope;
+};
+
 export type ReviewPacket = {
   version: 1;
   kind: "mem-import-review";
@@ -80,6 +120,8 @@ export type ReviewPacket = {
   reviewedMergeHash: string;
   findings: Array<{ id: string; severity: "info" | "warning" | "repair" | "critical"; summary: string; sourceRefs?: unknown[]; requestedActionIds?: string[] }>;
   requestedActions: Array<{ id: string; type: string; severity: "info" | "warning" | "repair" | "critical"; summary: string; rationale?: string; sourceRefs?: unknown[] }>;
+  /** Exact bounded canonical artifact read set; absence is retained as legacy unscoped review evidence. */
+  readSet?: Array<{ artifactId: string; contentHash: string | null }>;
   diagnostics?: Array<{ level: "info" | "warning" | "error"; message: string }>;
   metadata?: Record<string, unknown>;
 };
@@ -90,9 +132,20 @@ function leasePath(outputRoot: string): string { return join(leaseDir(outputRoot
 function fencePath(outputRoot: string): string { return join(orchestrationDir(outputRoot), "merge-fence.json"); }
 function revisionPath(outputRoot: string, revision: number, contentHash: string): string { return join(outputRoot, "stages", "merge", "revisions", `${String(revision).padStart(8, "0")}-${contentHash}.json`); }
 function transactionPath(outputRoot: string, revision: number, contentHash: string): string { return join(outputRoot, "stages", "merge", "transactions", `${String(revision).padStart(8, "0")}-${contentHash}.json`); }
+function artifactBlobPath(outputRoot: string, contentHash: string): string { return join(outputRoot, "stages", "merge", "artifacts", `${contentHash}.json`); }
+function checkpointPath(outputRoot: string, revision: number, contentHash: string): string { return join(outputRoot, "stages", "merge", "checkpoints", `${String(revision).padStart(8, "0")}-${contentHash}.json`); }
 function proposalDir(outputRoot: string, runId: string): string { return join(outputRoot, "stages", "runs", runId, "proposals"); }
 function eventPath(outputRoot: string, kind: string): string { return join(orchestrationDir(outputRoot), "events", `${new Date().toISOString().replace(/[:.]/g, "-")}-${kind}-${randomBytes(6).toString("hex")}.json`); }
 function reviewPath(outputRoot: string, checkpointId: string, taskId: string, hash: string): string { return join(outputRoot, "stages", "reviews", checkpointId, `${taskId}-${hash}.json`); }
+function identityStatePath(outputRoot: string): string { return join(outputRoot, "stages", "identity", "state.json"); }
+function reviewValidityPath(outputRoot: string): string { return join(outputRoot, "stages", "reviews", "validity.json"); }
+
+type CanonicalIdentityState = {
+  version: 1;
+  kind: "mem-import-identity-state";
+  owners: Record<string, { proposalHash: string; decisionId: string; provisionalId: string; createdAt: string }>;
+  conflicts: Record<string, { status: "open" | "deferred" | "resolved"; blocking: boolean; summary: string; identityDecisionId?: string; updatedAt: string }>;
+};
 
 function requireNonEmpty(value: string, label: string): void {
   if (!value || !value.trim()) throw new Error(`${label} must be non-empty`);
@@ -131,7 +184,11 @@ function leaseOwnerEquals(left: MergeActor, right: MergeActor): boolean {
 }
 
 export class MemImportU2Service {
-  constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {}
+  private readonly identities: MemImportIdentityService;
+
+  constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {
+    this.identities = new MemImportIdentityService(base, now);
+  }
 
   async mergeState(options: CoordinatorAuthority): Promise<MergeState> {
     const run = await this.base.authorizeCoordinator(options);
@@ -141,6 +198,59 @@ export class MemImportU2Service {
   async readMergeForWorker(options: WorkerAuthority): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
     return this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
+  }
+
+  async workStatus(options: CoordinatorAuthority): Promise<{
+    revision: number;
+    contentHash: string | null;
+    proposalCount: number;
+    consumedProposalCount: number;
+    unconsumedProposalCount: number;
+    candidateCount: number;
+    accountedCandidateCount: number;
+    unaccountedCandidateCount: number;
+    openConflictCount: number;
+    blockingConflictCount: number;
+  }> {
+    const run = await this.base.authorizeCoordinator(options);
+    const canonicalRoot = await this.base.canonicalRootForRun(run.outputRoot);
+    const state = await this.readMergeState(canonicalRoot);
+    const proposalsRoot = proposalDir(run.outputRoot, run.runId);
+    const proposalHashes = new Set<string>();
+    for (const file of existsSync(proposalsRoot) ? await readdir(proposalsRoot) : []) {
+      if (!file.endsWith(".json")) continue;
+      const packet = JSON.parse(await readFile(join(proposalsRoot, file), "utf-8")) as { contentHash?: unknown };
+      if (typeof packet.contentHash === "string") proposalHashes.add(packet.contentHash);
+    }
+    const consumed = new Set<string>();
+    const transactionsRoot = join(canonicalRoot, "stages", "merge", "transactions");
+    for (const file of existsSync(transactionsRoot) ? await readdir(transactionsRoot) : []) {
+      const receipt = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { proposalHashes?: unknown };
+      if (Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string" && proposalHashes.has(proposalHash)) consumed.add(proposalHash);
+    }
+    const candidateKeys = new Set((await readExtractionStages(run.outputRoot)).flatMap((stage) => (stage.candidates ?? []).map((candidate) => `${stage.unitId}:${candidate.id}`)));
+    const accountedKeys = new Set((state.stage.candidateDispositions ?? []).map((item) => `${item.unitId}:${item.candidateId}`).filter((key) => candidateKeys.has(key)));
+    let openConflictCount = 0;
+    let blockingConflictCount = 0;
+    if (existsSync(identityStatePath(canonicalRoot))) {
+      const identity = JSON.parse(await readFile(identityStatePath(canonicalRoot), "utf-8")) as CanonicalIdentityState;
+      for (const conflict of Object.values(identity.conflicts ?? {})) if (conflict.status !== "resolved") {
+        openConflictCount += 1;
+        if (conflict.blocking) blockingConflictCount += 1;
+      }
+    }
+    return {
+      revision: state.revision,
+      contentHash: state.contentHash,
+      proposalCount: proposalHashes.size,
+      consumedProposalCount: consumed.size,
+      unconsumedProposalCount: proposalHashes.size - consumed.size,
+      candidateCount: candidateKeys.size,
+      accountedCandidateCount: accountedKeys.size,
+      unaccountedCandidateCount: candidateKeys.size - accountedKeys.size,
+      openConflictCount,
+      blockingConflictCount,
+    };
   }
 
   async mergeInventory(options: CoordinatorAuthority & { group?: string; continuationCursor?: string; maxItems?: number }): Promise<MergeInventoryResult> {
@@ -153,11 +263,12 @@ export class MemImportU2Service {
     return this.inventoryMerge(await this.base.canonicalRootForRun(assignment.outputRoot), options);
   }
 
-  async readMergeArtifactForWorker(options: WorkerAuthority & { artifactId: string }): Promise<{ revision: number; contentHash: string | null; artifact?: NonNullable<StageEnvelope["artifacts"]>[number] }> {
+  async readMergeArtifactForWorker(options: WorkerAuthority & { artifactId: string }): Promise<{ revision: number; contentHash: string | null; artifactContentHash: string | null; artifact?: NonNullable<StageEnvelope["artifacts"]>[number] }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
     assertId(options.artifactId, "artifactId");
     const state = await this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
-    return { revision: state.revision, contentHash: state.contentHash, ...(state.stage.artifacts?.find((artifact) => artifact.id === options.artifactId) ? { artifact: state.stage.artifacts.find((artifact) => artifact.id === options.artifactId)! } : {}) };
+    const artifact = state.stage.artifacts?.find((item) => item.id === options.artifactId);
+    return { revision: state.revision, contentHash: state.contentHash, artifactContentHash: artifact ? hash(artifact) : null, ...(artifact ? { artifact } : {}) };
   }
 
   async acquireCoordinatorLease(options: CoordinatorAuthority & { taskId: string }): Promise<MergeLeaseResult> {
@@ -200,24 +311,26 @@ export class MemImportU2Service {
 
   async writeWorkerMerge(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", checkpointId: options.checkpointId, actionIds: options.actionIds });
-    if (assignment.role !== "merger" && assignment.role !== "repairer") throw new Error("Only merger or repairer assignments may mutate merge state");
-    if (assignment.role === "repairer" && (!options.checkpointId || !options.actionIds?.length)) throw new Error("Repairer mutations must cite assigned checkpointId and actionIds");
-    const { outputRoot: _outputRoot, runId: _runId, taskId: _taskId, grant: _grant, ...mutation } = options;
-    return this.writeMerge({ outputRoot: await this.base.canonicalRootForRun(assignment.outputRoot), sourceRoot: assignment.outputRoot, runId: assignment.runId, actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role }, ...mutation });
+    // Complete snapshots are coordinator-only legacy comparison/admin work. Semantic
+    // workers must use bounded proposal-backed batches even if a host leaks this tool.
+    void assignment;
+    throw new Error("Worker complete snapshot writes are disabled; use the assigned bounded batch mutation tool");
   }
 
   /** Apply a small proposal-backed artifact delta; normal mergers cannot use repair scope here. */
   async applyWorkerBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+    const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
     const before = await this.readMergeState(canonicalRoot);
     this.assertReadSet(before.stage, batch.readSet);
+    const identityPackets = await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
     const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
     const stage = this.applyBatch(before.stage, batch);
-    return this.writeMerge({
+    const written = await this.writeMerge({
       outputRoot: canonicalRoot,
-      sourceRoot: assignment.outputRoot,
+      sourceRoot,
       runId: assignment.runId,
       actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role },
       fence: options.fence,
@@ -225,8 +338,84 @@ export class MemImportU2Service {
       expectedContentHash: before.contentHash,
       stage,
       rationale: batch.rationale,
-      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
+      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
     });
+    await this.applyIdentityEffects(canonicalRoot, batch, identityPackets);
+    await this.base.recordWorkerEffect(assignment, { kind: "merge", path: this.relative(canonicalRoot, transactionPath(canonicalRoot, written.revision, written.contentHash!)), contentHash: written.contentHash! });
+    return written;
+  }
+
+  /** Model-facing merger path. One bounded call resolves proposal references,
+   * carries candidate accounting, and owns lease/CAS lifecycle internally. */
+  async commitWorkerBatch(options: WorkerAuthority & {
+    proposalHashes: string[];
+    identityProposalHashes?: string[];
+    readSet: MergeBatch["readSet"];
+    changes: MergeCommitChange[];
+    conflictOperations?: ConflictOperation[];
+    rationale: string;
+  }): Promise<MergeState> {
+    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
+    if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > 12) throw new Error("Merge commit requires one to twelve proposal hashes");
+    if (assignment.allowedProposalHashes?.length && options.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge commit proposal hash is outside this merger assignment");
+    if (!Array.isArray(options.changes) || options.changes.length === 0 || options.changes.length > 12) throw new Error("Merge commit requires one to twelve changes");
+    const proposals = new Map<string, Awaited<ReturnType<MemImportU2Service["readProposal"]>>>();
+    for (const proposalHash of options.proposalHashes) proposals.set(proposalHash, await this.readProposal(assignment.outputRoot, assignment.runId, proposalHash));
+    const operations: MergeBatch["operations"] = options.changes.map((change) => {
+      if (change.kind !== "accept") return structuredClone(change);
+      if (!options.proposalHashes.includes(change.proposalHash)) throw new Error(`Accepted proposal ${change.proposalHash} is not declared by this commit`);
+      const proposal = proposals.get(change.proposalHash)!;
+      const artifact = proposal.artifacts.find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === change.artifactId);
+      if (!artifact) throw new Error(`Proposal ${change.proposalHash} has no artifact ${change.artifactId}`);
+      return { kind: "upsert", artifact: structuredClone(artifact) };
+    });
+    const candidateDispositions = [...proposals.values()].flatMap((proposal) => proposal.candidateDispositions ?? []);
+    const batch: MergeBatch = {
+      proposalHashes: options.proposalHashes,
+      ...(options.identityProposalHashes?.length ? { identityProposalHashes: options.identityProposalHashes } : {}),
+      readSet: options.readSet,
+      operations,
+      candidateDispositions,
+      ...(options.conflictOperations?.length ? { conflictOperations: options.conflictOperations } : {}),
+      rationale: options.rationale,
+    };
+    const lease = await this.acquireWorkerLease(options);
+    try {
+      const current = await this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
+      return await this.applyWorkerBatch({ ...options, fence: lease.fence, expectedRevision: current.revision, expectedContentHash: current.contentHash, batch });
+    } finally {
+      await this.releaseWorkerLease({ ...options, fence: lease.fence });
+    }
+  }
+
+  /** Apply a repairer-only bounded transaction. Its checkpoint/action scope is authorization-enforced and retained in the receipt. */
+  async applyWorkerRepairBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; checkpointId: string; actionIds: string[]; batch: MergeBatch }): Promise<MergeState> {
+    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "repairer", checkpointId: options.checkpointId, actionIds: options.actionIds });
+    const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+    const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
+    const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
+    const before = await this.readMergeState(canonicalRoot);
+    this.assertReadSet(before.stage, batch.readSet);
+    const identityPackets = await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
+    const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
+    const stage = this.applyBatch(before.stage, batch);
+    const written = await this.writeMerge({
+      outputRoot: canonicalRoot,
+      sourceRoot,
+      runId: assignment.runId,
+      actor: { kind: "worker", taskId: assignment.taskId, role: assignment.role },
+      fence: options.fence,
+      expectedRevision: before.revision,
+      expectedContentHash: before.contentHash,
+      stage,
+      rationale: batch.rationale,
+      checkpointId: options.checkpointId,
+      actionIds: options.actionIds,
+      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
+    });
+    await this.applyIdentityEffects(canonicalRoot, batch, identityPackets);
+    await this.base.recordWorkerEffect(assignment, { kind: "repair", path: this.relative(canonicalRoot, transactionPath(canonicalRoot, written.revision, written.contentHash!)), contentHash: written.contentHash! });
+    return written;
   }
 
   async submitReview(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
@@ -234,10 +423,8 @@ export class MemImportU2Service {
     const packet = this.validateReviewPacket(options.packet);
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const state = await this.readMergeState(canonicalRoot);
-    const receipt = await this.findRevisionReceipt(canonicalRoot, packet.reviewedMergeRevision, packet.reviewedMergeHash);
-    if (!receipt && !(state.revision === packet.reviewedMergeRevision && state.contentHash === packet.reviewedMergeHash)) {
-      throw new Error("Review packet must bind to an existing immutable merge revision");
-    }
+    const reviewedStage = await this.readRevisionStage(canonicalRoot, packet.reviewedMergeRevision, packet.reviewedMergeHash, state);
+    this.assertReviewReadSet(reviewedStage, packet.readSet);
     const extractionHash = await this.extractionHash(assignment.outputRoot);
     const immutable = {
       ...packet,
@@ -250,8 +437,10 @@ export class MemImportU2Service {
     const path = reviewPath(assignment.outputRoot, packet.checkpointId, assignment.taskId, contentHash);
     if (existsSync(path)) throw new Error("This immutable review packet has already been submitted");
     await writeJson(path, immutable);
+    await this.refreshReviewValidity(canonicalRoot, state.stage);
     await this.recordEvent(assignment.outputRoot, "review", { runId: assignment.runId, taskId: assignment.taskId, path: this.relative(assignment.outputRoot, path), contentHash, mergeRevision: packet.reviewedMergeRevision, mergeHash: packet.reviewedMergeHash });
     await this.updateAudit(assignment.outputRoot, assignment.runId, { kind: "review", path: this.relative(assignment.outputRoot, path), contentHash, at: this.now().toISOString(), taskId: assignment.taskId });
+    await this.base.recordWorkerEffect(assignment, { kind: "review", path: this.relative(assignment.outputRoot, path), contentHash });
     return { path: this.relative(assignment.outputRoot, path), contentHash };
   }
 
@@ -288,12 +477,20 @@ export class MemImportU2Service {
     if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
     await emitWorldLibrary(projectionRoot);
     const checks = await this.collectChecks(projectionRoot);
+    const identityDiagnostics = await this.identityDiagnostics(projectionRoot);
+    const dispatchRoots = run.compendiumRoot
+      ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
+      : [run.outputRoot];
+    const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
+      .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
     const diagnostics = [
       ...checks.lint.diagnostics,
       ...checks.coverage.recommendations,
       ...checks.coverage.unitCoverage.flatMap((unit) => unit.diagnostics),
       ...checks.provenance.diagnostics,
       ...checks.deterministic.checks.flatMap((check) => check.diagnostics ?? []),
+      ...identityDiagnostics,
+      ...dispatchDiagnostics,
     ];
     const errors = diagnostics.filter((item) => item.level === "error").length;
     const warnings = diagnostics.filter((item) => item.level === "warning").length;
@@ -318,7 +515,7 @@ export class MemImportU2Service {
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(projectionRoot, checksPath), errors, warnings };
   }
 
-  private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "readSet" | "operations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
+  private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "identityProposalHashes" | "readSet" | "operations" | "candidateDispositions" | "conflictOperations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
     assertId(options.actor.taskId, "taskId");
     requireNonEmpty(options.rationale, "rationale");
     await this.requireLease(options.outputRoot, options.runId, options.actor, options.fence);
@@ -338,6 +535,9 @@ export class MemImportU2Service {
     validateStageEnvelope(stage, { requireArtifacts: true });
     await this.assertLiteralArtifactProvenance(options.sourceRoot ?? options.outputRoot, stage, options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined);
     const extractionHash = await this.extractionHash(options.sourceRoot ?? options.outputRoot);
+    const storedOperations = options.transaction
+      ? await this.persistTransactionArtifacts(options.outputRoot, stage, options.transaction.operations)
+      : undefined;
     const receipt = options.transaction ? {
       version: 1,
       kind: "mem-import-merge-transaction",
@@ -350,8 +550,13 @@ export class MemImportU2Service {
       fence: options.fence,
       rationale: options.rationale,
       proposalHashes: options.transaction.proposalHashes,
+      ...(options.transaction.identityProposalHashes?.length ? { identityProposalHashes: options.transaction.identityProposalHashes } : {}),
       readSet: options.transaction.readSet,
-      operations: options.transaction.operations,
+      operations: storedOperations!,
+      ...(options.transaction.candidateDispositions?.length ? { candidateDispositions: options.transaction.candidateDispositions } : {}),
+      ...(options.transaction.conflictOperations?.length ? { conflictOperations: options.transaction.conflictOperations } : {}),
+      ...(options.checkpointId ? { checkpointId: options.checkpointId } : {}),
+      ...(options.actionIds?.length ? { actionIds: [...new Set(options.actionIds)].sort() } : {}),
       ...(options.transaction.rebasedFrom ? { rebasedFrom: options.transaction.rebasedFrom } : {}),
       createdAt: this.now().toISOString(),
     } : {
@@ -373,7 +578,12 @@ export class MemImportU2Service {
     const receiptFile = options.transaction ? transactionPath(options.outputRoot, stage.revision!, contentHash) : revisionPath(options.outputRoot, stage.revision!, contentHash);
     if (existsSync(receiptFile)) throw new Error("Merge revision receipt already exists; retry after reading current state");
     await writeJson(receiptFile, receipt);
+    if (options.transaction && stage.revision! % TRANSACTION_CHECKPOINT_INTERVAL === 0) {
+      const checkpoint: MergeCheckpoint = { version: 1, kind: "mem-import-merge-checkpoint", revision: stage.revision!, contentHash, stage };
+      await writeJson(checkpointPath(options.outputRoot, stage.revision!, contentHash), checkpoint);
+    }
     await writeMergeStage(options.outputRoot, stage);
+    await this.refreshReviewValidity(options.outputRoot, stage);
     await this.recordEvent(options.outputRoot, "merge", { runId: options.runId, taskId: options.actor.taskId, actor: options.actor.kind, fence: options.fence, revision: stage.revision, contentHash, parentContentHash: before.contentHash, extractionHash, receiptPath: this.relative(options.outputRoot, receiptFile) });
     await this.updateAudit(options.outputRoot, options.runId, { kind: "merge", path: this.relative(options.outputRoot, receiptFile), contentHash, at: this.now().toISOString(), taskId: options.actor.taskId });
     return { stage, revision: stage.revision!, contentHash, ...(before.contentHash ? { parentContentHash: before.contentHash } : {}) };
@@ -453,6 +663,7 @@ export class MemImportU2Service {
       id: artifact.id,
       group: artifact.group,
       title: artifact.title,
+      artifactContentHash: hash(artifact),
       ...(artifact.type ? { type: artifact.type } : {}),
       ...(artifact.tags?.length ? { tags: artifact.tags } : {}),
     }));
@@ -494,14 +705,14 @@ export class MemImportU2Service {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Merge batch must be an object");
     if (!Array.isArray(value.proposalHashes) || value.proposalHashes.length === 0 || value.proposalHashes.length > 12 || value.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Merge batch requires one to twelve SHA-256 proposalHashes");
     if (new Set(value.proposalHashes).size !== value.proposalHashes.length) throw new Error("Merge batch proposalHashes must be unique");
+    if (value.identityProposalHashes !== undefined && (!Array.isArray(value.identityProposalHashes) || value.identityProposalHashes.length > 100 || value.identityProposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item)) || new Set(value.identityProposalHashes).size !== value.identityProposalHashes.length)) throw new Error("Merge batch identityProposalHashes must contain unique SHA-256 hashes");
     if (!Array.isArray(value.operations) || value.operations.length === 0 || value.operations.length > 12) throw new Error("Merge batch requires one to twelve operations");
     if (!Array.isArray(value.readSet) || value.readSet.length === 0 || value.readSet.length > 100) throw new Error("Merge batch requires one to one hundred readSet entries");
     requireNonEmpty(value.rationale, "batch.rationale");
-    const proposedArtifactIds = new Set<string>();
-    for (const proposalHash of value.proposalHashes) {
-      const proposal = await this.readProposal(outputRoot, runId, proposalHash);
-      for (const artifact of proposal.artifacts) if (artifact && typeof artifact === "object" && typeof (artifact as { id?: unknown }).id === "string") proposedArtifactIds.add((artifact as { id: string }).id);
-    }
+    // Declared immutable proposals are the evidence boundary. An explicit upsert
+    // may intentionally synthesize or rename across those proposals; accept
+    // changes use the stricter byte-for-byte proposal lookup in commitWorkerBatch.
+    for (const proposalHash of value.proposalHashes) await this.readProposal(outputRoot, runId, proposalHash);
     const readSet = new Map<string, string | null>();
     for (const item of value.readSet) {
       if (!item || typeof item !== "object" || typeof item.artifactId !== "string" || (item.contentHash !== null && (typeof item.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(item.contentHash)))) throw new Error("Merge batch readSet entries require artifactId and SHA-256 contentHash or null");
@@ -518,19 +729,126 @@ export class MemImportU2Service {
       if (touched.has(id)) throw new Error(`Merge batch touches artifact ${id} more than once`);
       touched.add(id);
       if (!readSet.has(id)) throw new Error(`Merge batch operation ${id} is missing a readSet entry`);
-      if (operation.kind === "upsert" && !proposedArtifactIds.has(id)) throw new Error(`Merge batch upsert ${id} is not supported by a declared proposal`);
     }
-    return { proposalHashes: [...value.proposalHashes], readSet: [...readSet.entries()].map(([artifactId, contentHash]) => ({ artifactId, contentHash })), operations: structuredClone(value.operations), ...(value.candidateDispositions ? { candidateDispositions: structuredClone(value.candidateDispositions) } : {}), rationale: value.rationale };
+    const conflictOperations = this.validateConflictOperations(value.conflictOperations);
+    return { proposalHashes: [...value.proposalHashes], ...(value.identityProposalHashes?.length ? { identityProposalHashes: [...value.identityProposalHashes] } : {}), readSet: [...readSet.entries()].map(([artifactId, contentHash]) => ({ artifactId, contentHash })), operations: structuredClone(value.operations), ...(value.candidateDispositions ? { candidateDispositions: structuredClone(value.candidateDispositions) } : {}), ...(conflictOperations.length ? { conflictOperations } : {}), rationale: value.rationale };
   }
 
-  private async readProposal(outputRoot: string, runId: string, proposalHash: string): Promise<{ artifacts: unknown[] }> {
+  private validateConflictOperations(value: unknown): ConflictOperation[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 100) throw new Error("Merge batch conflictOperations must be a bounded array");
+    const touched = new Set<string>();
+    return value.map((operation): ConflictOperation => {
+      if (!operation || typeof operation !== "object" || !["create", "resolve", "defer"].includes(String((operation as { kind?: unknown }).kind))) throw new Error("Conflict operation must be create, resolve, or defer");
+      const item = operation as ConflictOperation;
+      assertId(item.conflictId, "conflictId");
+      if (touched.has(item.conflictId)) throw new Error(`Merge batch touches conflict ${item.conflictId} more than once`);
+      touched.add(item.conflictId);
+      if (item.kind === "create") {
+        if (typeof item.blocking !== "boolean" || typeof item.summary !== "string" || !item.summary.trim()) throw new Error("Conflict create requires blocking and summary");
+        if (item.identityDecisionId !== undefined) assertId(item.identityDecisionId, "identityDecisionId");
+        return structuredClone(item);
+      }
+      return { kind: item.kind, conflictId: item.conflictId };
+    });
+  }
+
+  private async validateIdentityEffects(outputRoot: string, canonicalRoot: string, runId: string, stage: StageEnvelope, batch: MergeBatch): Promise<StoredIdentityProposal[]> {
+    if (!batch.identityProposalHashes?.length) {
+      if (batch.conflictOperations?.some((operation) => operation.kind === "create" && operation.identityDecisionId)) throw new Error("Conflict creates with identityDecisionId require identityProposalHashes");
+      return [];
+    }
+    const packets = await Promise.all(batch.identityProposalHashes.map((identityHash) => this.identities.readIdentityProposal(outputRoot, runId, identityHash)));
+    const operations = new Map(batch.operations.map((operation) => [operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId, operation]));
+    const existing = new Set((stage.artifacts ?? []).map((artifact) => artifact.id));
+    const decisions = new Map<string, IdentityDecision>();
+    for (const packet of packets) {
+      if (packet.baselineRevision !== (stage.revision ?? 0) || packet.baselineContentHash !== (stage.contentHash ?? null)) {
+        throw new Error(`Identity proposal ${packet.contentHash} has a stale canonical baseline`);
+      }
+      for (const decision of packet.decisions) {
+        if (decisions.has(decision.id)) throw new Error(`Identity decision ${decision.id} appears in more than one accepted identity packet`);
+        decisions.set(decision.id, decision);
+        if (decision.disposition === "create") {
+          const operation = operations.get(decision.canonicalId!);
+          if (!operation || operation.kind !== "upsert") throw new Error(`Created canonical identity ${decision.canonicalId} requires an upsert in the same batch`);
+          if (existing.has(decision.canonicalId!)) throw new Error(`Created canonical identity ${decision.canonicalId} already exists; reconcile it as a match or conflict`);
+        }
+        if (decision.disposition === "match" && !existing.has(decision.canonicalId!) && !operations.has(decision.canonicalId!)) throw new Error(`Matched canonical identity ${decision.canonicalId} is absent from the declared read set`);
+      }
+    }
+    const identityState = await this.readIdentityState(canonicalRoot);
+    for (const packet of packets) {
+      for (const decision of packet.decisions) {
+        if (decision.disposition !== "create") continue;
+        const owner = identityState.owners[decision.canonicalId!];
+        if (owner && (owner.proposalHash !== packet.contentHash || owner.decisionId !== decision.id)) throw new Error(`Canonical identity ${decision.canonicalId} is already owned by ${owner.proposalHash}:${owner.decisionId}`);
+      }
+    }
+    for (const operation of batch.conflictOperations ?? []) {
+      if (operation.kind === "create") {
+        if (operation.identityDecisionId && !decisions.has(operation.identityDecisionId)) throw new Error(`Conflict ${operation.conflictId} cites an identity decision outside this batch`);
+        if (identityState.conflicts[operation.conflictId]) throw new Error(`Conflict ${operation.conflictId} already exists`);
+      } else if (!identityState.conflicts[operation.conflictId]) throw new Error(`Conflict ${operation.conflictId} does not exist`);
+    }
+    for (const decision of decisions.values()) {
+      if (decision.disposition === "ambiguous" && decision.blocking && !batch.conflictOperations?.some((operation) => operation.kind === "create" && operation.conflictId === decision.conflictId && operation.identityDecisionId === decision.id)) {
+        throw new Error(`Blocking ambiguous identity decision ${decision.id} requires a matching conflict create operation`);
+      }
+    }
+    return packets;
+  }
+
+  private async readIdentityState(outputRoot: string): Promise<CanonicalIdentityState> {
+    const path = identityStatePath(outputRoot);
+    if (!existsSync(path)) return { version: 1, kind: "mem-import-identity-state", owners: {}, conflicts: {} };
+    const value = JSON.parse(await readFile(path, "utf-8")) as Partial<CanonicalIdentityState>;
+    if (value.version !== 1 || value.kind !== "mem-import-identity-state" || !value.owners || !value.conflicts || typeof value.owners !== "object" || typeof value.conflicts !== "object") throw new Error("Invalid canonical identity state");
+    return value as CanonicalIdentityState;
+  }
+
+  private async applyIdentityEffects(outputRoot: string, batch: MergeBatch, packets: StoredIdentityProposal[]): Promise<void> {
+    if (packets.length === 0 && !batch.conflictOperations?.length) return;
+    const state = await this.readIdentityState(outputRoot);
+    const now = this.now().toISOString();
+    for (const packet of packets) {
+      for (const decision of packet.decisions) {
+        if (decision.disposition !== "create") continue;
+        const owner = state.owners[decision.canonicalId!];
+        if (owner && (owner.proposalHash !== packet.contentHash || owner.decisionId !== decision.id)) throw new Error(`Canonical identity ${decision.canonicalId} is already owned by ${owner.proposalHash}:${owner.decisionId}`);
+        state.owners[decision.canonicalId!] = { proposalHash: packet.contentHash, decisionId: decision.id, provisionalId: decision.provisionalId, createdAt: now };
+      }
+    }
+    for (const operation of batch.conflictOperations ?? []) {
+      if (operation.kind === "create") {
+        if (state.conflicts[operation.conflictId]) throw new Error(`Conflict ${operation.conflictId} already exists`);
+        state.conflicts[operation.conflictId] = { status: "open", blocking: operation.blocking, summary: operation.summary, ...(operation.identityDecisionId ? { identityDecisionId: operation.identityDecisionId } : {}), updatedAt: now };
+      } else {
+        const conflict = state.conflicts[operation.conflictId];
+        if (!conflict) throw new Error(`Conflict ${operation.conflictId} does not exist`);
+        conflict.status = operation.kind === "resolve" ? "resolved" : "deferred";
+        conflict.updatedAt = now;
+      }
+    }
+    await writeJson(identityStatePath(outputRoot), state);
+  }
+
+  private async identityDiagnostics(outputRoot: string): Promise<Array<{ level: "error"; message: string; path: string }>> {
+    const state = await this.readIdentityState(outputRoot);
+    return Object.entries(state.conflicts)
+      .filter(([, conflict]) => conflict.blocking && conflict.status !== "resolved")
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([conflictId, conflict]) => ({ level: "error" as const, message: `Blocking identity conflict ${conflictId} remains ${conflict.status}: ${conflict.summary}`, path: `stages/identity/state.json#${conflictId}` }));
+  }
+
+  private async readProposal(outputRoot: string, runId: string, proposalHash: string): Promise<{ artifacts: unknown[]; candidateDispositions?: unknown[] }> {
     const directory = proposalDir(outputRoot, runId);
     if (!existsSync(directory)) throw new Error(`Declared proposal ${proposalHash} does not exist`);
     const file = (await readdir(directory)).find((name) => name.endsWith(`-${proposalHash}.json`));
     if (!file) throw new Error(`Declared proposal ${proposalHash} does not exist`);
-    const proposal = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; contentHash?: unknown; artifacts?: unknown };
-    if (proposal.runId !== runId || proposal.contentHash !== proposalHash || !Array.isArray(proposal.artifacts)) throw new Error(`Declared proposal ${proposalHash} is invalid`);
-    return { artifacts: proposal.artifacts };
+    const proposal = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; contentHash?: unknown; artifacts?: unknown; candidateDispositions?: unknown };
+    if (proposal.runId !== runId || proposal.contentHash !== proposalHash || !Array.isArray(proposal.artifacts) || (proposal.candidateDispositions !== undefined && !Array.isArray(proposal.candidateDispositions))) throw new Error(`Declared proposal ${proposalHash} is invalid`);
+    return { artifacts: proposal.artifacts, ...(proposal.candidateDispositions ? { candidateDispositions: proposal.candidateDispositions } : {}) };
   }
 
   private assertReadSet(stage: StageEnvelope, readSet: MergeBatch["readSet"]): void {
@@ -567,7 +885,6 @@ export class MemImportU2Service {
       if (artifactIds && !artifactIds.has(artifact.id)) continue;
       for (const ref of artifact.provenance ?? []) {
         const mutable = ref as unknown as Record<string, unknown>;
-        if (mutable.quote !== undefined && mutable.quote !== "") continue;
         if (typeof mutable.unitId !== "string" || typeof mutable.sourceId !== "string" || typeof mutable.startAnchor !== "string" || typeof mutable.endAnchor !== "string") continue;
         const unit = await readNormalizedUnit(outputRoot, mutable.unitId);
         if (unit.sourceId !== mutable.sourceId) continue;
@@ -608,6 +925,138 @@ export class MemImportU2Service {
     return existsSync(revisionPath(outputRoot, revision, contentHash)) || existsSync(transactionPath(outputRoot, revision, contentHash));
   }
 
+  private async persistTransactionArtifacts(outputRoot: string, stage: StageEnvelope, operations: MergeBatch["operations"]): Promise<StoredTransactionOperation[]> {
+    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    return Promise.all(operations.map(async (operation): Promise<StoredTransactionOperation> => {
+      if (operation.kind === "delete") return { kind: "delete", artifactId: operation.artifactId };
+      const id = (operation.artifact as { id: string }).id;
+      const artifact = artifacts.get(id);
+      if (!artifact) throw new Error(`Canonical artifact ${id} disappeared while recording transaction`);
+      const artifactRef = hash(artifact);
+      const path = artifactBlobPath(outputRoot, artifactRef);
+      if (!existsSync(path)) await writeJson(path, artifact);
+      return { kind: "upsert", artifactRef };
+    }));
+  }
+
+  private async readRevisionStage(outputRoot: string, revision: number, contentHash: string, current: MergeState): Promise<StageEnvelope> {
+    if (current.revision === revision && current.contentHash === contentHash) return current.stage;
+    const reconstructed = await this.reconstructRevision(outputRoot, revision);
+    if (reconstructed.contentHash !== contentHash) throw new Error("Review packet merge receipt content hash does not match reconstruction");
+    return reconstructed.stage;
+  }
+
+  /** Replays immutable delta receipts from the nearest bounded checkpoint. */
+  private async reconstructRevision(outputRoot: string, targetRevision: number): Promise<MergeState> {
+    if (!Number.isInteger(targetRevision) || targetRevision < 1) throw new Error("Merge revision must be a positive integer");
+    let state = await this.readNearestCheckpoint(outputRoot, targetRevision) ?? { stage: emptyStage(), revision: 0, contentHash: null };
+    for (let revision = state.revision + 1; revision <= targetRevision; revision++) {
+      const receipt = await this.readReceiptAtRevision(outputRoot, revision);
+      if (receipt.parentContentHash !== state.contentHash) throw new Error(`Merge revision ${revision} does not link to the reconstructed parent`);
+      if (receipt.kind === "mem-import-merge-revision") {
+        if (!receipt.stage || typeof receipt.stage !== "object" || Array.isArray(receipt.stage)) throw new Error(`Merge revision ${revision} is missing its checkpoint stage`);
+        state = { stage: receipt.stage as StageEnvelope, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) };
+      } else if (receipt.kind === "mem-import-merge-transaction") {
+        const stage = await this.applyStoredTransaction(outputRoot, state.stage, receipt as StoredTransactionReceipt);
+        const calculated = hash(semanticStage(stage));
+        if (calculated !== receipt.contentHash) throw new Error(`Merge transaction ${revision} does not reconstruct to its content hash`);
+        state = { stage: { ...stage, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) }, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) };
+      } else throw new Error(`Merge revision ${revision} has an unknown receipt kind`);
+    }
+    return state;
+  }
+
+  private async readNearestCheckpoint(outputRoot: string, targetRevision: number): Promise<MergeState | undefined> {
+    const directory = join(outputRoot, "stages", "merge", "checkpoints");
+    if (!existsSync(directory)) return undefined;
+    const candidates = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+    let best: MergeCheckpoint | undefined;
+    for (const name of candidates) {
+      const value = JSON.parse(await readFile(join(directory, name), "utf-8")) as Partial<MergeCheckpoint>;
+      if (value.version !== 1 || value.kind !== "mem-import-merge-checkpoint" || !Number.isInteger(value.revision) || value.revision! > targetRevision || typeof value.contentHash !== "string" || !value.stage || typeof value.stage !== "object" || Array.isArray(value.stage)) continue;
+      if (!best || value.revision! > best.revision) best = value as MergeCheckpoint;
+    }
+    if (!best) return undefined;
+    if (hash(semanticStage(best.stage)) !== best.contentHash) throw new Error(`Merge checkpoint ${best.revision} has invalid semantic content hash`);
+    return { stage: best.stage, revision: best.revision, contentHash: best.contentHash, ...(best.stage.parentContentHash ? { parentContentHash: best.stage.parentContentHash } : {}) };
+  }
+
+  private async readReceiptAtRevision(outputRoot: string, revision: number): Promise<Record<string, unknown>> {
+    const prefix = `${String(revision).padStart(8, "0")}-`;
+    const paths = [join(outputRoot, "stages", "merge", "revisions"), join(outputRoot, "stages", "merge", "transactions")];
+    const matches: string[] = [];
+    for (const directory of paths) {
+      if (!existsSync(directory)) continue;
+      for (const name of await readdir(directory)) if (name.startsWith(prefix) && name.endsWith(".json")) matches.push(join(directory, name));
+    }
+    if (matches.length !== 1) throw new Error(`Expected exactly one immutable receipt for merge revision ${revision}`);
+    const receipt = JSON.parse(await readFile(matches[0]!, "utf-8")) as Record<string, unknown>;
+    if (receipt.revision !== revision || typeof receipt.contentHash !== "string" || (receipt.parentContentHash !== null && typeof receipt.parentContentHash !== "string")) throw new Error(`Merge revision ${revision} receipt is invalid`);
+    return receipt;
+  }
+
+  private async applyStoredTransaction(outputRoot: string, before: StageEnvelope, receipt: StoredTransactionReceipt): Promise<StageEnvelope> {
+    if (!Array.isArray(receipt.operations)) throw new Error(`Merge transaction ${receipt.revision} has invalid operations`);
+    const artifacts = new Map((before.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    for (const operation of receipt.operations) {
+      if (operation.kind === "delete" && typeof operation.artifactId === "string") artifacts.delete(operation.artifactId);
+      else if (operation.kind === "upsert" && typeof operation.artifactRef === "string" && /^[a-f0-9]{64}$/.test(operation.artifactRef)) {
+        const path = artifactBlobPath(outputRoot, operation.artifactRef);
+        if (!existsSync(path)) throw new Error(`Merge transaction ${receipt.revision} references missing artifact content ${operation.artifactRef}`);
+        const artifact = JSON.parse(await readFile(path, "utf-8")) as NonNullable<StageEnvelope["artifacts"]>[number];
+        if (!artifact || typeof artifact.id !== "string" || hash(artifact) !== operation.artifactRef) throw new Error(`Merge transaction ${receipt.revision} references invalid artifact content ${operation.artifactRef}`);
+        artifacts.set(artifact.id, artifact);
+      } else throw new Error(`Merge transaction ${receipt.revision} has invalid operation`);
+    }
+    const dispositions = new Map((before.candidateDispositions ?? []).map((disposition) => [`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition]));
+    for (const disposition of receipt.candidateDispositions ?? []) dispositions.set(`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition);
+    return { version: 1, kind: "merge", artifacts: [...artifacts.values()].sort((left, right) => left.id.localeCompare(right.id)), candidateDispositions: [...dispositions.values()], diagnostics: before.diagnostics ?? [] };
+  }
+
+  private assertReviewReadSet(stage: StageEnvelope, readSet: ReviewPacket["readSet"]): void {
+    if (!readSet) return;
+    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    for (const item of readSet) {
+      const current = artifacts.get(item.artifactId);
+      const actual = current ? hash(current) : null;
+      if (actual !== item.contentHash) throw new Error(`Review readSet does not match reviewed revision for artifact ${item.artifactId}`);
+    }
+  }
+
+  private async reviewPackets(directory: string): Promise<Array<{ path: string; packet: { reviewedMergeRevision?: unknown; reviewedMergeHash?: unknown; readSet?: ReviewPacket["readSet"]; contentHash?: unknown } }>> {
+    if (!existsSync(directory)) return [];
+    const entries = await readdir(directory, { withFileTypes: true });
+    const packets: Array<{ path: string; packet: { reviewedMergeRevision?: unknown; reviewedMergeHash?: unknown; readSet?: ReviewPacket["readSet"]; contentHash?: unknown } }> = [];
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) packets.push(...await this.reviewPackets(path));
+      else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "validity.json") {
+        const packet = JSON.parse(await readFile(path, "utf-8")) as { reviewedMergeRevision?: unknown; reviewedMergeHash?: unknown; readSet?: ReviewPacket["readSet"]; contentHash?: unknown };
+        if (typeof packet.reviewedMergeRevision === "number" && typeof packet.reviewedMergeHash === "string") packets.push({ path, packet });
+      }
+    }
+    return packets;
+  }
+
+  private async refreshReviewValidity(outputRoot: string, stage: StageEnvelope): Promise<void> {
+    const directory = join(outputRoot, "stages", "reviews");
+    const packets = await this.reviewPackets(directory);
+    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    const entries = packets.map(({ path, packet }) => {
+      const readSet = packet.readSet;
+      const readSetChanged = readSet?.some((item) => (artifacts.get(item.artifactId) ? hash(artifacts.get(item.artifactId)) : null) !== item.contentHash) ?? false;
+      const sameRoot = packet.reviewedMergeRevision === stage.revision && packet.reviewedMergeHash === stage.contentHash;
+      return {
+        path: this.relative(outputRoot, path),
+        ...(typeof packet.contentHash === "string" ? { contentHash: packet.contentHash } : {}),
+        reviewedMergeRevision: packet.reviewedMergeRevision,
+        reviewedMergeHash: packet.reviewedMergeHash,
+        status: !readSet ? "unscoped" : readSetChanged ? "stale" : sameRoot ? "current" : "unaffected",
+      };
+    });
+    await writeJson(reviewValidityPath(outputRoot), { version: 1, kind: "mem-import-review-validity", merge: { revision: stage.revision ?? 0, contentHash: stage.contentHash ?? null }, updatedAt: this.now().toISOString(), entries });
+  }
+
   private validateReviewPacket(value: unknown): ReviewPacket {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Review packet must be an object");
     const packet = value as ReviewPacket;
@@ -616,6 +1065,16 @@ export class MemImportU2Service {
     if (!Number.isInteger(packet.reviewedMergeRevision) || packet.reviewedMergeRevision < 1) throw new Error("packet.reviewedMergeRevision must be a positive integer");
     if (!/^[a-f0-9]{64}$/.test(packet.reviewedMergeHash)) throw new Error("packet.reviewedMergeHash must be a SHA-256 hex string");
     if (!Array.isArray(packet.findings) || !Array.isArray(packet.requestedActions)) throw new Error("Review packet findings and requestedActions must be arrays");
+    if (packet.readSet !== undefined) {
+      if (!Array.isArray(packet.readSet) || packet.readSet.length > 100) throw new Error("Review packet readSet must contain at most one hundred entries");
+      const artifacts = new Set<string>();
+      for (const item of packet.readSet) {
+        if (!item || typeof item !== "object" || typeof item.artifactId !== "string" || (item.contentHash !== null && (typeof item.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(item.contentHash)))) throw new Error("Review readSet entries require artifactId and SHA-256 contentHash or null");
+        assertId(item.artifactId, "review readSet artifactId");
+        if (artifacts.has(item.artifactId)) throw new Error(`Duplicate review readSet artifact ${item.artifactId}`);
+        artifacts.add(item.artifactId);
+      }
+    }
     const ids = new Set<string>();
     for (const item of [...packet.findings, ...packet.requestedActions]) {
       if (!item || typeof item !== "object" || typeof item.id !== "string" || typeof item.summary !== "string" || !item.id.trim() || !item.summary.trim()) throw new Error("Review findings/actions require non-empty id and summary");

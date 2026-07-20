@@ -1,17 +1,36 @@
-# Known adapter profile: pi-herdr-subagents
+# Adapter: pi-herdr-subagents
 
-Load this reference only when the active tool catalog or installed local documentation identifies the Herdr subagent facility.
+Load this reference only when the active catalog exposes the Herdr `subagent` facility.
 
-The plan identifies this family as useful for interactive visible-pane work: it can expose a fresh/lineage/fork context choice and per-spawn task, model, thinking, skill, tool, and cwd controls, with worker panes that remain inspectable and interruptible.
+## Dispatch profile
 
-## U0 use
+- Pass the assignment bootstrap in the child task.
+- Set `tools` to the comma-separated `assignment.tools` array exactly. Herdr converts it to the child Pi `--tools` allowlist.
+- Set an explicit authenticated `model`, `thinking`, and repository `cwd` on every semantic launch.
+- Use fresh/lineage context for bounded roles; avoid full conversation forks unless the task genuinely needs parent history.
+- Use the returned host child/session ID for `mem_import_record_dispatch`.
+- Treat the automatic terminal steer as lifecycle completion; use interruption/resume facilities for recovery.
 
-- Inspect the actual installed tool schema; tool names and supported fields are harness/version specific.
-- Dispatch one low-risk scout with a distinct task label and the narrowest available tool request.
-- Prefer fresh or lineage-only context unless the parent intentionally needs shared conversation context.
-- Observe task/result correlation, completion delivery, and any interruption behavior exposed by the current harness.
-- Treat requests for restricted tools as unproved until later hardening tests their enforcement. If a requested control is absent, record that limitation and decide whether the scout remains harmless enough to run.
+For the current acceptance profile:
 
-## Not part of U0
+- coordinator: `openrouter/deepseek/deepseek-v4-pro`, `high`;
+- workers: `openrouter/deepseek/deepseek-v4-flash`, `high`.
 
-Do not create a Herdr extension, rely on a worker receipt as canonical world state, or infer that visible panes prove isolation, hard cancellation, timeout handling, or telemetry completeness. The coordinator chooses whether observed behavior is adequate for the next bounded task.
+These are installation test choices, not portable mem-import requirements.
+
+## Local acceptance workspace
+
+Keep disposable configuration under `<repo>/.memchat-agent-testing/.pi/settings.json` with the repository package loaded as `../..`. Launch the long-lived coordinator from `<repo>/.memchat-agent-testing/`, so output roots are `output/<run>` or absolute repository-contained paths.
+
+The coordinator profile contains coordinator mem-import tools plus `subagent`; it excludes shell and generic mutation. Worker profiles contain only `assignment.tools` plus adapter-owned lifecycle controls. Extra installed extensions may exist, but the active `--tools` allowlist is the model-visible boundary.
+
+## Conformance gate
+
+Before substantive work, dispatch a bounded probe that:
+
+1. successfully calls every assigned role tool needed by the probe;
+2. cannot see or call a known forbidden mem-import tool;
+3. returns a correlatable terminal child ID;
+4. records requested and observed tools equal to `assignment.tools`.
+
+Model-visible allowlisting is not an operating-system sandbox. Report only the controls actually observed.

@@ -23,6 +23,8 @@ export const MEM_IMPORT_CAPABILITIES = [
   "merge:lease",
   "merge:write",
   "proposal:submit",
+  "identity:read",
+  "identity:submit",
   "review:read",
   "review:submit",
   "check:read",
@@ -30,8 +32,38 @@ export const MEM_IMPORT_CAPABILITIES = [
 
 export type ExtractorCapability = (typeof EXTRACTOR_CAPABILITIES)[number];
 export type MemImportCapability = (typeof MEM_IMPORT_CAPABILITIES)[number];
-export type AssignmentRole = "extractor" | "proposer" | "merger" | "reviewer" | "repairer";
+export type AssignmentRole = "extractor" | "proposer" | "reconciler" | "merger" | "reviewer" | "repairer";
 export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
+export type DispatchFacility = "ordinary-subagent" | "managed-agent" | "inline" | "unknown";
+export type DispatchOutcome = "completed" | "failed" | "cancelled";
+
+/** Exact model-visible role allowlists expected from an ordinary semantic worker. */
+export const MEM_IMPORT_ROLE_TOOLS: Record<AssignmentRole, string[]> = {
+  extractor: ["mem_source_read_unit", "mem_extraction_status", "mem_extraction_read", "mem_extraction_validate", "mem_extraction_submit"],
+  proposer: ["mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_proposal_submit"],
+  reconciler: ["mem_proposal_inventory", "mem_proposal_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_identity_submit"],
+  merger: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_merge_commit"],
+  reviewer: ["mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_review_submit"],
+  repairer: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_read_worker", "mem_merge_acquire_lease", "mem_merge_heartbeat_lease", "mem_merge_apply_repair_batch", "mem_merge_release_lease"],
+};
+
+export type MemImportDispatchRecord = {
+  version: 1;
+  kind: "mem-import-worker-dispatch";
+  runId: string;
+  taskId: string;
+  role: AssignmentRole;
+  facility: DispatchFacility;
+  hostTaskId: string;
+  requestedTools: string[];
+  observedTools: string[];
+  outcome: DispatchOutcome;
+  requestedModel?: string;
+  observedModel?: string;
+  requestedThinking?: string;
+  observedThinking?: string;
+  recordedAt: string;
+};
 
 /** Deliberately small, credential-free runtime identity supplied by the parent. */
 export type MemImportActorAudit = {
@@ -69,6 +101,8 @@ export type MemImportAssignmentRecord = {
   allowedUnitIds: string[];
   /** Proposal grants can additionally restrict candidate IDs within their allowed units. */
   allowedCandidateIds?: string[];
+  /** Reconciliation grants can name exact immutable shard-proposal hashes. */
+  allowedProposalHashes?: string[];
   /** Repair grants name the checkpoint actions they may implement; other roles leave these empty. */
   allowedCheckpointIds?: string[];
   allowedActionIds?: string[];
@@ -103,6 +137,8 @@ export type ExtractorAssignmentResult = {
   units: ExtractorAssignmentUnit[];
   expiresAt: string;
   capabilities: ExtractorCapability[];
+  /** Exact model-visible tools the host must allow for this worker. */
+  tools: string[];
 };
 
 export type WorkerAssignmentResult = {
@@ -115,8 +151,12 @@ export type WorkerAssignmentResult = {
   capabilities: MemImportCapability[];
   unitIds: string[];
   candidateIds: string[];
+  proposalHashes: string[];
   checkpointIds: string[];
   actionIds: string[];
+  /** Exact model-visible tools the host must allow for this worker. */
+  tools: string[];
+  units: Array<{ unitId: string; sourceId: string }>;
 };
 
 export type SourceReadResult = {
@@ -209,6 +249,10 @@ function assignmentEffectPath(outputRoot: string, taskId: string, unitId: string
   return `${orchestrationDir(outputRoot)}/effects/${taskId}/${createHash("sha256").update(unitId).digest("hex")}.json`;
 }
 
+function dispatchPath(outputRoot: string, taskId: string): string {
+  return `${orchestrationDir(outputRoot)}/dispatches/${taskId}.json`;
+}
+
 function extractionInventoryPath(outputRoot: string, unitId: string): string {
   return `${orchestrationDir(outputRoot)}/extraction-inventory/${unitId}.json`;
 }
@@ -259,6 +303,18 @@ function assertTaskId(taskId: string): void {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(taskId)) {
     throw new Error("taskId must contain only letters, numbers, dots, underscores, and hyphens");
   }
+}
+
+/** Host correlation IDs are opaque labels, never local paths, prompts, or credentials. */
+function assertHostTaskId(hostTaskId: string): void {
+  requireNonEmpty(hostTaskId, "hostTaskId");
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(hostTaskId)) {
+    throw new Error("hostTaskId must be a sanitized opaque identifier, not a path");
+  }
+}
+
+function sameToolSet(left: string[], right: string[]): boolean {
+  return left.length === right.length && [...left].sort().every((item, index) => item === [...right].sort()[index]);
 }
 
 function asIsoDate(value: string, label: string): Date {
@@ -322,10 +378,11 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || value.kind !== "mem-import-assignment"
     || typeof value.runId !== "string"
     || typeof value.taskId !== "string"
-    || !["extractor", "proposer", "merger", "reviewer", "repairer"].includes(String(value.role))
+    || !["extractor", "proposer", "reconciler", "merger", "reviewer", "repairer"].includes(String(value.role))
     || typeof value.outputRoot !== "string"
     || !Array.isArray(value.allowedUnitIds) || !value.allowedUnitIds.every((item) => typeof item === "string")
     || (value.allowedCandidateIds !== undefined && (!Array.isArray(value.allowedCandidateIds) || !value.allowedCandidateIds.every((item) => typeof item === "string")))
+    || (value.allowedProposalHashes !== undefined && (!Array.isArray(value.allowedProposalHashes) || !value.allowedProposalHashes.every((item) => typeof item === "string")))
     || (value.allowedCheckpointIds !== undefined && (!Array.isArray(value.allowedCheckpointIds) || !value.allowedCheckpointIds.every((item) => typeof item === "string")))
     || (value.allowedActionIds !== undefined && (!Array.isArray(value.allowedActionIds) || !value.allowedActionIds.every((item) => typeof item === "string")))
     || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => MEM_IMPORT_CAPABILITIES.includes(item as MemImportCapability))
@@ -572,6 +629,7 @@ export class MemImportService {
       }),
       expiresAt: assignment.expiresAt,
       capabilities: [...EXTRACTOR_CAPABILITIES],
+      tools: [...MEM_IMPORT_ROLE_TOOLS.extractor],
     };
   }
 
@@ -584,28 +642,60 @@ export class MemImportService {
     expiresAt?: string;
     unitIds?: string[];
     candidateIds?: string[];
+    proposalHashes?: string[];
     checkpointIds?: string[];
     actionIds?: string[];
     audit?: MemImportAssignmentAudit;
   }): Promise<WorkerAssignmentResult> {
     const run = await this.authorizeCoordinator(options);
     if (!run.normalizedAt || !existsSync(`${run.outputRoot}/sources/manifest.json`)) throw new Error("Normalize the run before issuing worker assignments");
+    const manifest = await readManifest(run.outputRoot);
     assertTaskId(options.taskId);
-    if (!["proposer", "merger", "reviewer", "repairer"].includes(options.role)) throw new Error("role must be proposer, merger, reviewer, or repairer");
+    if (!["proposer", "reconciler", "merger", "reviewer", "repairer"].includes(options.role)) throw new Error("role must be proposer, reconciler, merger, reviewer, or repairer");
     if (existsSync(assignmentPath(run.outputRoot, options.taskId))) throw new Error(`Assignment ${options.taskId} already exists; use a fresh taskId`);
     const unitIds = [...new Set(options.unitIds ?? [])];
-    const candidateIds = [...new Set(options.candidateIds ?? [])];
+    let candidateIds = [...new Set(options.candidateIds ?? [])];
+    const proposalHashes = [...new Set(options.proposalHashes ?? [])];
     const checkpointIds = [...new Set(options.checkpointIds ?? [])];
     const actionIds = [...new Set(options.actionIds ?? [])];
+    if (unitIds.length > 100 || candidateIds.length > 100 || proposalHashes.length > 100) throw new Error("Worker assignment unit, candidate, and proposal scopes are limited to 100 items each");
     unitIds.forEach(assertTaskId);
     candidateIds.forEach((candidateId) => {
       requireNonEmpty(candidateId, "candidateId");
       if (candidateId.includes("\n") || candidateId.includes("\r")) throw new Error("candidateId must not contain line breaks");
     });
+    proposalHashes.forEach((proposalHash) => {
+      if (!/^[a-f0-9]{64}$/.test(proposalHash)) throw new Error("proposalHashes must contain SHA-256 hex hashes");
+    });
     checkpointIds.forEach(assertTaskId);
     actionIds.forEach(assertTaskId);
     if (options.role === "proposer" && unitIds.length === 0) throw new Error("Proposer assignments require explicit unitIds");
+    for (const unitId of unitIds) if (!manifest.units.some((unit) => unit.unitId === unitId)) throw new Error(`Worker assignment references missing normalized unit ${unitId}`);
+    if (options.role === "proposer" && candidateIds.length) {
+      const stages = new Map<string, StageEnvelope>();
+      for (const unitId of unitIds) {
+        const path = extractionStagePath(run.outputRoot, unitId);
+        if (!existsSync(path)) throw new Error(`Proposer unit ${unitId} has no persisted extraction packet`);
+        stages.set(unitId, JSON.parse(await readFile(path, "utf-8")) as StageEnvelope);
+      }
+      candidateIds = [...new Set(candidateIds.map((inputId) => {
+        const separator = inputId.indexOf(":");
+        if (separator > 0 && separator < inputId.length - 1) {
+          const unitId = inputId.slice(0, separator);
+          const candidateId = inputId.slice(separator + 1);
+          if (!unitIds.includes(unitId)) throw new Error(`Proposer candidate ${inputId} names a unit outside this assignment`);
+          if (!stages.get(unitId)?.candidates?.some((candidate) => candidate.id === candidateId)) throw new Error(`Proposer candidate ${inputId} does not exist`);
+          return `${unitId}:${candidateId}`;
+        }
+        const matches = unitIds.filter((unitId) => stages.get(unitId)?.candidates?.some((candidate) => candidate.id === inputId));
+        if (matches.length === 0) throw new Error(`Proposer candidate ${inputId} does not exist in the assigned units`);
+        if (matches.length > 1) throw new Error(`Proposer candidate ${inputId} is ambiguous; use qualified unitId:candidateId`);
+        return `${matches[0]}:${inputId}`;
+      }))];
+    }
     if (options.role !== "proposer" && (unitIds.length > 0 || candidateIds.length > 0)) throw new Error("Only proposer assignments may carry unit/candidate scope");
+    if (options.role === "reconciler" && proposalHashes.length === 0) throw new Error("Reconciler assignments require explicit proposalHashes");
+    if (!["reconciler", "merger"].includes(options.role) && proposalHashes.length > 0) throw new Error("Only reconciler or merger assignments may carry proposalHashes");
     if (options.role === "repairer" && (checkpointIds.length === 0 || actionIds.length === 0)) {
       throw new Error("Repairer assignments require explicit checkpointIds and actionIds");
     }
@@ -617,6 +707,7 @@ export class MemImportService {
     if (expiresAt.getTime() <= issuedAt.getTime()) throw new Error("expiresAt must be in the future");
     const capabilities: Record<Exclude<AssignmentRole, "extractor">, MemImportCapability[]> = {
       proposer: ["source:read", "extraction:read", "proposal:submit"],
+      reconciler: ["source:read", "extraction:read", "merge:read", "identity:read", "identity:submit"],
       merger: ["source:read", "extraction:read", "merge:read", "merge:lease", "merge:write", "check:read"],
       reviewer: ["source:read", "extraction:read", "merge:read", "review:read", "review:submit", "check:read"],
       repairer: ["source:read", "extraction:read", "merge:read", "merge:lease", "merge:write", "check:read"],
@@ -631,6 +722,7 @@ export class MemImportService {
       outputRoot: run.outputRoot,
       allowedUnitIds: unitIds,
       ...(candidateIds.length ? { allowedCandidateIds: candidateIds } : {}),
+      ...(proposalHashes.length ? { allowedProposalHashes: proposalHashes } : {}),
       ...(checkpointIds.length ? { allowedCheckpointIds: checkpointIds } : {}),
       ...(actionIds.length ? { allowedActionIds: actionIds } : {}),
       capabilities: capabilities[options.role],
@@ -641,7 +733,153 @@ export class MemImportService {
       ...(sanitizeAudit(options.audit) ? { audit: sanitizeAudit(options.audit) } : {}),
     };
     await writeJson(assignmentPath(run.outputRoot, assignment.taskId), assignment);
-    return { runId: assignment.runId, taskId: assignment.taskId, outputRoot: assignment.outputRoot, grant, role: assignment.role as Exclude<AssignmentRole, "extractor">, expiresAt: assignment.expiresAt, capabilities: assignment.capabilities, unitIds, candidateIds, checkpointIds, actionIds };
+    return {
+      runId: assignment.runId,
+      taskId: assignment.taskId,
+      outputRoot: assignment.outputRoot,
+      grant,
+      role: assignment.role as Exclude<AssignmentRole, "extractor">,
+      expiresAt: assignment.expiresAt,
+      capabilities: assignment.capabilities,
+      unitIds,
+      units: unitIds.map((unitId) => {
+        const unit = manifest.units.find((item) => item.unitId === unitId)!;
+        return { unitId, sourceId: unit.sourceId };
+      }),
+      candidateIds,
+      proposalHashes,
+      checkpointIds,
+      actionIds,
+      tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
+    };
+  }
+
+  /**
+   * Persist a host-issued dispatch receipt. It records observable correlation and
+   * exact allowlists, but it deliberately does not claim to prove host isolation.
+   */
+  /**
+   * Render the complete, non-persistent bootstrap a launcher must paste into a child task.
+   * The grant is caller-supplied because durable state stores only its hash.
+   */
+  async assignmentBrief(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    grant: string;
+  }): Promise<{
+    outputRoot: string;
+    runId: string;
+    taskId: string;
+    grant: string;
+    role: AssignmentRole;
+    units: Array<{ unitId: string; sourceId: string }>;
+    candidateIds: string[];
+    proposalHashes: string[];
+    checkpointIds: string[];
+    actionIds: string[];
+    tools: string[];
+  }> {
+    const run = await this.authorizeCoordinator(options);
+    const assignment = await readAssignment(run.outputRoot, options.taskId);
+    if (assignment.runId !== run.runId || assignment.outputRoot !== run.outputRoot) throw new Error("Assignment brief does not belong to this run");
+    if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
+    if (assignment.revokedAt) throw new Error(`Assignment ${assignment.taskId} was revoked at ${assignment.revokedAt}`);
+    if (assignment.supersededAt) throw new Error(`Assignment ${assignment.taskId} was superseded at ${assignment.supersededAt}`);
+    if (asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() <= this.now().getTime()) throw new Error(`Assignment ${assignment.taskId} has expired`);
+    const manifest = await readManifest(run.outputRoot);
+    const units = assignment.allowedUnitIds.map((unitId) => {
+      const unit = manifest.units.find((item) => item.unitId === unitId);
+      if (!unit) throw new Error(`Assignment ${assignment.taskId} references missing normalized unit ${unitId}`);
+      return { unitId, sourceId: unit.sourceId };
+    });
+    return {
+      outputRoot: run.outputRoot,
+      runId: run.runId,
+      taskId: assignment.taskId,
+      grant: options.grant,
+      role: assignment.role,
+      units,
+      candidateIds: assignment.allowedCandidateIds ?? [],
+      proposalHashes: assignment.allowedProposalHashes ?? [],
+      checkpointIds: assignment.allowedCheckpointIds ?? [],
+      actionIds: assignment.allowedActionIds ?? [],
+      tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
+    };
+  }
+
+  async recordWorkerDispatch(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    facility: DispatchFacility;
+    hostTaskId: string;
+    requestedTools: string[];
+    observedTools: string[];
+    outcome: DispatchOutcome;
+    requestedModel?: string;
+    observedModel?: string;
+    requestedThinking?: string;
+    observedThinking?: string;
+  }): Promise<MemImportDispatchRecord> {
+    const run = await this.authorizeCoordinator(options);
+    const assignment = await readAssignment(run.outputRoot, options.taskId);
+    if (assignment.runId !== run.runId) throw new Error("Dispatch assignment does not belong to this run");
+    if (!["ordinary-subagent", "managed-agent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid dispatch facility");
+    if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid dispatch outcome");
+    assertHostTaskId(options.hostTaskId);
+    if (!Array.isArray(options.requestedTools) || !Array.isArray(options.observedTools) || options.requestedTools.some((tool) => typeof tool !== "string" || !tool.trim()) || options.observedTools.some((tool) => typeof tool !== "string" || !tool.trim())) throw new Error("Dispatch tool lists must contain non-empty names");
+    const expectedTools = MEM_IMPORT_ROLE_TOOLS[assignment.role];
+    if (!sameToolSet(options.requestedTools, expectedTools) || !sameToolSet(options.observedTools, expectedTools)) throw new Error(`Dispatch tool allowlist does not exactly match the ${assignment.role} role`);
+    for (const [name, value] of Object.entries({ requestedModel: options.requestedModel, observedModel: options.observedModel, requestedThinking: options.requestedThinking, observedThinking: options.observedThinking })) {
+      if (value !== undefined && (typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a non-empty string when supplied`);
+    }
+    const record: MemImportDispatchRecord = {
+      version: 1, kind: "mem-import-worker-dispatch", runId: run.runId, taskId: assignment.taskId, role: assignment.role,
+      facility: options.facility, hostTaskId: options.hostTaskId, requestedTools: [...options.requestedTools].sort(), observedTools: [...options.observedTools].sort(), outcome: options.outcome,
+      ...(options.requestedModel ? { requestedModel: options.requestedModel } : {}), ...(options.observedModel ? { observedModel: options.observedModel } : {}),
+      ...(options.requestedThinking ? { requestedThinking: options.requestedThinking } : {}), ...(options.observedThinking ? { observedThinking: options.observedThinking } : {}),
+      recordedAt: this.now().toISOString(),
+    };
+    await writeJson(dispatchPath(run.outputRoot, assignment.taskId), record);
+    return record;
+  }
+
+  async recordWorkerEffect(assignment: MemImportAssignmentRecord, effect: { kind: string; path: string; contentHash: string }): Promise<void> {
+    requireNonEmpty(effect.kind, "effect.kind");
+    requireNonEmpty(effect.path, "effect.path");
+    if (!/^[a-f0-9]{64}$/.test(effect.contentHash)) throw new Error("effect.contentHash must be a SHA-256 hex string");
+    const nonce = randomBytes(6).toString("hex");
+    await writeJson(`${orchestrationDir(assignment.outputRoot)}/effects/${assignment.taskId}/${new Date().toISOString().replace(/[:.]/g, "-")}-${nonce}.json`, {
+      version: 1, kind: "mem-import-worker-effect", runId: assignment.runId, taskId: assignment.taskId,
+      effect: effect.kind, path: effect.path, contentHash: effect.contentHash, recordedAt: this.now().toISOString(),
+    });
+  }
+
+  async dispatchDiagnostics(outputRootInput: string): Promise<Array<{ taskId: string; message: string }>> {
+    const outputRoot = canonicalOutputRoot(outputRootInput);
+    const effectsRoot = `${orchestrationDir(outputRoot)}/effects`;
+    if (!existsSync(effectsRoot)) return [];
+    const diagnostics: Array<{ taskId: string; message: string }> = [];
+    for (const entry of await readdir(effectsRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const taskId = entry.name;
+      let assignment: MemImportAssignmentRecord;
+      try { assignment = await readAssignment(outputRoot, taskId); }
+      catch { diagnostics.push({ taskId, message: "Semantic effect has no valid assignment record." }); continue; }
+      const dispatchFile = dispatchPath(outputRoot, taskId);
+      if (!existsSync(dispatchFile)) { diagnostics.push({ taskId, message: "Semantic worker effect lacks a correlated dispatch receipt." }); continue; }
+      let dispatch: MemImportDispatchRecord;
+      try { dispatch = JSON.parse(await readFile(dispatchFile, "utf-8")) as MemImportDispatchRecord; }
+      catch { diagnostics.push({ taskId, message: "Semantic worker dispatch receipt is unreadable." }); continue; }
+      if (dispatch.version !== 1 || dispatch.kind !== "mem-import-worker-dispatch" || dispatch.runId !== assignment.runId || dispatch.taskId !== taskId || dispatch.role !== assignment.role) diagnostics.push({ taskId, message: "Semantic worker dispatch receipt does not correlate to its assignment." });
+      else if (dispatch.facility !== "ordinary-subagent") diagnostics.push({ taskId, message: `Semantic worker used disallowed ${dispatch.facility} facility.` });
+      else if (dispatch.outcome !== "completed") diagnostics.push({ taskId, message: `Semantic worker dispatch ended ${dispatch.outcome}.` });
+      else if (!sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) || !sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role])) diagnostics.push({ taskId, message: "Semantic worker dispatch allowlist does not match its role." });
+    }
+    return diagnostics;
   }
 
   async revokeAssignment(options: { outputRoot: string; runId: string; coordinatorGrant: string; taskId: string }): Promise<{ taskId: string; revokedAt: string }> {
@@ -1003,9 +1241,8 @@ export class MemImportService {
     if (!entry) throw new Error(`Assigned unit ${unitId} is absent from the normalized manifest`);
     if (stage.sourceId !== entry.sourceId) throw new Error(`Extraction stage sourceId must match assigned unit sourceId ${entry.sourceId}`);
     const unit = await readNormalizedUnit(outputRoot, unitId);
-    // Anchor selection is model-owned; durable quote transcription is not. For an
-    // omitted/empty quote, derive the exact canonical block range before generic
-    // envelope validation. Non-empty model-provided quotes remain literal-checked.
+    // Anchor selection is model-owned; durable quote transcription is not. Always
+    // replace any caller-supplied quote with the exact canonical block range.
     for (const candidate of Array.isArray(stage.candidates) ? stage.candidates : []) {
       if (!isRecord(candidate) || !Array.isArray(candidate.provenance)) continue;
       for (const ref of candidate.provenance) {
@@ -1018,7 +1255,7 @@ export class MemImportService {
         const startIndex = unit.blocks.findIndex((block) => block.anchor === ref.startAnchor);
         const endIndex = unit.blocks.findIndex((block) => block.anchor === ref.endAnchor);
         if (startIndex < 0 || endIndex < startIndex) continue;
-        if (ref.quote === undefined || ref.quote === "") ref.quote = canonicalQuoteRange(unit.blocks.slice(startIndex, endIndex + 1));
+        ref.quote = canonicalQuoteRange(unit.blocks.slice(startIndex, endIndex + 1));
       }
     }
     validateStageEnvelope(stage, { requireCandidates: true });
