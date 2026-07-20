@@ -1,6 +1,7 @@
 ---
 name: world-import
-description: Import HTML/XHTML directories, ZIPs, or EPUB-like archives into provenance-rich markdown world-library artifacts. Use when asked to create or update a world library from source text while preserving source spans. Semantic extraction and merge decisions belong to the model; helper commands only normalize sources, persist stage envelopes, read slices, and emit model-authored artifact packets.
+description: Legacy shell-runner workflow for provenance-rich Markdown world imports. Invoke explicitly for CLI compatibility, staged runner debugging, or legacy helper operation.
+disable-model-invocation: true
 ---
 
 # World Import

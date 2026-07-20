@@ -18,6 +18,8 @@ Inspect the complete manifest. This step is complete when every intended source 
 
 Use an ordinary subagent facility that enforces a per-child tool allowlist and reports terminal child identity. Assignment results contain the complete child bootstrap and exact `tools` array; pass both verbatim to the child. Request an explicit model and thinking setting from the host.
 
+Before normalizing the requested corpus, tell the user whether exact-profile acceptance is current or whether the acceptance ladder will run first.
+
 For a new or changed installation, or when no deterministic exact-fingerprint acceptance receipt is available, run the [installation acceptance ladder](references/acceptance-ladder.md). A current accepted receipt skips that detailed reference, but never the per-run assignment and dispatch gates.
 
 When the host cannot enforce that profile, call `mem_import_fail` and stop. Read a detected host's adapter reference only when invocation details are needed.
