@@ -10,6 +10,7 @@ import {
   type AcceptanceProbe,
   type PreparedAcceptanceProbe,
 } from "./mem-import/acceptance-materializer.js";
+import { MemImportAcceptanceService, buildAssignmentBoundProbeLaunch } from "./mem-import/acceptance-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportService } from "./mem-import/service.js";
 import { MemImportU2Service } from "./mem-import/u2-service.js";
@@ -71,6 +72,77 @@ for (const probe of ["normalize", "extractor", "proposer", "merger", "reviewer"]
     } else assert.match((result as { contentHash: string }).contentHash, /^[a-f0-9]{64}$/);
   });
 }
+
+test("coordinator effect inventory discovers authoritative probe hashes without artifact paths", async () => {
+  const prepared = await materializeAcceptanceProbe({ fixtureRoot, outputRoot: await tempOutput("effect-inventory"), probe: "proposer" });
+  const result = await executePrepared(prepared) as { contentHash: string };
+  const base = new MemImportService();
+  await base.recordWorkerDispatch({
+    outputRoot: prepared.outputRoot,
+    runId: prepared.runId,
+    coordinatorGrant: prepared.coordinatorGrant,
+    taskId: prepared.assignment!.taskId,
+    facility: "ordinary-subagent",
+    hostTaskId: "acceptance-proposer-host",
+    requestedTools: prepared.assignmentTools,
+    observedTools: prepared.assignmentTools,
+    outcome: "completed",
+  });
+  const entries = [] as Awaited<ReturnType<MemImportService["effectInventory"]>>["entries"];
+  let continuationCursor: string | undefined;
+  do {
+    const page = await base.effectInventory({ outputRoot: prepared.outputRoot, runId: prepared.runId, coordinatorGrant: prepared.coordinatorGrant, maxItems: 1, ...(continuationCursor ? { continuationCursor } : {}) });
+    entries.push(...page.entries);
+    continuationCursor = page.continuationCursor;
+    assert.ok(JSON.stringify(page).length < 10_000);
+  } while (continuationCursor);
+  const target = entries.find((entry) => entry.taskId === prepared.assignment!.taskId && entry.effect?.kind === "proposal");
+  assert.equal(target?.effect?.contentHash, result.contentHash);
+  assert.equal(target?.dispatch?.outcome, "completed");
+  assert.equal(target?.dispatch?.exactToolMatch, true);
+  assert.equal("path" in (target?.effect ?? {}), false);
+});
+
+test("focused acceptance validates one assigned production call and persists a credential-free receipt", async () => {
+  const prepared = await materializeAcceptanceProbe({ fixtureRoot, outputRoot: await tempOutput("receipt"), probe: "proposer" });
+  const launch = buildAssignmentBoundProbeLaunch(prepared, "provider/worker", "medium");
+  assert.equal(launch.taskId, prepared.assignment!.taskId);
+  assert.deepEqual(launch.tools, prepared.assignmentTools);
+  assert.match(launch.task, /mem_proposal_submit exactly once/);
+  await executePrepared(prepared);
+  const base = new MemImportService();
+  const hostTaskId = "acceptance-receipt-host";
+  await base.recordWorkerDispatch({
+    outputRoot: prepared.outputRoot,
+    runId: prepared.runId,
+    coordinatorGrant: prepared.coordinatorGrant,
+    taskId: prepared.assignment!.taskId,
+    facility: "ordinary-subagent",
+    hostTaskId,
+    requestedTools: launch.tools,
+    observedTools: launch.tools,
+    outcome: "completed",
+    requestedModel: launch.model,
+    observedModel: launch.model,
+    requestedThinking: launch.thinking,
+    observedThinking: launch.thinking,
+  });
+  const acceptance = new MemImportAcceptanceService(base, () => new Date("2026-07-21T00:00:00.000Z"));
+  const evidence = { facility: "ordinary-subagent" as const, hostTaskId, requestedTools: launch.tools, observedTools: launch.tools, toolCalls: [prepared.targetTool], outcome: "completed" as const };
+  await assert.rejects(acceptance.validateProbe(prepared, { ...evidence, toolCalls: [prepared.targetTool, prepared.targetTool] }), /exactly once/);
+  const stateRoot = join(await mkdtemp(join(tmpdir(), "memchat-acceptance-state-")), "acceptance");
+  const persisted = await acceptance.persistProbe({
+    stateRoot,
+    profile: { protocolVersion: 1, toolSchemaVersion: "fixture-v1", adapter: "test-adapter", runtime: "node-test", model: launch.model, thinking: launch.thinking, sourceRevision: "test-revision" },
+    prepared,
+    evidence,
+    requiredProbes: ["proposer"],
+  });
+  assert.equal(persisted.receipt.status, "accepted");
+  assert.equal(persisted.receipt.probes.proposer?.effect?.kind, "proposal");
+  assert.doesNotMatch(JSON.stringify(persisted.receipt), new RegExp(prepared.assignment!.grant));
+  assert.doesNotMatch(JSON.stringify(persisted.receipt), new RegExp(prepared.coordinatorGrant));
+});
 
 test("acceptance fixture materialization is semantically stable across fresh run roots", async () => {
   for (const probe of ["normalize", "extractor", "proposer", "merger", "reviewer"] as const satisfies readonly AcceptanceProbe[]) {

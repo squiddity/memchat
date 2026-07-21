@@ -71,6 +71,7 @@ export type PreparedAcceptanceProbe = {
   semanticStateHash: string;
   outputRoot: string;
   runId: string;
+  coordinatorGrant: string;
   targetTool: string;
   assignmentTools: string[];
   call: Record<string, unknown>;
@@ -244,6 +245,7 @@ export async function materializeAcceptanceProbe(options: {
     semanticStateHash: fixture.semanticStateHash,
     outputRoot: run.outputRoot,
     runId: run.runId,
+    coordinatorGrant: run.coordinatorGrant,
     targetTool: fixture.calls.targets[options.probe],
     expected: fixture.expected[options.probe],
   };

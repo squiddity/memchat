@@ -75,6 +75,31 @@ export type MemImportDispatchRecord = {
   recordedAt: string;
 };
 
+export type MemImportEffectInventoryEntry = {
+  taskId: string;
+  role: AssignmentRole;
+  lifecycleOutcome: LifecycleOutcome;
+  retriesTaskId?: string;
+  supersededByTaskId?: string;
+  dispatch?: {
+    facility: DispatchFacility;
+    outcome: DispatchOutcome;
+    hostTaskId: string;
+    exactToolMatch: boolean;
+  };
+  effect?: {
+    kind: string;
+    contentHash: string;
+  };
+};
+
+export type MemImportEffectInventoryResult = {
+  entries: MemImportEffectInventoryEntry[];
+  returnedItems: number;
+  truncated: boolean;
+  continuationCursor?: string;
+};
+
 /** Deliberately small, credential-free runtime identity supplied by the parent. */
 export type MemImportActorAudit = {
   model?: string;
@@ -941,6 +966,59 @@ export class MemImportService {
       version: 1, kind: "mem-import-worker-effect", runId: assignment.runId, taskId: assignment.taskId,
       effect: effect.kind, path: effect.path, contentHash: effect.contentHash, recordedAt: this.now().toISOString(),
     });
+  }
+
+  async effectInventory(options: { outputRoot: string; runId: string; coordinatorGrant: string; continuationCursor?: string; maxItems?: number }): Promise<MemImportEffectInventoryResult> {
+    const run = await this.authorizeCoordinator(options);
+    const maxItems = options.maxItems ?? 20;
+    if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 20) throw new Error("maxItems must be an integer between 1 and 20");
+    let after = "";
+    if (options.continuationCursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(options.continuationCursor, "base64url").toString("utf-8")) as { version?: unknown; after?: unknown };
+        if (decoded.version !== 1 || typeof decoded.after !== "string") throw new Error("shape");
+        after = decoded.after;
+      } catch {
+        throw new Error("Invalid effect inventory continuation cursor");
+      }
+    }
+    const flattened: Array<{ key: string; entry: MemImportEffectInventoryEntry }> = [];
+    for (const assignment of (await readAssignments(run.outputRoot)).filter((item) => item.runId === run.runId).sort((left, right) => left.taskId.localeCompare(right.taskId))) {
+      let dispatch: MemImportDispatchRecord | undefined;
+      const dispatchFile = dispatchPath(run.outputRoot, assignment.taskId);
+      if (existsSync(dispatchFile)) {
+        const value = JSON.parse(await readFile(dispatchFile, "utf-8")) as MemImportDispatchRecord;
+        if (value.version === 1 && value.kind === "mem-import-worker-dispatch" && value.runId === run.runId && value.taskId === assignment.taskId) dispatch = value;
+      }
+      const summary = {
+        taskId: assignment.taskId,
+        role: assignment.role,
+        lifecycleOutcome: assignment.lifecycleOutcome,
+        ...(assignment.retriesTaskId ? { retriesTaskId: assignment.retriesTaskId } : {}),
+        ...(assignment.supersededByTaskId ? { supersededByTaskId: assignment.supersededByTaskId } : {}),
+        ...(dispatch ? { dispatch: { facility: dispatch.facility, outcome: dispatch.outcome, hostTaskId: dispatch.hostTaskId, exactToolMatch: sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) } } : {}),
+      } satisfies Omit<MemImportEffectInventoryEntry, "effect">;
+      const directory = `${orchestrationDir(run.outputRoot)}/effects/${assignment.taskId}`;
+      const files = existsSync(directory) ? (await readdir(directory)).filter((name) => name.endsWith(".json")).sort() : [];
+      if (files.length === 0) flattened.push({ key: `${assignment.taskId}\u0000-`, entry: summary });
+      for (const file of files) {
+        const value = JSON.parse(await readFile(`${directory}/${file}`, "utf-8")) as { version?: unknown; kind?: unknown; runId?: unknown; taskId?: unknown; effect?: unknown; contentHash?: unknown; packetHash?: unknown };
+        const packetEffect = value.kind === "mem-import-packet-effect" && typeof value.packetHash === "string" ? { kind: "extraction", contentHash: value.packetHash } : undefined;
+        const workerEffect = value.kind === "mem-import-worker-effect" && typeof value.effect === "string" && typeof value.contentHash === "string" ? { kind: value.effect, contentHash: value.contentHash } : undefined;
+        const effect = packetEffect ?? workerEffect;
+        if (value.version !== 1 || value.runId !== run.runId || value.taskId !== assignment.taskId || !effect || !/^[a-f0-9]{64}$/.test(effect.contentHash)) throw new Error(`Invalid worker effect record for task ${assignment.taskId}`);
+        flattened.push({ key: `${assignment.taskId}\u0000${file}`, entry: { ...summary, effect } });
+      }
+    }
+    const remaining = flattened.filter((item) => item.key > after);
+    const page = remaining.slice(0, maxItems);
+    const truncated = remaining.length > page.length;
+    return {
+      entries: page.map((item) => item.entry),
+      returnedItems: page.length,
+      truncated,
+      ...(truncated && page.length ? { continuationCursor: Buffer.from(JSON.stringify({ version: 1, after: page.at(-1)!.key }), "utf-8").toString("base64url") } : {}),
+    };
   }
 
   async dispatchDiagnostics(outputRootInput: string): Promise<Array<{ taskId: string; message: string }>> {
