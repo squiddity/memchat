@@ -32,7 +32,7 @@ The merger's normal mutation is `mem_merge_commit`:
 - `upsert` is an intentional synthesized artifact supported by declared proposals;
 - `delete` removes an observed canonical artifact.
 
-One call is limited to twelve changes. The service carries proposal candidate dispositions, acquires the fenced writer lease, validates the bounded read set, commits against current canonical state, records content-addressed history, and releases the lease. Unrelated changes do not invalidate unchanged artifact observations; changed dependencies fail stale.
+One call uses weighted limits: up to 50 lightweight `accept` references, up to 12 combined synthesized `upsert`/`delete` changes, up to 50 supporting proposal hashes, and no more than 62 total changes. The service resolves accepts internally, carries proposal candidate dispositions, acquires the fenced writer lease, validates the bounded read set, commits against current canonical state, records content-addressed history, releases the lease, and returns a compact receipt rather than the complete canonical stage. Unrelated changes do not invalidate unchanged artifact observations; changed dependencies fail stale.
 
 Complete-snapshot mutation is not a production model tool for either workers or coordinators. Internal reconstruction/snapshot APIs remain implementation details for history and tests; normal coordinators cannot replace canonical state or disposition failed-worker candidates inline.
 

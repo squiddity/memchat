@@ -6,6 +6,7 @@ artifact_contract: ce-unified-plan/v1
 artifact_readiness: implementation-ready
 product_contract_source: alice-import-observation
 execution: code-and-eval
+acceptance_plan: docs/plans/2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md
 ---
 
 # Mem-import Efficiency and Legacy Parity - Plan
@@ -144,6 +145,16 @@ The observed run included lease misuse, stale worker waiting, hidden dispatch re
 
 Several fixes were made during the run, but efficiency evaluation must include a clean run on the corrected revision rather than treating recovery overhead as unavoidable protocol cost.
 
+### P6. Acceptance orchestration is not yet safely host-bounded
+
+The disposable preflight run `mir-fcb88e8ad52bf9e80da21243` exposed a blocking orchestration defect before the planned small Alice excerpt import. The coordinator had an explicit coordinator allowlist, but generic `subagent` access still allowed it to launch unassigned `hash-finder`, `proposal-list`, and `find-review` children with shell/filesystem tools rather than a live semantic assignment's exact `assignment.tools`. It raced reconciliation before proposal persistence, reused semantic task identities across retries, relied on worker prose and direct filesystem inspection to recover proposal hashes, and exercised a malformed-hash rejection instead of the required stale canonical read-set probe.
+
+The run called `mem_import_fail` at 15:34:49 with status `failed`, then continued assigning workers and wrote three merge transactions. All three revisions had the same semantic content hash, demonstrating both post-terminal mutation and no-op transaction acceptance. The run never completed the repairer, post-repair review, checks, or successful finalization rungs. It processed approximately 1.2M reasoning tokens in the coordinator before termination. No acceptance receipt was written.
+
+This is a hard gate: do not run another acceptance ladder or fresh corpus import until assignment-bound dispatch, compact coordinator effect discovery, terminal-state monotonicity, and no-op rejection are enforced and covered by tests.
+
+The implementation authority for these runtime safeguards and the replacement of the coordinator-driven acceptance ladder with fixture-backed, one-production-tool-call role probes is [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md). This efficiency plan retains the corpus performance and quality objectives; it does not require acceptance to execute an entire semantic pipeline.
+
 ---
 
 ## Product Contract
@@ -162,6 +173,10 @@ Several fixes were made during the run, but efficiency evaluation must include a
 - **R10. Usage telemetry:** Final run records must expose sanitized per-role/model usage totals when the adapter can obtain them.
 - **R11. Actionable errors:** Validation failures return stable codes/paths and concise correction guidance so workers do not regenerate unchanged oversized bodies.
 - **R12. Quality parity:** Efficiency improvements must not regress lint, provenance integrity, candidate accounting, identity conflicts, narrative surfaces, or reviewer quality.
+- **R13. Assignment-bound dispatch:** A coordinator may launch semantic children only from a live assignment, with host-enforced tools exactly equal to `assignment.tools` plus adapter lifecycle controls; generic helper children cannot broaden tools.
+- **R14. Terminal-state monotonicity:** After `mem_import_fail` or terminal finalization, assignments, semantic submissions, reviews, and canonical mutations are rejected.
+- **R15. No-op rejection:** A transaction that does not change semantic canonical state, candidate accounting, identity/conflict state, or review-relevant controls must not create a new revision.
+- **R16. Compact effect discovery:** Coordinators can discover durable proposal/identity/review effect hashes and their authoritative task/dispatch status through bounded typed tools without filesystem helpers or worker prose.
 
 ### Scope boundaries
 
@@ -294,9 +309,29 @@ The clean-run baseline includes fixes made during the observed run:
 
 These changes must be present before measuring protocol efficiency again.
 
+### D9. Enforce runtime safety and simplify acceptance
+
+Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) for the detailed design. In summary:
+
+- dispatch semantic workers through an assignment-bound launcher surface derived from durable assignments;
+- expose bounded authoritative effect inventories;
+- require fresh retry task identities;
+- make failed/finalized run state mutation-terminal;
+- reject semantic no-op transactions;
+- replace the free-running acceptance coordinator and full acceptance pipeline with independent fixture-backed probes that each invoke one normal production tool;
+- keep the Alice excerpt as a separate semantic quality and efficiency evaluation corpus.
+
 ---
 
 ## Implementation Units
+
+### U0. Block unsafe acceptance and corpus launch
+
+- **Goal:** Close the runtime and host-dispatch defects found in preflight run `mir-fcb88e8ad52bf9e80da21243` before another model-backed run.
+- **Implementation authority:** [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
+- **Work:** Implement its terminal-state guards, no-op rejection, consistent weighted limits, compact effect inventory, assignment-bound dispatch, tracked fixture materializer, and independent one-production-tool-call role probes.
+- **Done signal:** The focused profile probes pass with authoritative dispatch/effect evidence; failed or finalized runs cannot mutate; no-op transactions create no revisions; no free-running acceptance coordinator or full semantic acceptance pipeline is required.
+- **Blocks:** Any new acceptance receipt, the three-chapter Alice semantic evaluation, and U8 controlled A/B evaluation.
 
 ### U1. Contract merge and repair responses
 
@@ -368,6 +403,10 @@ These changes must be present before measuring protocol efficiency again.
 | Batch transaction test | Targeted 24-proposal fixture | All proposals consumed in at most six transactions. |
 | Reconstruction test | Existing transaction history tests | Compact responses do not alter immutable history or reconstruction hashes. |
 | Coverage/provenance test | Existing checks | No accounting or provenance integrity regression. |
+| Terminal-run guard test | Targeted mem-import failure fixture | After `mem_import_fail`, assignment and every semantic/canonical mutation surface reject without new effects or revisions. |
+| Assignment-bound dispatch test | Herdr adapter acceptance fixture | Child tools equal the live assignment allowlist plus lifecycle controls; unassigned shell/helper launches cannot count as semantic dispatch. |
+| No-op transaction test | Targeted merge fixture | Repeated same-content operations do not create a new revision or transaction receipt. |
+| Coordinator effect inventory test | Large bounded fixture | Proposal/identity/review/effect hashes are discoverable without filesystem access and responses remain below 10 KB. |
 
 ### Live Alice gates
 

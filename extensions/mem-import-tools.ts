@@ -166,7 +166,7 @@ const mergeStageSchema = Type.Object({
 }, { additionalProperties: true, description: "Canonical merge semantic content. Do not supply revision/contentHash controls; the service derives them atomically." });
 
 const mergeBatchSchema = Type.Object({
-  proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 12 }),
+  proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 50 }),
   identityProposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { maxItems: 100 })),
   readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false }), { minItems: 1, maxItems: 100 }),
   operations: Type.Array(Type.Union([
@@ -617,13 +617,13 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_merge_commit",
     label: "Commit Bounded Merge",
-    description: "Commit one proposal-backed batch. Accept proposal artifacts by reference when unchanged. The service carries proposal candidate accounting and owns lease, fence, and current-revision CAS internally.",
+    description: "Commit one proposal-backed batch and return a compact transaction receipt. Accept proposal artifacts by reference when unchanged. The service carries proposal candidate accounting and owns lease, fence, and current-revision CAS internally.",
     parameters: Type.Object({
       ...workerSchema,
-      proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 12, description: "Immutable proposals supporting this batch." }),
+      proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 50, description: "Immutable proposals supporting this batch." }),
       identityProposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { maxItems: 100 })),
       readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Optional(Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()])) }, { additionalProperties: false }), { minItems: 1, maxItems: 100, description: "Copy artifactContentHash from canonical reads. For an observed-absent target, use null or omit contentHash; omission is normalized to null and still fails stale if the artifact exists." }),
-      changes: Type.Array(mergeCommitChangeSchema, { minItems: 1, maxItems: 12 }),
+      changes: Type.Array(mergeCommitChangeSchema, { minItems: 1, maxItems: 62, description: "Weighted batch: at most 50 lightweight accepts and at most 12 synthesized upsert/delete changes." }),
       conflictOperations: Type.Optional(Type.Array(Type.Union([
         Type.Object({ kind: Type.Literal("create"), conflictId: Type.String({ minLength: 1 }), blocking: Type.Boolean(), summary: Type.String({ minLength: 1 }), identityDecisionId: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }),
         Type.Object({ kind: Type.Union([Type.Literal("resolve"), Type.Literal("defer")]), conflictId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
@@ -631,7 +631,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       rationale: Type.String({ minLength: 1, description: "Concise auditable rationale, not hidden reasoning." }),
     }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await u2.commitWorkerBatch(params)); } catch (error) { return failure(error); }
+      try { return result(await u2.commitWorkerBatchReceipt(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -657,11 +657,11 @@ export default function memImportTools(pi: ExtensionAPI) {
 
   registerMemImportTool(pi, {
     name: "mem_import_merge_state",
-    label: "Read Merge State",
-    description: "Read the latest canonical merge snapshot and revision/hash controls as the coordinator.",
+    label: "Read Merge Controls",
+    description: "Read compact canonical revision/hash controls, counts, conflicts, accounting, and review validity as the coordinator. Use bounded inventory and explicit artifact reads for canonical content.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
-      try { return result(await u2.mergeState(params)); } catch (error) { return failure(error); }
+      try { return result(await u2.mergeControls(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -714,7 +714,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_merge_apply_repair_batch",
     label: "Apply Scoped Repair Batch",
-    description: "Apply a bounded repairer-only canonical delta. The repairer must cite its assigned checkpoint and action IDs; unrelated mutation is rejected.",
+    description: "Apply a bounded repairer-only canonical delta and return a compact transaction receipt. The repairer must cite its assigned checkpoint and action IDs; unrelated mutation is rejected.",
     parameters: Type.Object({
       ...workerSchema,
       fence: Type.Integer({ minimum: 1 }),
@@ -725,7 +725,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       batch: mergeBatchSchema,
     }),
     async execute(_id, params) {
-      try { return result(await u2.applyWorkerRepairBatch(params)); } catch (error) { return failure(error); }
+      try { return result(await u2.applyWorkerRepairBatchReceipt(params)); } catch (error) { return failure(error); }
     },
   });
 

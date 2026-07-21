@@ -47,6 +47,26 @@ export type MergeState = {
   parentContentHash?: string;
 };
 
+export type MergeMutationReceipt = {
+  revision: number;
+  contentHash: string | null;
+  parentContentHash: string | null;
+  artifactCount: number;
+  candidateDispositionCount: number;
+  consumedProposalHashes: string[];
+};
+
+export function toMergeMutationReceipt(state: MergeState, consumedProposalHashes: string[]): MergeMutationReceipt {
+  return {
+    revision: state.revision,
+    contentHash: state.contentHash,
+    parentContentHash: state.parentContentHash ?? null,
+    artifactCount: state.stage.artifacts?.length ?? 0,
+    candidateDispositionCount: state.stage.candidateDispositions?.length ?? 0,
+    consumedProposalHashes: [...new Set(consumedProposalHashes)],
+  };
+}
+
 export type MergeInventoryEntry = {
   id: string;
   group: string;
@@ -66,7 +86,34 @@ export type MergeInventoryResult = {
   continuationCursor?: string;
 };
 
+export type MergeControls = {
+  revision: number;
+  contentHash: string | null;
+  artifactCount: number;
+  candidateDispositionCount: number;
+  proposalCount: number;
+  consumedProposalCount: number;
+  unconsumedProposalCount: number;
+  candidateCount: number;
+  accountedCandidateCount: number;
+  unaccountedCandidateCount: number;
+  openConflictCount: number;
+  blockingConflictCount: number;
+  reviewValidity: {
+    current: boolean;
+    currentReviewCount: number;
+    staleReviewCount: number;
+    unaffectedReviewCount: number;
+    unscopedReviewCount: number;
+  };
+};
+
 type MergeInventoryCursor = { version: 1; revision: number; contentHash: string | null; group?: string; afterId: string };
+
+const MAX_MERGE_PROPOSALS = 50;
+const MAX_ACCEPT_CHANGES = 50;
+const MAX_SYNTHESIZED_CHANGES = 12;
+const MAX_TOTAL_MERGE_CHANGES = MAX_ACCEPT_CHANGES + MAX_SYNTHESIZED_CHANGES;
 
 export type MergeLeaseResult = { fence: number; expiresAt: string; heartbeatEveryMs: number };
 export type ConflictOperation =
@@ -193,6 +240,32 @@ export class MemImportU2Service {
   async mergeState(options: CoordinatorAuthority): Promise<MergeState> {
     const run = await this.base.authorizeCoordinator(options);
     return this.readMergeState(this.canonicalRoot(run));
+  }
+
+  async mergeControls(options: CoordinatorAuthority): Promise<MergeControls> {
+    const run = await this.base.authorizeCoordinator(options);
+    const canonicalRoot = this.canonicalRoot(run);
+    const state = await this.readMergeState(canonicalRoot);
+    const status = await this.workStatus(options);
+    const reviewCounts = { current: 0, stale: 0, unaffected: 0, unscoped: 0 };
+    if (existsSync(reviewValidityPath(canonicalRoot))) {
+      const validity = JSON.parse(await readFile(reviewValidityPath(canonicalRoot), "utf-8")) as { entries?: Array<{ status?: unknown }> };
+      for (const entry of validity.entries ?? []) {
+        if (entry.status === "current" || entry.status === "stale" || entry.status === "unaffected" || entry.status === "unscoped") reviewCounts[entry.status] += 1;
+      }
+    }
+    return {
+      ...status,
+      artifactCount: state.stage.artifacts?.length ?? 0,
+      candidateDispositionCount: state.stage.candidateDispositions?.length ?? 0,
+      reviewValidity: {
+        current: reviewCounts.current > 0,
+        currentReviewCount: reviewCounts.current,
+        staleReviewCount: reviewCounts.stale,
+        unaffectedReviewCount: reviewCounts.unaffected,
+        unscopedReviewCount: reviewCounts.unscoped,
+      },
+    };
   }
 
   async readMergeForWorker(options: WorkerAuthority): Promise<MergeState> {
@@ -356,9 +429,13 @@ export class MemImportU2Service {
     rationale: string;
   }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
-    if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > 12) throw new Error("Merge commit requires one to twelve proposal hashes");
+    if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > MAX_MERGE_PROPOSALS) throw new Error(`Merge commit proposalHashes must contain one to ${MAX_MERGE_PROPOSALS} hashes`);
     if (assignment.allowedProposalHashes?.length && options.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge commit proposal hash is outside this merger assignment");
-    if (!Array.isArray(options.changes) || options.changes.length === 0 || options.changes.length > 12) throw new Error("Merge commit requires one to twelve changes");
+    if (!Array.isArray(options.changes) || options.changes.length === 0 || options.changes.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge commit changes must contain one to ${MAX_TOTAL_MERGE_CHANGES} entries`);
+    const acceptCount = options.changes.filter((change) => change.kind === "accept").length;
+    const synthesizedCount = options.changes.length - acceptCount;
+    if (acceptCount > MAX_ACCEPT_CHANGES) throw new Error(`Merge commit changes accepts exceed the ${MAX_ACCEPT_CHANGES}-entry lightweight limit`);
+    if (synthesizedCount > MAX_SYNTHESIZED_CHANGES) throw new Error(`Merge commit changes upsert/delete entries exceed the ${MAX_SYNTHESIZED_CHANGES}-entry synthesis limit`);
     const proposals = new Map<string, Awaited<ReturnType<MemImportU2Service["readProposal"]>>>();
     for (const proposalHash of options.proposalHashes) proposals.set(proposalHash, await this.readProposal(assignment.outputRoot, assignment.runId, proposalHash));
     const operations: MergeBatch["operations"] = options.changes.map((change) => {
@@ -392,9 +469,22 @@ export class MemImportU2Service {
     }
   }
 
+  async commitWorkerBatchReceipt(options: WorkerAuthority & {
+    proposalHashes: string[];
+    identityProposalHashes?: string[];
+    readSet: Array<{ artifactId: string; contentHash?: string | null }>;
+    changes: MergeCommitChange[];
+    conflictOperations?: ConflictOperation[];
+    rationale: string;
+  }): Promise<MergeMutationReceipt> {
+    const state = await this.commitWorkerBatch(options);
+    return toMergeMutationReceipt(state, options.proposalHashes);
+  }
+
   /** Apply a repairer-only bounded transaction. Its checkpoint/action scope is authorization-enforced and retained in the receipt. */
   async applyWorkerRepairBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; checkpointId: string; actionIds: string[]; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "repairer", checkpointId: options.checkpointId, actionIds: options.actionIds });
+    if (!Array.isArray(options.batch.operations) || options.batch.operations.length === 0 || options.batch.operations.length > MAX_SYNTHESIZED_CHANGES) throw new Error(`Repair batch operations must contain one to ${MAX_SYNTHESIZED_CHANGES} synthesized changes`);
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
@@ -420,6 +510,11 @@ export class MemImportU2Service {
     await this.applyIdentityEffects(canonicalRoot, batch, identityPackets);
     await this.base.recordWorkerEffect(assignment, { kind: "repair", path: this.relative(canonicalRoot, transactionPath(canonicalRoot, written.revision, written.contentHash!)), contentHash: written.contentHash! });
     return written;
+  }
+
+  async applyWorkerRepairBatchReceipt(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; checkpointId: string; actionIds: string[]; batch: MergeBatch }): Promise<MergeMutationReceipt> {
+    const state = await this.applyWorkerRepairBatch(options);
+    return toMergeMutationReceipt(state, options.batch.proposalHashes);
   }
 
   async submitReview(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
@@ -713,10 +808,10 @@ export class MemImportU2Service {
 
   private async validateBatch(outputRoot: string, runId: string, value: MergeBatch): Promise<MergeBatch> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Merge batch must be an object");
-    if (!Array.isArray(value.proposalHashes) || value.proposalHashes.length === 0 || value.proposalHashes.length > 12 || value.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Merge batch requires one to twelve SHA-256 proposalHashes");
+    if (!Array.isArray(value.proposalHashes) || value.proposalHashes.length === 0 || value.proposalHashes.length > MAX_MERGE_PROPOSALS || value.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error(`Merge batch proposalHashes must contain one to ${MAX_MERGE_PROPOSALS} SHA-256 hashes`);
     if (new Set(value.proposalHashes).size !== value.proposalHashes.length) throw new Error("Merge batch proposalHashes must be unique");
     if (value.identityProposalHashes !== undefined && (!Array.isArray(value.identityProposalHashes) || value.identityProposalHashes.length > 100 || value.identityProposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item)) || new Set(value.identityProposalHashes).size !== value.identityProposalHashes.length)) throw new Error("Merge batch identityProposalHashes must contain unique SHA-256 hashes");
-    if (!Array.isArray(value.operations) || value.operations.length === 0 || value.operations.length > 12) throw new Error("Merge batch requires one to twelve operations");
+    if (!Array.isArray(value.operations) || value.operations.length === 0 || value.operations.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge batch operations must contain one to ${MAX_TOTAL_MERGE_CHANGES} entries`);
     if (!Array.isArray(value.readSet) || value.readSet.length === 0 || value.readSet.length > 100) throw new Error("Merge batch requires one to one hundred readSet entries");
     requireNonEmpty(value.rationale, "batch.rationale");
     // Declared immutable proposals are the evidence boundary. An explicit upsert

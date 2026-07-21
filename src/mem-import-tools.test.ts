@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { MEM_IMPORT_ROLE_TOOLS, MemImportService, type AssignmentRole } from "./mem-import/service.js";
-import { MemImportU2Service } from "./mem-import/u2-service.js";
+import { MemImportU2Service, toMergeMutationReceipt } from "./mem-import/u2-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
 import { MemImportIdentityService, canonicalHash } from "./mem-import/identity-service.js";
@@ -15,6 +15,10 @@ import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "memchat-mem-import-tools-"));
+}
+
+function serializedModelToolResultSize(value: unknown): number {
+  return JSON.stringify({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }], details: value }).length;
 }
 
 async function recordDispatch(service: MemImportService, run: { outputRoot: string; runId: string; coordinatorGrant: string }, taskId: string, role: AssignmentRole): Promise<void> {
@@ -402,13 +406,24 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const beforeStatus = await u2.workStatus(run);
   assert.equal(beforeStatus.unconsumedProposalCount, 1);
   assert.equal(beforeStatus.unaccountedCandidateCount, 1);
-  const merged = await u2.commitWorkerBatch({
+  const mergeReceipt = await u2.commitWorkerBatchReceipt({
     ...merger,
     proposalHashes: [persisted.contentHash],
     readSet: [{ artifactId: "ada" }],
     changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }],
     rationale: "Accept the bounded Ada shard proposal into canonical state.",
   });
+  assert.deepEqual(mergeReceipt, {
+    revision: 1,
+    contentHash: mergeReceipt.contentHash,
+    parentContentHash: null,
+    artifactCount: 1,
+    candidateDispositionCount: 1,
+    consumedProposalHashes: [persisted.contentHash],
+  });
+  assert.ok(serializedModelToolResultSize(mergeReceipt) < 10_000);
+  assert.equal("stage" in mergeReceipt, false);
+  const merged = await u2.mergeState(run);
   assert.equal(merged.revision, 1);
   assert.equal(merged.stage.artifacts?.[0]?.id, "ada");
   const canonicalInventory = await u2.readMergeInventoryForWorker({ ...merger, maxItems: 1, group: "people" });
@@ -424,8 +439,67 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const afterStatus = await u2.workStatus(run);
   assert.equal(afterStatus.unconsumedProposalCount, 0);
   assert.equal(afterStatus.unaccountedCandidateCount, 0);
+
+  const reviewer = await service.assignWorker({ ...run, taskId: "proposal-reviewer", role: "reviewer" });
+  await u2.submitReview({
+    ...reviewer,
+    packet: {
+      version: 1,
+      kind: "mem-import-review",
+      checkpointId: "proposal-quality",
+      reviewedMergeRevision: merged.revision,
+      reviewedMergeHash: merged.contentHash!,
+      findings: [{ id: "repair-ada-description", severity: "repair", summary: "Clarify Ada's canonical description.", requestedActionIds: ["clarify-ada"] }],
+      requestedActions: [{ id: "clarify-ada", type: "clarify-description", severity: "repair", summary: "Clarify Ada's canonical description." }],
+      readSet: [{ artifactId: "ada", contentHash: canonicalArtifact.artifactContentHash }],
+    },
+  });
+  const repairer = await service.assignWorker({ ...run, taskId: "proposal-repairer", role: "repairer", checkpointIds: ["proposal-quality"], actionIds: ["clarify-ada"] });
+  const repairLease = await u2.acquireWorkerLease(repairer);
+  const repairedArtifact = { ...canonicalArtifact.artifact!, description: "Ada is the guard at the glass tower." };
+  const repairReceipt = await u2.applyWorkerRepairBatchReceipt({
+    ...repairer,
+    fence: repairLease.fence,
+    expectedRevision: merged.revision,
+    expectedContentHash: merged.contentHash,
+    checkpointId: "proposal-quality",
+    actionIds: ["clarify-ada"],
+    batch: {
+      proposalHashes: [persisted.contentHash],
+      readSet: [{ artifactId: "ada", contentHash: canonicalArtifact.artifactContentHash }],
+      operations: [{ kind: "upsert", artifact: repairedArtifact }],
+      rationale: "Apply the review-scoped description clarification.",
+    },
+  });
+  await u2.releaseWorkerLease({ ...repairer, fence: repairLease.fence });
+  assert.equal(repairReceipt.revision, 2);
+  assert.equal(repairReceipt.parentContentHash, merged.contentHash);
+  assert.equal(repairReceipt.artifactCount, 1);
+  assert.equal(repairReceipt.candidateDispositionCount, 1);
+  assert.deepEqual(repairReceipt.consumedProposalHashes, [persisted.contentHash]);
+  assert.ok(serializedModelToolResultSize(repairReceipt) < 10_000);
+  assert.equal("stage" in repairReceipt, false);
+  const controls = await u2.mergeControls(run);
+  assert.equal(controls.revision, repairReceipt.revision);
+  assert.equal(controls.contentHash, repairReceipt.contentHash);
+  assert.equal(controls.artifactCount, 1);
+  assert.equal(controls.candidateDispositionCount, 1);
+  assert.equal(controls.consumedProposalCount, 1);
+  assert.equal(controls.unaccountedCandidateCount, 0);
+  assert.deepEqual(controls.reviewValidity, {
+    current: false,
+    currentReviewCount: 0,
+    staleReviewCount: 1,
+    unaffectedReviewCount: 0,
+    unscopedReviewCount: 0,
+  });
+  assert.ok(serializedModelToolResultSize(controls) < 10_000);
+  assert.equal("stage" in controls, false);
+  assert.equal("artifacts" in controls, false);
+  assert.equal("candidateDispositions" in controls, false);
+
   const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
-  assert.equal(transactionFiles.length, 1);
+  assert.equal(transactionFiles.length, 2);
   await assert.rejects(
     u2.commitWorkerBatch({ ...merger, proposalHashes: [persisted.contentHash], readSet: [{ artifactId: "ada", contentHash: merged.contentHash }], changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }], rationale: "A global merge hash is not an artifact read token." }),
     /Stale merge read set/,
@@ -1002,6 +1076,93 @@ test("mem-import serializes twenty out-of-order proposal transactions and preser
   await u2.releaseWorkerLease({ ...merger, fence: lease.fence });
 });
 
+test("mem-import batches twenty-four Alice-sized proposals into at most six compact transactions", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const u2 = new MemImportU2Service(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ ...run, taskId: "batch-extract", unitIds: [unit.unitId] });
+  await recordDispatch(service, run, extractor.taskId, "extractor");
+  const extracted = await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const submitted = [] as Array<{ proposalHash: string; artifacts: Array<{ id: string }> }>;
+  for (let proposalIndex = 0; proposalIndex < 24; proposalIndex += 1) {
+    const suffix = String(proposalIndex).padStart(2, "0");
+    const proposer = await service.assignWorker({ ...run, taskId: `batch-propose-${suffix}`, role: "proposer", unitIds: [unit.unitId] });
+    await recordDispatch(service, run, proposer.taskId, "proposer");
+    const artifacts = Array.from({ length: 5 }, (_, artifactIndex) => {
+      const id = `batch-${suffix}-${artifactIndex}`;
+      return {
+        id,
+        group: "things" as const,
+        title: `Batch artifact ${proposalIndex}-${artifactIndex}`,
+        description: `A proposal-local artifact used to verify weighted merge batching (${proposalIndex}-${artifactIndex}).`,
+        sections: [{ heading: "Summary", body: `Artifact ${proposalIndex}-${artifactIndex} is supported by the bounded source fixture.` }],
+        provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }],
+      };
+    });
+    const proposal = await proposals.submitWorkerProposal({ ...proposer, packet: {
+      version: 1,
+      kind: "mem-import-proposal",
+      id: `batch-proposal-${suffix}`,
+      inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash }],
+      artifacts,
+      rationale: `Prepare five immutable accept-by-reference artifacts for batch ${suffix}.`,
+    } });
+    submitted.push({ proposalHash: proposal.contentHash, artifacts });
+  }
+
+  const merger = await service.assignWorker({ ...run, taskId: "batch-merger", role: "merger" });
+  await recordDispatch(service, run, merger.taskId, "merger");
+  const fakeProposalHash = "f".repeat(64);
+  await assert.rejects(
+    u2.commitWorkerBatchReceipt({
+      ...merger,
+      proposalHashes: [fakeProposalHash],
+      readSet: [],
+      changes: Array.from({ length: 51 }, (_, index) => ({ kind: "accept" as const, proposalHash: fakeProposalHash, artifactId: `accept-overflow-${index}` })),
+      rationale: "Reject a lightweight accept batch above its independent limit.",
+    }),
+    /accepts exceed the 50-entry lightweight limit/,
+  );
+  await assert.rejects(
+    u2.commitWorkerBatchReceipt({
+      ...merger,
+      proposalHashes: [fakeProposalHash],
+      readSet: [],
+      changes: Array.from({ length: 13 }, (_, index) => ({ kind: "delete" as const, artifactId: `synthesis-overflow-${index}` })),
+      rationale: "Reject synthesized changes above their independent limit.",
+    }),
+    /upsert\/delete entries exceed the 12-entry synthesis limit/,
+  );
+
+  const receipts = [];
+  for (let offset = 0; offset < submitted.length; offset += 8) {
+    const batch = submitted.slice(offset, offset + 8);
+    const accepted = batch.flatMap((item) => item.artifacts.map((artifact) => ({ proposalHash: item.proposalHash, artifactId: artifact.id })));
+    const receipt = await u2.commitWorkerBatchReceipt({
+      ...merger,
+      proposalHashes: batch.map((item) => item.proposalHash),
+      readSet: accepted.map((item) => ({ artifactId: item.artifactId })),
+      changes: accepted.map((item) => ({ kind: "accept" as const, proposalHash: item.proposalHash, artifactId: item.artifactId })),
+      rationale: `Accept ${accepted.length} immutable artifacts from ${batch.length} compatible proposals.`,
+    });
+    assert.ok(serializedModelToolResultSize(receipt) < 10_000);
+    assert.equal("stage" in receipt, false);
+    receipts.push(receipt);
+  }
+
+  assert.ok(receipts.length <= 6);
+  assert.equal(receipts.length, 3);
+  assert.deepEqual(receipts.map((receipt) => receipt.revision), [1, 2, 3]);
+  const controls = await u2.mergeControls(run);
+  assert.equal(controls.artifactCount, 120);
+  assert.equal(controls.proposalCount, 24);
+  assert.equal(controls.consumedProposalCount, 24);
+  assert.equal(controls.unconsumedProposalCount, 0);
+  assert.equal((await readdir(join(output, "stages", "merge", "transactions"))).length, 3);
+});
+
 test("mem-import large-work inventories stay bounded at 500 units, 5,000 candidates, and 1,000 artifacts", async () => {
   const root = await tempDir();
   const input = join(root, "input");
@@ -1035,12 +1196,51 @@ test("mem-import large-work inventories stay bounded at 500 units, 5,000 candida
   const lease = await u2.acquireCoordinatorLease({ ...run, taskId: "large-seed" });
   const written = await u2.writeCoordinatorMerge({ ...run, taskId: "large-seed", fence: lease.fence, expectedRevision: 0, expectedContentHash: null, stage: { version: 1, kind: "merge", artifacts, candidateDispositions: [], diagnostics: [] }, rationale: "Seed a large canonical inventory to verify bounded reads." });
   assert.equal(written.stage.artifacts?.length, 1_000);
+  const largeReceipt = toMergeMutationReceipt(written, ["a".repeat(64)]);
+  assert.deepEqual(largeReceipt, {
+    revision: 1,
+    contentHash: written.contentHash,
+    parentContentHash: null,
+    artifactCount: 1_000,
+    candidateDispositionCount: 0,
+    consumedProposalHashes: ["a".repeat(64)],
+  });
+  assert.ok(serializedModelToolResultSize(largeReceipt) < 10_000);
+  assert.equal("stage" in largeReceipt, false);
+  assert.equal("artifacts" in largeReceipt, false);
+  assert.equal("candidateDispositions" in largeReceipt, false);
+  const largeControls = await u2.mergeControls(run);
+  assert.equal(largeControls.revision, written.revision);
+  assert.equal(largeControls.contentHash, written.contentHash);
+  assert.equal(largeControls.artifactCount, 1_000);
+  assert.equal(largeControls.candidateDispositionCount, 0);
+  assert.deepEqual(largeControls.reviewValidity, {
+    current: false,
+    currentReviewCount: 0,
+    staleReviewCount: 0,
+    unaffectedReviewCount: 0,
+    unscopedReviewCount: 0,
+  });
+  assert.ok(serializedModelToolResultSize(largeControls) < 10_000);
+  assert.equal("stage" in largeControls, false);
+  assert.equal("artifacts" in largeControls, false);
+  assert.equal("candidateDispositions" in largeControls, false);
   const mergePage = await u2.mergeInventory({ ...run, maxItems: 100 });
   assert.equal(mergePage.totalArtifacts, 1_000);
   assert.equal(mergePage.entries.length, 100);
   assert.equal(mergePage.truncated, true);
   assert.ok(mergePage.continuationCursor);
   await u2.releaseCoordinatorLease({ ...run, taskId: "large-seed", fence: lease.fence });
+});
+
+test("mem-import model-facing mutation tools use compact receipt methods", async () => {
+  const extensionSource = await readFile(join(process.cwd(), "extensions", "mem-import-tools.ts"), "utf-8");
+  assert.match(extensionSource, /mem_merge_commit[\s\S]*?commitWorkerBatchReceipt\(params\)/);
+  assert.match(extensionSource, /mem_merge_apply_repair_batch[\s\S]*?applyWorkerRepairBatchReceipt\(params\)/);
+  assert.match(extensionSource, /mem_import_merge_state[\s\S]*?mergeControls\(params\)/);
+  assert.doesNotMatch(extensionSource, /return result\(await u2\.mergeState\(params\)\)/);
+  assert.doesNotMatch(extensionSource, /return result\(await u2\.commitWorkerBatch\(params\)\)/);
+  assert.doesNotMatch(extensionSource, /return result\(await u2\.applyWorkerRepairBatch\(params\)\)/);
 });
 
 test("a child process independently rejects a forged cross-process extractor grant", async () => {

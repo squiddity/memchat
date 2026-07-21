@@ -19,6 +19,7 @@
     "world-import": "tsx src/world-import-cli.ts",
     "world-import-run": "bash ./scripts/world-import-run.sh",
     "world-import-helper": "tsx src/world-import/command-router.ts",
+    "fixture:alice-excerpt": "tsx scripts/create-alice-integration-excerpt.ts",
     "markdown-review": "tsx src/markdown-review-cli.ts",
     "artifact-review": "tsx src/artifact-review-cli.ts",
     "build": "tsc -p tsconfig.json",

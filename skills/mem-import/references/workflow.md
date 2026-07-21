@@ -23,7 +23,7 @@ Use reconciliation only for a real identity question: repeated entities across p
 
 ### Merge → review
 
-A merger reads proposal packets and bounded canonical artifacts. Prefer `accept` changes that copy proposal artifacts exactly. Use an explicit `upsert` only for intentional cross-proposal synthesis. Copy `artifactContentHash` from canonical reads into the commit read set; use `null` only after observing that the target is absent.
+A merger reads proposal packets and bounded canonical artifacts. Prefer `accept` changes that copy proposal artifacts exactly, and group several compatible proposals into one weighted transaction instead of committing proposal-by-proposal. A call may carry up to 50 lightweight accepts while combined synthesized `upsert`/`delete` changes remain capped at 12. Use an explicit `upsert` only for intentional cross-proposal synthesis. Copy `artifactContentHash` from canonical reads into the commit read set; use `null` only after observing that the target is absent.
 
 The coordinator never writes a complete canonical snapshot or invents dispositions for candidates whose semantic worker failed. Missing proposals remain accounting gaps and must be retried or terminate the run without replacing previously accepted artifacts.
 
