@@ -1,123 +1,122 @@
-# Installation acceptance ladder
+# Installation acceptance probes
 
-Use this ladder for a new installation or whenever the effective adapter/profile fingerprint lacks a current accepted receipt. It tests the worker transport and each semantic handoff on tiny fixtures before spending a book-sized run.
+Use these focused probes for a new installation or whenever the effective adapter/profile fingerprint lacks a current accepted receipt. They test exact role allowlists, production-tool transport, authorization, durable effect correlation, and host lifecycle identity. They do **not** run a semantic import pipeline.
 
-The launcher supplies fixture paths and an acceptance-state location. Run acceptance in a dedicated coordinator invocation whose prompt, grants, and output roots contain no requested corpus input or destination. The constrained coordinator uses only typed mem-import tools and ordinary subagents; it does not create fixtures, install adapters, write cache files directly, or continue into corpus work.
+Tracked semantic inputs live under `fixtures/mem-import/acceptance/v1/`. A deterministic materializer creates one fresh disposable run per probe, seeds only that probe's prerequisites, issues one live assignment, and resolves runtime IDs, hashes, grants, and read controls. Fixture files never contain runtime authority.
 
-The acceptance coordinator returns a sanitized structured summary bound to its durable run, effect, and check hashes. The launcher validates that summary against the ledger, persists the acceptance receipt, and starts a fresh corpus coordinator only after the exact profile is `accepted`. Prose or an unvalidated JSON summary is not acceptance evidence.
+The launcher owns acceptance. Do not launch an acceptance coordinator. Do not disclose the requested corpus input or destination to a probe child.
 
 ## Fast path: accepted profile
 
-A cached receipt may skip this reference only when deterministic status inspection reports `accepted` for the exact effective fingerprint. The fingerprint includes:
+A cached receipt may skip probes only when deterministic status inspection reports `accepted` for the exact effective fingerprint. The fingerprint includes:
 
-- mem-import protocol/tool-schema version;
-- mem-import skill hash and exact role-allowlist hashes;
+- mem-import protocol and tool-schema version;
+- exact role-allowlist hashes;
 - adapter and host runtime identity/version;
 - worker model ID and thinking setting;
 - acceptance fixture version/content hash;
 - package or source revision.
 
-A model or launcher assertion is not a receipt. Missing, failed, expired, unreadable, or mismatched evidence means `stale`: run the affected rungs. Per-run grants, allowlists, dispatch receipts, and checks remain mandatory after acceptance.
-
-If no deterministic acceptance-status capability is installed, treat the cache as unavailable and run this ladder.
+Missing, failed, partial, expired, unreadable, or mismatched evidence is not acceptance. Run only the missing or stale role probes. Per-run grants, assignments, dispatch receipts, and checks remain mandatory after cached acceptance.
 
 ## Execution rules
 
-- Use fresh output roots and fresh assignments.
-- Keep acceptance and corpus work in separate coordinator invocations; never disclose corpus paths to the acceptance coordinator.
-- Launch every semantic role through the candidate ordinary-subagent facility with the assignment's exact returned `tools`, explicit model/thinking, and bounded bootstrap.
-- Record terminal host identity and requested/observed tools.
-- Inspect persisted effects after every rung.
-- Stop at the first failure. Preserve its diagnostic output and record the failed rung; do not continue to discover downstream noise.
-- A retry receives a fresh assignment after revocation.
+For each probe:
 
-## Required ladder
+1. Materialize a fresh independent probe root from the tracked fixture.
+2. For normalization, call the coordinator-owned production normalize tool once.
+3. For a semantic role, launch an ordinary subagent directly from the returned live assignment.
+4. Set active non-lifecycle tools exactly to `assignment.tools`.
+5. Give the child the exact fixture-backed call body and named target production tool.
+6. Require exactly one target tool call, then terminal child completion. Do not retry inside the child.
+7. Record native host identity, outcome, requested tools, observed tools, model, and thinking.
+8. Validate the durable effect through `mem_import_effect_inventory`; do not trust worker prose or inspect files.
+9. Persist the sanitized probe receipt. A failed probe receives a fresh root and assignment if retried.
 
-### 1. Allowlist conformance
+A semantic child prompt is intentionally mechanical: call the named production tool exactly once with the supplied JSON body, then stop. Semantic creativity is evaluated separately.
 
-Launch a harmless fresh child with two allowed typed tools.
+## Required probes
 
-Verify:
+### Normalize
 
-- one allowed tool is visible and callable, reaching its normal authorization/state rejection with dummy authority;
-- a known forbidden mem-import tool is absent;
-- no shell, generic write, or recursive coordinator tool is visible;
-- the host returns an unambiguous terminal child/session ID.
+**Seed:** tracked tiny HTML source only.
 
-**Complete when:** observed non-lifecycle tools equal the requested allowlist exactly and the terminal child ID is correlatable.
+**Call once:** `mem_import_normalize`.
 
-### 2. Extractor
+**Accept when:** the normalized unit/block expectations match the fixture. This probe is coordinator-direct and does not launch a semantic child.
 
-Normalize one tiny source unit containing at least two blocks. Assign one extractor and submit candidates spanning at least two groups.
+### Extractor
 
-Verify the worker reads through `truncated: false`, uses local anchors, omits quote text, submits once, and re-reads the durable packet.
+**Seed:** normalized two-paragraph source.
 
-**Complete when:** extraction status reports the unit submitted, stored quotes equal normalized anchor ranges, and the completed exact-profile dispatch is recorded.
+**Call once:** `mem_extraction_submit`.
 
-### 3. Proposer
+**Accept when:** one extraction effect exists for the assigned task, derived provenance quotes match normalized anchors, the observed allowlist equals the extractor assignment, and host outcome is completed.
 
-Assign the extracted unit to one proposer. Prefer unit scope; also exercise a local candidate subset that deterministically auto-qualifies to `unitId:candidateId`.
+### Proposer
 
-Verify bounded candidate reads return the extractor's packet, the proposer submits typed artifacts, and every assigned candidate has exactly one disposition. Submit a deliberately incomplete accounting body only in a disposable negative probe and require local rejection.
+**Seed:** accepted extraction packet.
 
-**Complete when:** one immutable proposal hash persists, all candidate accounting is complete, and downstream proposal inventory/read returns the same artifacts and dispositions.
+**Call once:** `mem_proposal_submit`.
 
-### 4. Merger
+**Accept when:** one immutable proposal effect exists, every fixture candidate has one disposition, observed tools equal the proposer assignment, and host outcome is completed.
 
-Assign one merger to the accepted proposal. Read proposal pages and the bounded canonical neighborhood.
+### Merger
 
-First accept one proposal artifact by reference. When the fixture supports it, use a second bounded transaction to exercise intentional synthesis or rename. Use canonical `artifactContentHash` values in read sets and verify a deliberately stale token fails without mutation.
+**Seed:** accepted proposal and empty canonical baseline.
 
-**Complete when:** atomic commit returns a new revision/hash, candidate dispositions carry forward automatically, the transaction reconstructs, its proposal is reported consumed, and the exact-profile dispatch is recorded. Manual lease and complete-snapshot worker tools must be absent.
+**Call once:** `mem_merge_commit`.
 
-### 5. Reviewer
+**Accept when:** one merge effect exists, the compact receipt reports the expected artifacts/accounting, the proposal is consumed, observed tools equal the merger assignment, and host outcome is completed.
 
-Assign one reviewer to the canonical revision. Review a narrow lens and submit an immutable revision-bound packet with observed artifact hashes.
+### Reviewer
 
-**Complete when:** the review re-reads at the exact revision/hash, has a bounded read set, and cannot mutate canonical state.
+**Seed:** canonical fixture revision.
 
-### 6. Finalization
+**Call once:** `mem_review_submit`.
 
-Inspect durable work status, run deterministic checks, acquire the coordinator finalization lease, and finalize.
+**Accept when:** one immutable revision-bound review effect exists with the tracked checkpoint, observed tools equal the reviewer assignment, and host outcome is completed.
 
-**Complete when:** candidate accounting has no gaps, no blocking conflict remains, checks have zero errors, Markdown exists, and schema-v2 `stages/import-run.json` records finalized success and exact-profile semantic dispatches.
+## Conditional probes
 
-## Conditional role ladder
+Run these independently before using the corresponding profile in a maintained compendium:
 
-Run these before relying on the corresponding role in maintained books or series.
+### Reconciler
 
-### 7. Reconciler
+**Seed:** purpose-built proposal and canonical alternatives.
 
-Use a purpose-built fixture with two proposal artifacts that may represent the same entity and at least one bounded canonical alternative. Require direct proposal reads rather than reconstruction from extraction packets.
+**Call once:** `mem_identity_submit`.
 
-Exercise one unambiguous `match` or `create` and one `ambiguous` decision with an explicit blocking conflict.
+**Accept when:** one immutable identity effect preserves the fixture decisions and any declared ambiguity/conflict data.
 
-**Complete when:** immutable identity packets are readable by the merger, exact subjects and alternatives are preserved, unrelated evidence is untouched, and blocking ambiguity prevents finalization until an explicit resolution transaction.
+### Repairer
 
-### 8. Repairer
+**Seed:** canonical revision, selected review checkpoint/action, and a launcher-preissued worker lease.
 
-Use a review fixture requesting one concrete action and containing another unassigned action. Grant only the selected checkpoint/action IDs.
+**Call once:** `mem_merge_apply_repair_batch`.
 
-Require one source-supported bounded repair and one negative attempt outside scope.
+**Accept when:** one scoped repair effect creates the expected compact receipt. The launcher releases the lease after child termination; lease setup and cleanup are not child semantic calls.
 
-**Complete when:** the selected action creates a reconstructable repair transaction, the unrelated mutation is rejected, and post-repair checks report the selected action's result or an explicit residual.
+Until tracked reconciler/repairer fixtures are available for the current fixture version, receipts must mark those roles uncovered rather than infer coverage from core probes.
 
-## Scale and recovery ladder
+## What remains deterministic
 
-These deterministic fixtures need not invoke a model on every installation, but their software revision must match the accepted fingerprint:
+Do not spend model turns on negative or scale cases. The matching software revision must pass deterministic tests for:
 
-- paginated 500-unit / 5,000-candidate / 1,000-artifact inventory;
-- sequential multi-work compendium projection;
-- at least twenty proposal-backed transactions with interruption after an accepted prefix;
-- unchanged-dependency rebase and changed-dependency rejection;
-- historical revision reconstruction;
-- cancelled worker followed by a fresh completed retry.
-
-**Complete when:** every response remains bounded, accepted history survives interruption, stale evidence fails locally, and reconstruction hashes match.
+- terminal failure/finalization mutation guards;
+- no-op transaction rejection;
+- incomplete candidate accounting;
+- stale canonical read tokens;
+- weighted merge limits;
+- pagination and response-size bounds;
+- retry task identity and revocation;
+- historical reconstruction and interruption recovery;
+- tiny `normalize → extract → propose → merge → review → checks → finalize` compatibility;
+- 500-unit / 5,000-candidate / 1,000-artifact inventory pressure.
 
 ## Acceptance receipt
 
-A deterministic acceptance service should write sanitized receipts under an XDG state root such as:
+Write sanitized receipts under:
 
 ```text
 $XDG_STATE_HOME/memchat/mem-import/acceptance/<profile-fingerprint>.json
@@ -125,12 +124,10 @@ $XDG_STATE_HOME/memchat/mem-import/acceptance/<profile-fingerprint>.json
 
 Use `~/.local/state` when `XDG_STATE_HOME` is unset. CI or isolated launchers may override the root.
 
-A receipt records:
+A receipt records the fingerprint components, required/conditional probe coverage, fixture hash, target tool, assignment/observed tool hashes, sanitized host task identity, durable effect kind/hash, completion time, and `partial` or `accepted` status.
 
-- profile fingerprint and its components;
-- `accepted`, `failed`, or `stale` status;
-- each rung's fixture hash, durable run/effect hashes, completion time, and diagnostic summary;
-- required and conditional role coverage;
-- optional expiration/recheck time.
+It never records grants, coordinator authority, prompts, source payloads, credentials, filesystem paths, or hidden reasoning.
 
-It never records grants, credentials, prompts, source payloads, or hidden reasoning. Provider behavior can change behind a stable model ID, so an old receipt may become `stale` by policy even when its fingerprint still matches.
+## Separate semantic evaluation
+
+The three-chapter Alice excerpt is an integration/quality/performance corpus, not installation acceptance. Run it explicitly for coordinator phase behavior, semantic quality, identity consolidation, narrative surfaces, transactions, duration, and token usage. Its result neither creates nor invalidates a profile acceptance receipt.

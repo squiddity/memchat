@@ -8,6 +8,10 @@ Coordinator tools create and normalize a standalone or compendium run, inspect s
 
 Assignment results are complete child bootstraps. Their `tools` array is the exact model-visible host allowlist for that role. `mem_import_assignment_brief` remains a bootstrap re-rendering aid for recovery, not a required second call after a successful assignment.
 
+`mem_import_effect_inventory` pages compact assignment, retry-lineage, dispatch, and immutable effect-hash summaries. Use it instead of worker prose or filesystem helpers to discover proposal, identity, merge, review, and extraction effects. It never returns grants or artifact paths.
+
+An explicit `mem_import_fail` and a successful finalization make the run mutation-terminal. Read-only coordinator status remains available, but new assignments, launches, submissions, leases, reviews, and canonical mutations reject. Semantic no-op merge transactions create no revision or effect.
+
 ## Source and extraction
 
 Extractor reads are assignment-scoped and cursor-paginated. Pass a returned continuation cursor unchanged. Anchors identify normalized source blocks; they are not character offsets.

@@ -24,7 +24,7 @@ Keep disposable configuration under `<repo>/.memchat-agent-testing/.pi/settings.
 
 The coordinator profile contains coordinator mem-import tools plus `subagent` and adapter-owned subagent lifecycle controls; it excludes shell, generic file reads, and generic mutation. The launcher must preload the applicable workflow and role guidance. During acceptance and corpus runs, ordinary subagents are reserved for assigned semantic roles; source and ledger access occurs through typed mem-import tools.
 
-When acceptance is required, launch a dedicated acceptance coordinator with only fixture/profile context. After validating and persisting its structured result, launch the corpus coordinator separately; do not ask one coordinator to transition from acceptance into a disclosed corpus job.
+When acceptance is required, the supervising launcher materializes independent tracked-fixture probes and launches each semantic child directly from its live assignment. Do not launch an acceptance coordinator. Require one named production-tool call, validate the automatic terminal result plus `mem_import_effect_inventory`, persist the sanitized receipt, and only then launch the separate corpus coordinator.
 
 Worker profiles contain only `assignment.tools` plus adapter-owned lifecycle controls. Extra installed extensions may exist, but the active `--tools` allowlist is the model-visible boundary.
 
@@ -36,11 +36,13 @@ Treat host lifecycle as authoritative: once the facility reports a child termina
 
 ## Conformance gate
 
-Before substantive work, dispatch a bounded probe that:
+Before substantive work, run the required independent role probes. Each probe:
 
-1. successfully calls every assigned role tool needed by the probe;
-2. cannot see or call a known forbidden mem-import tool;
-3. returns a correlatable terminal child ID;
-4. records requested and observed tools equal to `assignment.tools`.
+1. receives the exact fixture-backed body for one named production tool;
+2. calls that production tool exactly once and does not retry;
+3. has no shell, generic write, recursive coordinator, or unrelated mem-import tool active;
+4. returns a correlatable terminal child ID;
+5. records requested and observed tools equal to `assignment.tools`;
+6. produces exactly one expected durable effect discoverable through `mem_import_effect_inventory`.
 
 Model-visible allowlisting is not an operating-system sandbox. Report only the controls actually observed.

@@ -13,11 +13,12 @@ Do not call `mem_import_begin`, any normalize tool, or dispatch semantic workers
 
 1. Determine the effective worker facility, model, thinking setting, adapter, tool allowlist, and repository/package revision.
 2. Inspect the deterministic acceptance state for that exact profile fingerprint.
-3. If the receipt is missing, stale, failed, unreadable, or mismatched, run the [installation acceptance ladder](references/acceptance-ladder.md) in a fresh disposable output root.
-4. When acceptance is required, the launcher starts a dedicated acceptance coordinator that receives only the fixture, disposable output root, exact profile, and acceptance contract—never the requested corpus input or output root.
-5. Stop on the first failed rung and persist the terminal failure; do not start the requested corpus import.
-6. The launcher validates the acceptance coordinator's structured result against durable ledger hashes and persists the sanitized acceptance receipt. Only then may it start a fresh corpus coordinator invocation.
-7. Continue only with current `accepted` evidence, while still performing per-run assignments, dispatch receipts, and lifecycle gates.
+3. If the receipt is missing, stale, failed, partial, unreadable, or mismatched, run the independent [installation acceptance probes](references/acceptance-ladder.md) in fresh disposable roots.
+4. The launcher materializes each required role probe from tracked fixtures, then launches the semantic child directly from its live assignment. Do not start an acceptance coordinator and never disclose the requested corpus input or output root.
+5. Each semantic child calls its named production tool exactly once with the supplied fixture-backed body. The launcher validates host lifecycle, exact observed tools, and the durable effect hash.
+6. Stop at the first failed required probe; do not start the requested corpus import.
+7. Persist only the sanitized fingerprinted receipt, then start a fresh corpus coordinator invocation.
+8. Continue only with current `accepted` evidence, while still performing per-run assignments, dispatch receipts, and lifecycle gates.
 
 The coordinator should state the preflight result before beginning the corpus run. A prior successful import, a model/launcher assertion, or an existing output directory is not acceptance evidence.
 
@@ -34,7 +35,7 @@ Use an ordinary subagent facility that enforces a per-child tool allowlist and r
 
 Before normalizing the requested corpus, tell the user whether exact-profile acceptance is current or whether the acceptance ladder will run first.
 
-For a new or changed installation, or when no deterministic exact-fingerprint acceptance receipt is available, run the [installation acceptance ladder](references/acceptance-ladder.md). A current accepted receipt skips that detailed reference, but never the per-run assignment and dispatch gates.
+For a new or changed installation, or when no deterministic exact-fingerprint acceptance receipt is available, run the independent [installation acceptance probes](references/acceptance-ladder.md). A current accepted receipt skips that detailed reference, but never the per-run assignment and dispatch gates.
 
 When the host cannot enforce that profile, call `mem_import_fail` and stop. Read a detected host's adapter reference only when invocation details are needed.
 
@@ -70,6 +71,6 @@ A failure is complete only after `mem_import_fail` persists the terminal reason.
 
 - [Coordinator decisions](references/workflow.md) — retries, waves, escalation, and phase gates.
 - [Tool behavior](references/helper-tools.md) — deterministic boundaries and durable outputs; model-call arguments live in tool schemas.
-- [Installation acceptance ladder](references/acceptance-ladder.md) — load only for missing or stale exact-profile acceptance.
+- [Installation acceptance probes](references/acceptance-ladder.md) — load only for missing, partial, or stale exact-profile acceptance.
 - [Subagent capabilities](references/subagent-capabilities.md) — facility assessment.
 - [Role packets](references/extractor-role.md), [proposer](references/proposal-role.md), [reconciler](references/reconciler-role.md), [merger](references/merger-role.md), [reviewer](references/reviewer-role.md), [repairer](references/repairer-role.md).

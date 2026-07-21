@@ -41,7 +41,7 @@ For every semantic worker:
 2. Pass the returned bootstrap and `tools` array verbatim to the ordinary subagent facility.
 3. Wait for its native terminal result.
 4. Record requested and observed model, thinking, exact tools, host child ID, and outcome with `mem_import_record_dispatch`.
-5. Inspect the persisted effect before dependent dispatches.
+5. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; do not recover hashes from worker prose or filesystem helpers.
 
 A failed, cancelled, inline, managed-agent, missing, or mismatched receipt is evidence to retry or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
 

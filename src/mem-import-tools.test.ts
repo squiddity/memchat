@@ -1291,6 +1291,7 @@ test("mem-import model-facing mutation tools use compact receipt methods", async
   assert.match(extensionSource, /mem_merge_commit[\s\S]*?commitWorkerBatchReceipt\(params\)/);
   assert.match(extensionSource, /mem_merge_apply_repair_batch[\s\S]*?applyWorkerRepairBatchReceipt\(params\)/);
   assert.match(extensionSource, /mem_import_merge_state[\s\S]*?mergeControls\(params\)/);
+  assert.match(extensionSource, /mem_import_effect_inventory[\s\S]*?service\.effectInventory\(params\)/);
   assert.doesNotMatch(extensionSource, /return result\(await u2\.mergeState\(params\)\)/);
   assert.doesNotMatch(extensionSource, /return result\(await u2\.commitWorkerBatch\(params\)\)/);
   assert.doesNotMatch(extensionSource, /return result\(await u2\.applyWorkerRepairBatch\(params\)\)/);
