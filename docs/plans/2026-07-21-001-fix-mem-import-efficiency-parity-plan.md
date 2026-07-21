@@ -155,6 +155,8 @@ This is a hard gate: do not run another acceptance ladder or fresh corpus import
 
 The implementation authority for these runtime safeguards and the replacement of the coordinator-driven acceptance ladder with fixture-backed, one-production-tool-call role probes is [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md). This efficiency plan retains the corpus performance and quality objectives; it does not require acceptance to execute an entire semantic pipeline.
 
+**Progress:** commits `7068fee`, `e139c84`, `7175d9f`, and `19f4f99` implement sequential terminal guards, no-op rejection, tracked core-role fixtures, independent normalize/extractor/proposer/merger/reviewer materialization, bounded effect discovery, assignment-derived launch/receipt validation, and simplified active guidance. The linked plan tracks the remaining conditional reconciler/repairer probes, cross-process terminal-transition serialization, concrete host-adapter wiring, and fresh model-backed focused acceptance.
+
 ---
 
 ## Product Contract

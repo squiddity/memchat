@@ -3,7 +3,7 @@ title: "Mem-import Acceptance Simplification and Runtime Safety - Plan"
 type: fix
 date: 2026-07-21
 artifact_contract: ce-unified-plan/v1
-artifact_readiness: implementation-ready
+artifact_readiness: implementation-in-progress
 product_contract_source: failed-mem-import-acceptance-run
 execution: code-and-eval
 related_plan: docs/plans/2026-07-21-001-fix-mem-import-efficiency-parity-plan.md
@@ -33,6 +33,42 @@ The response is twofold:
 2. simplify installation acceptance into independent probes. Each probe starts from version-controlled semantic stage data, creates fresh runtime authority, dispatches one assigned child with the exact role allowlist, and requires exactly one normal production-tool call.
 
 Acceptance will evaluate tool transport, schema routing, authorization, persistence, lifecycle identity, and allowlist enforcement. It will not evaluate whether a coordinator model can plan an entire import. Pipeline compatibility remains covered by deterministic integration tests. Semantic quality and coordinator efficiency remain covered by the three-chapter Alice evaluation corpus, outside installation acceptance.
+
+---
+
+## Implementation Progress
+
+### Completed on 2026-07-21
+
+| Area | Status | Evidence |
+|---|---|---|
+| Compact merge flow prerequisite | Complete | `dd104f1` adds compact merge/repair receipts, compact merge controls, weighted accept batching, and this acceptance redesign plan. |
+| Terminal mutation safety | Complete for sequential authorization paths | `7068fee` adds authoritative run-root terminal state, coordinator/worker mutation guards, successful-finalization terminal state, explicit-failure terminal state, no-op transaction rejection, and consistent lower-level weighted limits. |
+| Tracked fixture pack | Complete for core probes | `e139c84` adds `fixtures/mem-import/acceptance/v1/` with hashed source, extraction/proposal/review semantics, target calls, and expected effects. |
+| Independent materialization | Complete for core probes | `e139c84` adds fresh-root normalize, extractor, proposer, merger, and reviewer materialization through production services. |
+| Effect discovery | Complete | `7175d9f` adds bounded `mem_import_effect_inventory`, normalizing extraction and ordinary worker effect records without exposing grants or artifact paths. |
+| Launch and receipt contract | Complete for library/adapter integration | `7175d9f` adds assignment-derived one-call launch requests, exact observed-tool and durable-dispatch validation, profile fingerprinting, XDG receipt paths, and credential-free partial/accepted receipts. |
+| Active skill guidance | Complete for core probes | `19f4f99` removes the acceptance coordinator/full-pipeline instructions and documents independent production-tool probes plus separate Alice evaluation. |
+| Verification | Passing | `npm run build`, `npm run test:mem-import` (**34/34**), and `git diff --check` passed; the worktree was clean after `19f4f99`. |
+
+### Remaining work
+
+1. Add tracked reconciler and repairer fixture data, materialization, one-call execution, and receipt coverage. Until then those conditional roles remain explicitly uncovered rather than inferred.
+2. Add a shared per-run mutation critical section so `mem_import_fail` or successful finalization cannot race an already-authorized assignment, submission, review, lease, or canonical write. Current terminal guards close sequential post-terminal mutation but do not yet eliminate every cross-process TOCTOU window.
+3. Wire the assignment-derived launch contract into each concrete host adapter that will run acceptance. The core service validates exact observed tools, one target call, authoritative dispatch correlation, and one durable effect; adapter-native dispatch still supplies the actual host lifecycle evidence.
+4. Run a fresh focused model-backed profile acceptance after the relevant adapter wiring is available. Do not rerun the old coordinator-driven ladder.
+5. Run the three-chapter Alice semantic/efficiency evaluation separately after focused acceptance; it is not a profile acceptance gate.
+
+### Implementation-unit status
+
+- **U0:** complete for the core tracked fixture and materializer; conditional role fixtures remain.
+- **U1:** sequential terminal guards complete; concurrent mutation serialization remains.
+- **U2:** complete, including semantic no-op rejection and weighted-limit alignment.
+- **U3:** complete with bounded coordinator effect inventory.
+- **U4:** launch contract and validation complete; concrete host-adapter enforcement remains.
+- **U5:** normalize/extractor/proposer/merger/reviewer complete; reconciler/repairer pending.
+- **U6:** complete for skill, acceptance reference, helper-tool, workflow, and Pi/Herdr adapter guidance.
+- **U7:** existing deterministic integration/pressure suites remain green; Alice is documented as separate evaluation, but the next semantic run remains pending.
 
 ---
 
