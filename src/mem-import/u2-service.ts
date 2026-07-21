@@ -345,7 +345,7 @@ export class MemImportU2Service {
   }
 
   async acquireCoordinatorLease(options: CoordinatorAuthority & { taskId: string }): Promise<MergeLeaseResult> {
-    const run = await this.base.authorizeCoordinator(options);
+    const run = await this.base.authorizeCoordinatorMutation(options);
     assertId(options.taskId, "taskId");
     return this.acquireLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId });
   }
@@ -357,7 +357,7 @@ export class MemImportU2Service {
   }
 
   async heartbeatCoordinatorLease(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<MergeLeaseResult> {
-    const run = await this.base.authorizeCoordinator(options);
+    const run = await this.base.authorizeCoordinatorMutation(options);
     return this.heartbeatLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
   }
 
@@ -377,7 +377,7 @@ export class MemImportU2Service {
   }
 
   async writeCoordinatorMerge(options: CoordinatorAuthority & { taskId: string; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
-    const run = await this.base.authorizeCoordinator(options);
+    const run = await this.base.authorizeCoordinatorMutation(options);
     const { outputRoot: _outputRoot, runId: _runId, coordinatorGrant: _coordinatorGrant, ...mutation } = options;
     return this.writeMerge({ outputRoot: this.canonicalRoot(run), sourceRoot: run.outputRoot, runId: run.runId, actor: { kind: "coordinator", taskId: options.taskId }, ...mutation });
   }
@@ -393,9 +393,17 @@ export class MemImportU2Service {
   /** Apply a small proposal-backed artifact delta; normal mergers cannot use repair scope here. */
   async applyWorkerBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
+    return this.applyAuthorizedWorkerBatch(assignment, options, MAX_SYNTHESIZED_CHANGES);
+  }
+
+  private async applyAuthorizedWorkerBatch(
+    assignment: MemImportAssignmentRecord,
+    options: { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch },
+    maxOperations: number,
+  ): Promise<MergeState> {
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
-    const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
+    const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch, maxOperations);
     const before = await this.readMergeState(canonicalRoot);
     this.assertReadSet(before.stage, batch.readSet);
     const identityPackets = await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
@@ -461,7 +469,7 @@ export class MemImportU2Service {
     const lease = await this.acquireLease(canonicalRoot, assignment.runId, owner);
     try {
       const current = await this.readMergeState(canonicalRoot);
-      return await this.applyWorkerBatch({ ...options, fence: lease.fence, expectedRevision: current.revision, expectedContentHash: current.contentHash, batch });
+      return await this.applyAuthorizedWorkerBatch(assignment, { fence: lease.fence, expectedRevision: current.revision, expectedContentHash: current.contentHash, batch }, MAX_TOTAL_MERGE_CHANGES);
     } finally {
       // The commit already authorized and captured its owner. Release directly so a
       // concurrent coordinator revocation cannot strand the lease in the cleanup path.
@@ -545,7 +553,7 @@ export class MemImportU2Service {
 
   /** Persist a terminal coordinator failure when required delegation/capability gates cannot be met. */
   async fail(options: CoordinatorAuthority & { reasonCode: string; message: string }): Promise<{ auditPath: string }> {
-    const run = await this.base.authorizeCoordinator(options);
+    const run = await this.base.authorizeCoordinatorMutation(options);
     requireNonEmpty(options.reasonCode, "reasonCode");
     requireNonEmpty(options.message, "message");
     const safeReasonCode = options.reasonCode.replace(/[^a-z0-9._-]/gi, "-").slice(0, 80);
@@ -557,6 +565,7 @@ export class MemImportU2Service {
       at: this.now().toISOString(),
     }, { status: "failed", finalizedAt: this.now().toISOString(), error: `${safeReasonCode}: ${message}` });
     await this.recordEvent(run.outputRoot, "failure", { runId: run.runId, reasonCode: safeReasonCode, message });
+    await this.base.markRunTerminal(run, "failed", `${safeReasonCode}: ${message}`);
     return { auditPath: "stages/import-run.json" };
   }
 
@@ -576,7 +585,7 @@ export class MemImportU2Service {
   }
 
   async finalize(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<{ finalized: boolean; auditPath: string; checksPath: string; errors: number; warnings: number }> {
-    const run = await this.base.authorizeCoordinator(options);
+    const run = await this.base.authorizeCoordinatorMutation(options);
     const projectionRoot = this.canonicalRoot(run);
     await this.requireLease(projectionRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
     if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
@@ -617,6 +626,7 @@ export class MemImportU2Service {
       finalization: { passed: errors === 0, errorCount: errors, warningCount: warnings, checksPath: this.relative(projectionRoot, checksPath) },
     });
     await this.recordEvent(projectionRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(projectionRoot, checksPath), errors, warnings, status: audit.status });
+    if (errors === 0) await this.base.markRunTerminal(run, "finalized");
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(projectionRoot, checksPath), errors, warnings };
   }
 
@@ -635,6 +645,12 @@ export class MemImportU2Service {
     if (!Array.isArray(submitted.artifacts)) throw new Error("Merge stage must contain artifacts array");
     await this.deriveArtifactProvenanceQuotes(options.sourceRoot ?? options.outputRoot, submitted, options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined);
     const contentHash = hash(submitted);
+    const meaningfulConflictChange = options.transaction?.conflictOperations?.length
+      ? await this.hasMeaningfulConflictChange(options.outputRoot, options.transaction.conflictOperations)
+      : false;
+    if (contentHash === before.contentHash && !meaningfulConflictChange) {
+      throw new Error("Merge transaction is a semantic no-op; no revision was created");
+    }
     const stage: StageEnvelope = { ...submitted, revision: before.revision + 1, contentHash, ...(before.contentHash ? { parentContentHash: before.contentHash } : {}) };
     const { validateStageEnvelope } = await import("../world-import/staging.js");
     validateStageEnvelope(stage, { requireArtifacts: true });
@@ -806,12 +822,12 @@ export class MemImportU2Service {
     return { stage, revision: stage.revision!, contentHash: stage.contentHash, ...(stage.parentContentHash ? { parentContentHash: stage.parentContentHash } : {}) };
   }
 
-  private async validateBatch(outputRoot: string, runId: string, value: MergeBatch): Promise<MergeBatch> {
+  private async validateBatch(outputRoot: string, runId: string, value: MergeBatch, maxOperations = MAX_SYNTHESIZED_CHANGES): Promise<MergeBatch> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Merge batch must be an object");
     if (!Array.isArray(value.proposalHashes) || value.proposalHashes.length === 0 || value.proposalHashes.length > MAX_MERGE_PROPOSALS || value.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error(`Merge batch proposalHashes must contain one to ${MAX_MERGE_PROPOSALS} SHA-256 hashes`);
     if (new Set(value.proposalHashes).size !== value.proposalHashes.length) throw new Error("Merge batch proposalHashes must be unique");
     if (value.identityProposalHashes !== undefined && (!Array.isArray(value.identityProposalHashes) || value.identityProposalHashes.length > 100 || value.identityProposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item)) || new Set(value.identityProposalHashes).size !== value.identityProposalHashes.length)) throw new Error("Merge batch identityProposalHashes must contain unique SHA-256 hashes");
-    if (!Array.isArray(value.operations) || value.operations.length === 0 || value.operations.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge batch operations must contain one to ${MAX_TOTAL_MERGE_CHANGES} entries`);
+    if (!Array.isArray(value.operations) || value.operations.length === 0 || value.operations.length > maxOperations) throw new Error(`Merge batch operations must contain one to ${maxOperations} entries`);
     if (!Array.isArray(value.readSet) || value.readSet.length === 0 || value.readSet.length > 100) throw new Error("Merge batch requires one to one hundred readSet entries");
     requireNonEmpty(value.rationale, "batch.rationale");
     // Declared immutable proposals are the evidence boundary. An explicit upsert
@@ -910,6 +926,16 @@ export class MemImportU2Service {
     const value = JSON.parse(await readFile(path, "utf-8")) as Partial<CanonicalIdentityState>;
     if (value.version !== 1 || value.kind !== "mem-import-identity-state" || !value.owners || !value.conflicts || typeof value.owners !== "object" || typeof value.conflicts !== "object") throw new Error("Invalid canonical identity state");
     return value as CanonicalIdentityState;
+  }
+
+  private async hasMeaningfulConflictChange(outputRoot: string, operations: ConflictOperation[]): Promise<boolean> {
+    const state = await this.readIdentityState(outputRoot);
+    return operations.some((operation) => {
+      if (operation.kind === "create") return !state.conflicts[operation.conflictId];
+      const current = state.conflicts[operation.conflictId];
+      if (!current) return false;
+      return current.status !== (operation.kind === "resolve" ? "resolved" : "deferred");
+    });
   }
 
   private async applyIdentityEffects(outputRoot: string, batch: MergeBatch, packets: StoredIdentityProposal[]): Promise<void> {

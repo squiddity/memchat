@@ -36,6 +36,16 @@ export type AssignmentRole = "extractor" | "proposer" | "reconciler" | "merger" 
 export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
 export type DispatchFacility = "ordinary-subagent" | "managed-agent" | "inline" | "unknown";
 export type DispatchOutcome = "completed" | "failed" | "cancelled";
+export type MemImportTerminalStatus = "failed" | "finalized";
+
+const MUTATING_WORKER_CAPABILITIES = new Set<MemImportCapability>([
+  "extraction:submit",
+  "merge:lease",
+  "merge:write",
+  "proposal:submit",
+  "identity:submit",
+  "review:submit",
+]);
 
 /** Exact model-visible role allowlists expected from an ordinary semantic worker. */
 export const MEM_IMPORT_ROLE_TOOLS: Record<AssignmentRole, string[]> = {
@@ -86,6 +96,11 @@ export type MemImportRunRecord = {
   coordinatorTokenHash: string;
   createdAt: string;
   normalizedAt?: string;
+  terminal?: {
+    status: MemImportTerminalStatus;
+    at: string;
+    reason?: string;
+  };
   /** Present for runs allocated under a persistent compendium; canonical state lives there. */
   compendiumRoot?: string;
   audit?: { parent?: MemImportActorAudit };
@@ -362,6 +377,10 @@ function parseRunRecord(value: unknown): MemImportRunRecord {
     || typeof value.coordinatorTokenHash !== "string"
     || typeof value.createdAt !== "string"
     || (value.normalizedAt !== undefined && typeof value.normalizedAt !== "string")
+    || (value.terminal !== undefined && (!isRecord(value.terminal)
+      || !["failed", "finalized"].includes(String(value.terminal.status))
+      || typeof value.terminal.at !== "string"
+      || (value.terminal.reason !== undefined && typeof value.terminal.reason !== "string")))
     || (value.compendiumRoot !== undefined && typeof value.compendiumRoot !== "string")) {
     throw new Error("Invalid mem-import run record");
   }
@@ -427,6 +446,11 @@ function assertRunScope(run: MemImportRunRecord, outputRoot: string, runId: stri
 
 function isLiveAssignment(assignment: MemImportAssignmentRecord, now: Date): boolean {
   return !assignment.revokedAt && !assignment.supersededAt && asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() > now.getTime();
+}
+
+function assertRunMutable(run: MemImportRunRecord): void {
+  if (!run.terminal) return;
+  throw new Error(`Mem-import run is terminal (${run.terminal.status} at ${run.terminal.at}); semantic mutation is no longer allowed`);
 }
 
 async function withUnitLocks<T>(outputRoot: string, unitIds: string[], action: () => Promise<T>): Promise<T> {
@@ -516,8 +540,24 @@ export class MemImportService {
     return run;
   }
 
-  async normalize(options: { outputRoot: string; runId: string; coordinatorGrant: string; input: string }): Promise<SourceManifest> {
+  async authorizeCoordinatorMutation(options: { outputRoot: string; runId: string; coordinatorGrant: string }): Promise<MemImportRunRecord> {
     const run = await this.authorizeCoordinator(options);
+    assertRunMutable(run);
+    return run;
+  }
+
+  async markRunTerminal(run: MemImportRunRecord, status: MemImportTerminalStatus, reason?: string): Promise<MemImportRunRecord> {
+    const current = await readRun(run.outputRoot);
+    assertRunScope(current, run.outputRoot, run.runId);
+    assertRunMutable(current);
+    const terminal = { status, at: this.now().toISOString(), ...(reason ? { reason: reason.slice(0, 1000) } : {}) };
+    const next = { ...current, terminal } satisfies MemImportRunRecord;
+    await writeJson(runPath(run.outputRoot), next);
+    return next;
+  }
+
+  async normalize(options: { outputRoot: string; runId: string; coordinatorGrant: string; input: string }): Promise<SourceManifest> {
+    const run = await this.authorizeCoordinatorMutation(options);
     requireNonEmpty(options.input, "input");
     const manifest = await normalizeSources({ input: resolve(options.input), outputRoot: run.outputRoot });
     await writeJson(runPath(run.outputRoot), { ...run, normalizedAt: this.now().toISOString() } satisfies MemImportRunRecord);
@@ -596,7 +636,7 @@ export class MemImportService {
     /** Credential-free, model-supplied identity and adapter/profile audit metadata. */
     audit?: MemImportAssignmentAudit;
   }): Promise<ExtractorAssignmentResult> {
-    const run = await this.authorizeCoordinator(options);
+    const run = await this.authorizeCoordinatorMutation(options);
     if (!run.normalizedAt || !existsSync(`${run.outputRoot}/sources/manifest.json`)) throw new Error("Normalize the run before issuing extractor assignments");
     assertTaskId(options.taskId);
     if (!Array.isArray(options.unitIds) || options.unitIds.length === 0) throw new Error("unitIds must be a non-empty array");
@@ -692,7 +732,7 @@ export class MemImportService {
     actionIds?: string[];
     audit?: MemImportAssignmentAudit;
   }): Promise<WorkerAssignmentResult> {
-    const run = await this.authorizeCoordinator(options);
+    const run = await this.authorizeCoordinatorMutation(options);
     if (!run.normalizedAt || !existsSync(`${run.outputRoot}/sources/manifest.json`)) throw new Error("Normalize the run before issuing worker assignments");
     const manifest = await readManifest(run.outputRoot);
     assertTaskId(options.taskId);
@@ -826,7 +866,7 @@ export class MemImportService {
     actionIds: string[];
     tools: string[];
   }> {
-    const run = await this.authorizeCoordinator(options);
+    const run = await this.authorizeCoordinatorMutation(options);
     const assignment = await readAssignment(run.outputRoot, options.taskId);
     if (assignment.runId !== run.runId || assignment.outputRoot !== run.outputRoot) throw new Error("Assignment brief does not belong to this run");
     if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
@@ -869,7 +909,7 @@ export class MemImportService {
     requestedThinking?: string;
     observedThinking?: string;
   }): Promise<MemImportDispatchRecord> {
-    const run = await this.authorizeCoordinator(options);
+    const run = await this.authorizeCoordinatorMutation(options);
     const assignment = await readAssignment(run.outputRoot, options.taskId);
     if (assignment.runId !== run.runId) throw new Error("Dispatch assignment does not belong to this run");
     if (!["ordinary-subagent", "managed-agent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid dispatch facility");
@@ -928,7 +968,7 @@ export class MemImportService {
   }
 
   async revokeAssignment(options: { outputRoot: string; runId: string; coordinatorGrant: string; taskId: string }): Promise<{ taskId: string; revokedAt: string }> {
-    const run = await this.authorizeCoordinator(options);
+    const run = await this.authorizeCoordinatorMutation(options);
     assertTaskId(options.taskId);
     const initial = await readAssignment(run.outputRoot, options.taskId);
     if (initial.runId !== run.runId) throw new Error("Assignment does not belong to this run");
@@ -960,6 +1000,7 @@ export class MemImportService {
       assertRunScope(run, outputRoot, options.runId);
       if (assignment.version !== MEM_IMPORT_RUN_VERSION || assignment.kind !== "mem-import-assignment") throw new Error("Invalid mem-import assignment record");
       if (assignment.outputRoot !== outputRoot || assignment.runId !== run.runId) throw new Error("Assignment scope does not match the active run");
+      if (MUTATING_WORKER_CAPABILITIES.has(options.capability)) assertRunMutable(run);
       if (options.role && assignment.role !== options.role) throw new Error(`Assignment role is not ${options.role}`);
       if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
       if (assignment.revokedAt) throw new Error(`Assignment ${assignment.taskId} was revoked at ${assignment.revokedAt}`);

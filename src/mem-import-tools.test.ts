@@ -433,6 +433,18 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const canonicalArtifact = await u2.readMergeArtifactForWorker({ ...merger, artifactId: "ada" });
   assert.equal(canonicalArtifact.artifact?.title, "Ada");
   assert.equal(canonicalArtifact.artifactContentHash, canonicalInventory.entries[0]!.artifactContentHash);
+  await assert.rejects(
+    u2.commitWorkerBatchReceipt({
+      ...merger,
+      proposalHashes: [persisted.contentHash],
+      readSet: [{ artifactId: "ada", contentHash: canonicalArtifact.artifactContentHash }],
+      changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }],
+      rationale: "A repeated unchanged accept must not create another revision.",
+    }),
+    /semantic no-op/,
+  );
+  assert.equal((await readdir(join(output, "stages", "merge", "transactions"))).length, 1);
+  assert.equal((await u2.mergeState(run)).revision, 1);
   assert.deepEqual(merged.stage.candidateDispositions, [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }]);
   const coverage = await buildCoveragePlan(output);
   assert.deepEqual(coverage.candidateAccounting, { totalCandidates: 1, represented: 1, merged: 0, deferred: 0, dropped: 0, unaccounted: [] });
@@ -878,18 +890,31 @@ test("mem-import finalization rejects inline, managed, or missing semantic dispa
   const final = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success", fence: finalLease.fence });
   assert.equal(final.finalized, true, await readFile(join(output, final.checksPath), "utf-8"));
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success", fence: finalLease.fence });
+  const terminalRun = JSON.parse(await readFile(join(output, "stages", "orchestration", "run.json"), "utf-8")) as { terminal?: { status?: string } };
+  assert.equal(terminalRun.terminal?.status, "finalized");
+  assert.equal((await service.status(run)).normalized, true);
+  await assert.rejects(service.assignWorker({ ...run, taskId: "after-finalization", role: "reviewer" }), /run is terminal/);
+  await assert.rejects(u2.acquireCoordinatorLease({ ...run, taskId: "after-finalization" }), /run is terminal/);
 });
 
-test("mem-import records a terminal safe failure when mandatory delegation is unavailable", async () => {
-  const root = await tempDir();
-  const output = join(root, "output");
+test("mem-import explicit failure is terminal for every semantic mutation surface", async () => {
   const service = new MemImportService();
   const u2 = new MemImportU2Service(service);
-  const run = await service.begin(output);
+  const proposals = new MemImportProposalService(service);
+  const identities = new MemImportIdentityService(service);
+  const { output, run, units } = await setup(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ ...run, taskId: "terminal-extractor", unitIds: [unit.unitId] });
+  const proposer = await service.assignWorker({ ...run, taskId: "terminal-proposer", role: "proposer", unitIds: [unit.unitId] });
+  const reconciler = await service.assignWorker({ ...run, taskId: "terminal-reconciler", role: "reconciler", proposalHashes: ["a".repeat(64)] });
+  const merger = await service.assignWorker({ ...run, taskId: "terminal-merger", role: "merger" });
+  const reviewer = await service.assignWorker({ ...run, taskId: "terminal-reviewer", role: "reviewer" });
+  const repairer = await service.assignWorker({ ...run, taskId: "terminal-repairer", role: "repairer", checkpointIds: ["terminal-review"], actionIds: ["terminal-action"] });
+  const lease = await u2.acquireCoordinatorLease({ ...run, taskId: "terminal-coordinator" });
+  const assignmentCount = (await readdir(join(output, "stages", "orchestration", "assignments"))).length;
+
   const receipt = await u2.fail({
-    outputRoot: output,
-    runId: run.runId,
-    coordinatorGrant: run.coordinatorGrant,
+    ...run,
     reasonCode: "no-enforced-subagent-facility",
     message: "No facility could enforce the extractor and merger tool allowlists.",
   });
@@ -899,6 +924,34 @@ test("mem-import records a terminal safe failure when mandatory delegation is un
   assert.equal(audit.status, "failed");
   assert.match(String(audit.error), /no-enforced-subagent-facility/);
   assert.doesNotMatch(JSON.stringify(audit), new RegExp(run.coordinatorGrant));
+  const runRecord = JSON.parse(await readFile(join(output, "stages", "orchestration", "run.json"), "utf-8")) as { terminal?: { status?: string } };
+  assert.equal(runRecord.terminal?.status, "failed");
+  assert.equal((await service.status(run)).normalized, true, "read-only coordinator status remains available");
+
+  const terminal = /run is terminal/;
+  await assert.rejects(service.normalize({ ...run, input: "missing.html" }), terminal);
+  await assert.rejects(service.assignExtractor({ ...run, taskId: "after-failure-extractor", unitIds: [unit.unitId] }), terminal);
+  await assert.rejects(service.assignWorker({ ...run, taskId: "after-failure-reviewer", role: "reviewer" }), terminal);
+  await assert.rejects(service.assignmentBrief({ ...run, taskId: extractor.taskId, grant: extractor.grant }), terminal);
+  await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "ordinary-subagent", hostTaskId: "terminal-host", requestedTools: extractor.tools, observedTools: extractor.tools, outcome: "completed" }), terminal);
+  await assert.rejects(service.revokeAssignment({ ...run, taskId: extractor.taskId }), terminal);
+  await assert.rejects(service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) }), terminal);
+  await assert.rejects(proposals.submitWorkerProposalBody({ ...proposer, artifacts: [], candidateDispositions: [], rationale: "Terminal proposal must not persist." }), terminal);
+  await assert.rejects(identities.submitWorkerIdentity({ ...reconciler, packet: {} }), terminal);
+  await assert.rejects(u2.submitReview({ ...reviewer, packet: {} as never }), terminal);
+  await assert.rejects(u2.acquireCoordinatorLease({ ...run, taskId: "after-failure-coordinator" }), terminal);
+  await assert.rejects(u2.acquireWorkerLease(merger), terminal);
+  await assert.rejects(u2.heartbeatCoordinatorLease({ ...run, taskId: "terminal-coordinator", fence: lease.fence }), terminal);
+  await assert.rejects(u2.commitWorkerBatch({ ...merger, proposalHashes: ["a".repeat(64)], readSet: [], changes: [], rationale: "Terminal merge must not persist." }), terminal);
+  await assert.rejects(u2.applyWorkerRepairBatch({ ...repairer, fence: lease.fence, expectedRevision: 0, expectedContentHash: null, checkpointId: "terminal-review", actionIds: ["terminal-action"], batch: { proposalHashes: ["a".repeat(64)], readSet: [], operations: [], rationale: "Terminal repair must not persist." } }), terminal);
+  await assert.rejects(u2.writeCoordinatorMerge({ ...run, taskId: "terminal-coordinator", fence: lease.fence, expectedRevision: 0, expectedContentHash: null, stage: { version: 1, kind: "merge", artifacts: [], candidateDispositions: [] }, rationale: "Terminal coordinator write must not persist." }), terminal);
+  await assert.rejects(u2.finalize({ ...run, taskId: "terminal-coordinator", fence: lease.fence }), terminal);
+  await assert.rejects(u2.fail({ ...run, reasonCode: "repeated-failure", message: "A terminal run cannot fail twice." }), terminal);
+  await u2.releaseCoordinatorLease({ ...run, taskId: "terminal-coordinator", fence: lease.fence });
+
+  assert.equal((await readdir(join(output, "stages", "orchestration", "assignments"))).length, assignmentCount);
+  assert.equal(existsSync(join(output, "stages", "merge", "transactions")), false);
+  assert.equal(existsSync(join(output, "stages", "reviews")), false);
 });
 
 test("mem-import U2 rejects concurrent and stale fenced merge writers", async () => {
