@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "checkpointId": "fixture-review",
+  "findings": [
+    {
+      "id": "fixture-finding",
+      "severity": "info",
+      "summary": "The fixture artifacts preserve both the guard and tower observations."
+    }
+  ],
+  "requestedActions": [],
+  "rationale": "Verify that the reviewer can submit one immutable revision-bound packet."
+}

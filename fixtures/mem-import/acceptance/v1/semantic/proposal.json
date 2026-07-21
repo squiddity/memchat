@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "id": "ada",
+      "group": "people",
+      "type": "character",
+      "title": "Ada",
+      "description": "Ada guards the glass tower and keeps its silver key.",
+      "tags": ["guard", "key-holder"],
+      "sections": [
+        {
+          "heading": "Role",
+          "body": "Ada guards the glass tower and holds its silver key."
+        }
+      ],
+      "candidateIds": ["ada"],
+      "startBlock": 1,
+      "endBlock": 1
+    },
+    {
+      "id": "glass-tower",
+      "group": "places",
+      "type": "landmark",
+      "title": "Glass Tower",
+      "description": "The glass tower stands above the northern garden.",
+      "tags": ["tower", "garden"],
+      "sections": [
+        {
+          "heading": "Setting",
+          "body": "The glass tower overlooks the northern garden."
+        }
+      ],
+      "candidateIds": ["glass-tower"],
+      "startBlock": 1,
+      "endBlock": 2
+    }
+  ],
+  "rationale": "Represent the two disjoint fixture candidates as provenance-backed artifacts."
+}

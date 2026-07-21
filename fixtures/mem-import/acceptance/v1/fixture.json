@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "kind": "mem-import-acceptance-fixture",
+  "fixtureId": "tiny-glass-tower-v1",
+  "protocolVersion": 1,
+  "supportedProbes": ["normalize", "extractor", "proposer", "merger", "reviewer"],
+  "files": {
+    "input/scene.html": "052670a604a9bd32252f5551064fd84c19dab3a5945b3d3fb91af6ca0ade8151",
+    "semantic/extraction.json": "b43efa61bfec4c5f724b83745b474971401e64592e78fab5c2d00bd8011a8799",
+    "semantic/proposal.json": "adfd8573e6a8f61aa19c01116220d37e597a4616b8dac1265c1f63a49e1c61d3",
+    "semantic/review.json": "fc96ca1749064bfcd1c44d77b80a367e56012ab7aeefcc6f973a8c0b05678eac",
+    "calls.json": "8c577035e06fe3d0e494c5b01dc8f44dc3b590d368efb3ce238f7ab423a9fb06",
+    "expected-effects.json": "256f0e1cc1c89dca0509b3f35c2d64d10c935584b5b9b46ffcfc44c87c306d89"
+  },
+  "forbiddenRuntimeFields": [
+    "coordinatorGrant",
+    "grant",
+    "outputRoot",
+    "runId",
+    "taskId",
+    "hostTaskId",
+    "createdAt",
+    "submittedAt",
+    "recordedAt"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "candidates": [
+    {
+      "id": "ada",
+      "group": "people",
+      "title": "Ada",
+      "startBlock": 1,
+      "endBlock": 1,
+      "payload": {
+        "summary": "Ada guards the glass tower and holds its key."
+      }
+    },
+    {
+      "id": "glass-tower",
+      "group": "places",
+      "title": "Glass Tower",
+      "startBlock": 1,
+      "endBlock": 2,
+      "payload": {
+        "summary": "A tower above the northern garden."
+      }
+    }
+  ]
+}

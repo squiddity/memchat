@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "normalize": {
+    "unitCount": 1,
+    "minimumBlockCount": 3
+  },
+  "extractor": {
+    "kind": "extraction",
+    "candidateCount": 2,
+    "groups": ["people", "places"]
+  },
+  "proposer": {
+    "kind": "proposal",
+    "artifactIds": ["ada", "glass-tower"],
+    "candidateDispositionCount": 2
+  },
+  "merger": {
+    "kind": "merge",
+    "artifactIds": ["ada", "glass-tower"],
+    "candidateDispositionCount": 2
+  },
+  "reviewer": {
+    "kind": "review",
+    "checkpointId": "fixture-review"
+  }
+}
