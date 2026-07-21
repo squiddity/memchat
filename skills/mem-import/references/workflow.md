@@ -10,9 +10,10 @@ Proceed for a shard when:
 
 - every assigned source page was read through `truncated: false` or a deliberate bounded span;
 - its extraction packet exists and its anchors support the candidates;
+- the persisted packet has been re-read and is complete at both ends, with no clipped title or payload text;
 - the child's completed dispatch receipt exactly matches `assignment.tools`.
 
-Revoke and retry weak or interrupted assignments with fresh task IDs. Increase concurrency only while early packets and parent completion traffic remain clean.
+Revoke and retry weak, clipped, or interrupted assignments with fresh task IDs before proposal work. Increase concurrency only while early packets and parent completion traffic remain clean.
 
 ### Proposal → merge
 
@@ -24,7 +25,9 @@ Use reconciliation only for a real identity question: repeated entities across p
 
 A merger reads proposal packets and bounded canonical artifacts. Prefer `accept` changes that copy proposal artifacts exactly. Use an explicit `upsert` only for intentional cross-proposal synthesis. Copy `artifactContentHash` from canonical reads into the commit read set; use `null` only after observing that the target is absent.
 
-`mem_merge_commit` performs one bounded transaction and owns lease, fence, current-revision CAS, candidate-accounting carry-forward, and release. On stale artifact evidence, re-read only the affected canonical neighborhood and form a new decision.
+The coordinator never writes a complete canonical snapshot or invents dispositions for candidates whose semantic worker failed. Missing proposals remain accounting gaps and must be retried or terminate the run without replacing previously accepted artifacts.
+
+`mem_merge_commit` performs one bounded transaction and owns lease, fence, current-revision CAS, candidate-accounting carry-forward, and release. A normal merger receives only this commit surface—not manual acquire, heartbeat, or release tools. Never broaden `assignment.tools`, guess fences, or revoke a lease-owning worker before its commit cleanup completes. If a process dies while holding a lease, wait for the recorded expiry and let one fresh exact-allowlist `mem_merge_commit` recover it; do not poll or brute-force release attempts. On stale artifact evidence, re-read only the affected canonical neighborhood and form a new decision.
 
 ### Review → finalization
 
@@ -40,7 +43,9 @@ For every semantic worker:
 4. Record requested and observed model, thinking, exact tools, host child ID, and outcome with `mem_import_record_dispatch`.
 5. Inspect the persisted effect before dependent dispatches.
 
-A failed, cancelled, inline, managed-agent, missing, or mismatched receipt is evidence to retry or stop; it is not acceptance evidence.
+A failed, cancelled, inline, managed-agent, missing, or mismatched receipt is evidence to retry or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
+
+For a non-extractor retry, revoke the old assignment and issue a fresh task ID without `retriesTaskId` or `supersedesTaskIds`; those lineage fields belong only to extractor assignment calls.
 
 ## Scale and recovery
 

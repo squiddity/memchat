@@ -350,7 +350,7 @@ export class MemImportU2Service {
   async commitWorkerBatch(options: WorkerAuthority & {
     proposalHashes: string[];
     identityProposalHashes?: string[];
-    readSet: MergeBatch["readSet"];
+    readSet: Array<{ artifactId: string; contentHash?: string | null }>;
     changes: MergeCommitChange[];
     conflictOperations?: ConflictOperation[];
     rationale: string;
@@ -373,18 +373,22 @@ export class MemImportU2Service {
     const batch: MergeBatch = {
       proposalHashes: options.proposalHashes,
       ...(options.identityProposalHashes?.length ? { identityProposalHashes: options.identityProposalHashes } : {}),
-      readSet: options.readSet,
+      readSet: options.readSet.map((item) => ({ artifactId: item.artifactId, contentHash: item.contentHash ?? null })),
       operations,
       candidateDispositions,
       ...(options.conflictOperations?.length ? { conflictOperations: options.conflictOperations } : {}),
       rationale: options.rationale,
     };
-    const lease = await this.acquireWorkerLease(options);
+    const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+    const owner: MergeActor = { kind: "worker", taskId: assignment.taskId, role: assignment.role };
+    const lease = await this.acquireLease(canonicalRoot, assignment.runId, owner);
     try {
-      const current = await this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
+      const current = await this.readMergeState(canonicalRoot);
       return await this.applyWorkerBatch({ ...options, fence: lease.fence, expectedRevision: current.revision, expectedContentHash: current.contentHash, batch });
     } finally {
-      await this.releaseWorkerLease({ ...options, fence: lease.fence });
+      // The commit already authorized and captured its owner. Release directly so a
+      // concurrent coordinator revocation cannot strand the lease in the cleanup path.
+      await this.releaseLease(canonicalRoot, assignment.runId, owner, lease.fence);
     }
   }
 
@@ -461,13 +465,19 @@ export class MemImportU2Service {
     return { auditPath: "stages/import-run.json" };
   }
 
-  async checks(options: CoordinatorAuthority): Promise<{ deterministic: Awaited<ReturnType<typeof deterministicWorldImportChecks>>; lint: Awaited<ReturnType<typeof lintWorldImport>>; coverage: Awaited<ReturnType<typeof buildCoveragePlan>>; provenance: Awaited<ReturnType<typeof provenanceAudit>> }> {
+  async checks(options: CoordinatorAuthority) {
     const run = await this.base.authorizeCoordinator(options);
-    if (run.compendiumRoot) {
-      await projectCompendium(run.compendiumRoot);
-      return this.collectChecks(run.compendiumRoot);
-    }
-    return this.collectChecks(run.outputRoot);
+    const projectionRoot = this.canonicalRoot(run);
+    if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
+    const checks = await this.collectChecks(projectionRoot);
+    const identityDiagnostics = await this.identityDiagnostics(projectionRoot);
+    const dispatchRoots = run.compendiumRoot
+      ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
+      : [run.outputRoot];
+    const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
+      .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
+    const diagnostics = [...identityDiagnostics, ...dispatchDiagnostics];
+    return { ...checks, readiness: { passed: diagnostics.every((item) => item.level !== "error"), diagnostics } };
   }
 
   async finalize(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<{ finalized: boolean; auditPath: string; checksPath: string; errors: number; warnings: number }> {
@@ -497,7 +507,7 @@ export class MemImportU2Service {
     const state = await this.readMergeState(projectionRoot);
     if (!state.contentHash) throw new Error("Cannot finalize before a canonical merge revision exists");
     const checksPath = join(projectionRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
-    await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, checks });
+    await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, diagnostics, checks });
     const receiptPath = this.relative(projectionRoot, this.revisionReceiptPath(projectionRoot, state.revision, state.contentHash));
     const audit = await this.updateAudit(projectionRoot, run.runId, {
       kind: "finalization",

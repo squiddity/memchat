@@ -6,7 +6,7 @@ Turn one assigned extraction shard into immutable provisional artifacts with com
 
 ## Profile
 
-Launch an ordinary subagent with the assignment bootstrap and exactly `assignment.tools`. Prefer unit-scoped assignments, which include every candidate in those units. For a subset, the coordinator must assign qualified `unitId:candidateId` values.
+Launch an ordinary subagent with the assignment bootstrap and exactly `assignment.tools`. Prefer coherent unit-scoped assignments when they fit, which include every candidate in those units. Before assignment, the coordinator uses `mem_import_extraction_candidates` to inspect bounded candidate counts and IDs. Size shards by persisted candidate volume and expected artifact complexity, not unit count alone: begin conservatively for an unproven or budget model, then widen only after a clean proposal. For a subset, assign qualified `unitId:candidateId` values, partitioning the failed scope exactly once without dropping candidates.
 
 ## Steps
 
@@ -15,7 +15,10 @@ Launch an ordinary subagent with the assignment bootstrap and exactly `assignmen
 3. Give every assigned candidate exactly one disposition:
    - `represented` or `merged` names a proposed `artifactId`;
    - `deferred` or `dropped` gives a reason.
-4. Call `mem_proposal_submit` with artifacts, dispositions, and a concise rationale.
+4. Keep artifacts and provenance concise but semantically complete. Use narrow supporting ranges and avoid repeating the same source prose across artifact sections.
+5. Call `mem_proposal_submit` with artifacts, dispositions, and a concise rationale.
+
+The submit is transactional: validation failure writes no proposal. Correct the exact reported field once; on malformed/truncated transport or repeated failure, stop and report it rather than repeatedly rebuilding an oversized body. The coordinator revokes the assignment and retries a smaller shard with a fresh task ID.
 
 The tool derives packet identity and extraction hashes and rejects incomplete accounting.
 

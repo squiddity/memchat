@@ -320,6 +320,21 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_import_extraction_candidates",
+    label: "Inspect Extraction Candidates",
+    description: "Read a bounded page of exact candidate IDs, groups, and titles from one persisted extraction packet. Use this coordinator tool to size proposer shards and pass qualified unitId:candidateId scopes without loading candidate payloads.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      unitId: Type.String({ minLength: 1 }),
+      continuationCursor: Type.Optional(Type.String({ minLength: 1 })),
+      maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await service.inspectExtractionCandidates(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_import_record_dispatch",
     label: "Record Worker Dispatch",
     description: "Persist host-issued ordinary-subagent dispatch/lifecycle evidence for one assigned semantic worker. Finalization rejects effects lacking a completed exact-allowlist ordinary-subagent receipt.",
@@ -446,7 +461,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_import_assign_worker",
     label: "Assign Mem Import Worker",
-    description: "Issue a role-scoped semantic worker assignment. The result is the complete child bootstrap and includes the exact host-enforced tools array.",
+    description: "Issue a role-scoped semantic worker assignment. The result is the complete child bootstrap and includes the exact host-enforced tools array. For a retry, revoke the prior non-extractor assignment and use a fresh taskId; retriesTaskId and supersedesTaskIds are extractor-only fields.",
     parameters: Type.Union([
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("proposer"), unitIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 }), candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1, description: "Optional candidate subset. Omit to assign every candidate in unitIds. Local IDs are auto-qualified only when unique; use unitId:candidateId when repeated across units." }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reconciler"), proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 }), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
@@ -607,7 +622,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       ...workerSchema,
       proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 12, description: "Immutable proposals supporting this batch." }),
       identityProposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { maxItems: 100 })),
-      readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false }), { minItems: 1, maxItems: 100, description: "Copy artifactContentHash from canonical reads, or null when the target is absent." }),
+      readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Optional(Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()])) }, { additionalProperties: false }), { minItems: 1, maxItems: 100, description: "Copy artifactContentHash from canonical reads. For an observed-absent target, use null or omit contentHash; omission is normalized to null and still fails stale if the artifact exists." }),
       changes: Type.Array(mergeCommitChangeSchema, { minItems: 1, maxItems: 12 }),
       conflictOperations: Type.Optional(Type.Array(Type.Union([
         Type.Object({ kind: Type.Literal("create"), conflictId: Type.String({ minLength: 1 }), blocking: Type.Boolean(), summary: Type.String({ minLength: 1 }), identityDecisionId: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }),
@@ -656,7 +671,10 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Acquire the fenced global merge writer lease for an authorized merger or repairer. Heartbeat every 60 seconds and release it when done; stale recovery is allowed only after expiry.",
     parameters: Type.Object(workerSchema),
     async execute(_id, params) {
-      try { return result(await u2.acquireWorkerLease(params)); } catch (error) { return failure(error); }
+      try {
+        await service.authorizeWorker({ ...params, capability: "merge:lease", role: "repairer" });
+        return result(await u2.acquireWorkerLease(params));
+      } catch (error) { return failure(error); }
     },
   });
 
@@ -676,7 +694,10 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Extend a merger/repairer-owned merge lease only when its fence and assignment remain valid.",
     parameters: Type.Object({ ...workerSchema, fence: Type.Integer({ minimum: 1 }) }),
     async execute(_id, params) {
-      try { return result(await u2.heartbeatWorkerLease(params)); } catch (error) { return failure(error); }
+      try {
+        await service.authorizeWorker({ ...params, capability: "merge:lease", role: "repairer" });
+        return result(await u2.heartbeatWorkerLease(params));
+      } catch (error) { return failure(error); }
     },
   });
 
@@ -709,32 +730,16 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
-    name: "mem_import_write_merge",
-    label: "Write Coordinator Merge",
-    description: "Atomically write a complete coordinator-authored merge snapshot with the same lease, CAS, immutable-history, and audit guarantees as a worker mutation.",
-    parameters: Type.Object({
-      ...coordinatorSchema,
-      taskId: Type.String({ minLength: 1 }),
-      fence: Type.Integer({ minimum: 1 }),
-      expectedRevision: Type.Integer({ minimum: 0 }),
-      expectedContentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
-      stage: mergeStageSchema,
-      rationale: Type.String({ minLength: 1, description: "Concise rationale, not hidden reasoning." }),
-      checkpointId: Type.Optional(Type.String({ minLength: 1 })),
-      actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-    }),
-    async execute(_id, params) {
-      try { return result(await u2.writeCoordinatorMerge(params)); } catch (error) { return failure(error); }
-    },
-  });
-
-  registerMemImportTool(pi, {
     name: "mem_merge_release_lease",
     label: "Release Merge Lease",
     description: "Release a merger/repairer merge lease after the final mutation.",
     parameters: Type.Object({ ...workerSchema, fence: Type.Integer({ minimum: 1 }) }),
     async execute(_id, params) {
-      try { await u2.releaseWorkerLease(params); return result({ released: true }); } catch (error) { return failure(error); }
+      try {
+        await service.authorizeWorker({ ...params, capability: "merge:lease", role: "repairer" });
+        await u2.releaseWorkerLease(params);
+        return result({ released: true });
+      } catch (error) { return failure(error); }
     },
   });
 
@@ -761,7 +766,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_check_run",
     label: "Run Import Checks",
-    description: "Run deterministic lint, coverage, provenance, and readiness checks without choosing semantic repairs.",
+    description: "Run deterministic lint, coverage, provenance, identity, dispatch, and readiness checks without choosing semantic repairs.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
       try { return result(await u2.checks(params)); } catch (error) { return failure(error); }

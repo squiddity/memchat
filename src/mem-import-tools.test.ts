@@ -10,6 +10,7 @@ import { MemImportU2Service } from "./mem-import/u2-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
 import { MemImportIdentityService, canonicalHash } from "./mem-import/identity-service.js";
+import { buildCoveragePlan } from "./world-import/helper-tools.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
 async function tempDir(): Promise<string> {
@@ -307,6 +308,19 @@ test("mem-import worker extraction reads are bounded, filtered, and monotonic", 
     title: `Ada ${index}`,
   }));
   await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage });
+  const coordinatorFirst = await service.inspectExtractionCandidates({ ...run, unitId: unit.unitId, maxItems: 50 });
+  assert.equal(coordinatorFirst.totalCandidates, 105);
+  assert.equal(coordinatorFirst.candidates.length, 50);
+  assert.deepEqual(coordinatorFirst.candidates[0], { id: "candidate-000", group: "people", title: "Ada 0" });
+  assert.equal(coordinatorFirst.truncated, true);
+  assert.ok(coordinatorFirst.continuationCursor);
+  const coordinatorSecond = await service.inspectExtractionCandidates({ ...run, unitId: unit.unitId, maxItems: 50, continuationCursor: coordinatorFirst.continuationCursor });
+  assert.equal(coordinatorSecond.candidates.length, 50);
+  await assert.rejects(
+    service.inspectExtractionCandidates({ ...run, unitId: units[1]!.unitId, continuationCursor: coordinatorFirst.continuationCursor }),
+    /does not exist|stale or belongs to another packet/,
+  );
+
   const merger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "bounded-reader", role: "merger" });
 
   const first = await service.readWorkerExtractions({ ...merger, unitId: unit.unitId, maxCandidates: 50 });
@@ -391,7 +405,7 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const merged = await u2.commitWorkerBatch({
     ...merger,
     proposalHashes: [persisted.contentHash],
-    readSet: [{ artifactId: "ada", contentHash: null }],
+    readSet: [{ artifactId: "ada" }],
     changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }],
     rationale: "Accept the bounded Ada shard proposal into canonical state.",
   });
@@ -405,6 +419,8 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   assert.equal(canonicalArtifact.artifact?.title, "Ada");
   assert.equal(canonicalArtifact.artifactContentHash, canonicalInventory.entries[0]!.artifactContentHash);
   assert.deepEqual(merged.stage.candidateDispositions, [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }]);
+  const coverage = await buildCoveragePlan(output);
+  assert.deepEqual(coverage.candidateAccounting, { totalCandidates: 1, represented: 1, merged: 0, deferred: 0, dropped: 0, unaccounted: [] });
   const afterStatus = await u2.workStatus(run);
   assert.equal(afterStatus.unconsumedProposalCount, 0);
   assert.equal(afterStatus.unaccountedCandidateCount, 0);

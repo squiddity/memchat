@@ -2,7 +2,9 @@
 
 Use this ladder for a new installation or whenever the effective adapter/profile fingerprint lacks a current accepted receipt. It tests the worker transport and each semantic handoff on tiny fixtures before spending a book-sized run.
 
-The launcher supplies fixture paths and an acceptance-state location. The constrained coordinator uses only typed mem-import tools and ordinary subagents; it does not create fixtures, install adapters, or write cache files directly.
+The launcher supplies fixture paths and an acceptance-state location. Run acceptance in a dedicated coordinator invocation whose prompt, grants, and output roots contain no requested corpus input or destination. The constrained coordinator uses only typed mem-import tools and ordinary subagents; it does not create fixtures, install adapters, write cache files directly, or continue into corpus work.
+
+The acceptance coordinator returns a sanitized structured summary bound to its durable run, effect, and check hashes. The launcher validates that summary against the ledger, persists the acceptance receipt, and starts a fresh corpus coordinator only after the exact profile is `accepted`. Prose or an unvalidated JSON summary is not acceptance evidence.
 
 ## Fast path: accepted profile
 
@@ -22,6 +24,7 @@ If no deterministic acceptance-status capability is installed, treat the cache a
 ## Execution rules
 
 - Use fresh output roots and fresh assignments.
+- Keep acceptance and corpus work in separate coordinator invocations; never disclose corpus paths to the acceptance coordinator.
 - Launch every semantic role through the candidate ordinary-subagent facility with the assignment's exact returned `tools`, explicit model/thinking, and bounded bootstrap.
 - Record terminal host identity and requested/observed tools.
 - Inspect persisted effects after every rung.

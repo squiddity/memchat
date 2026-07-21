@@ -22,7 +22,17 @@ These are installation test choices, not portable mem-import requirements.
 
 Keep disposable configuration under `<repo>/.memchat-agent-testing/.pi/settings.json` with the repository package loaded as `../..`. Launch the long-lived coordinator from `<repo>/.memchat-agent-testing/`, so output roots are `output/<run>` or absolute repository-contained paths.
 
-The coordinator profile contains coordinator mem-import tools plus `subagent`; it excludes shell and generic mutation. Worker profiles contain only `assignment.tools` plus adapter-owned lifecycle controls. Extra installed extensions may exist, but the active `--tools` allowlist is the model-visible boundary.
+The coordinator profile contains coordinator mem-import tools plus `subagent` and adapter-owned subagent lifecycle controls; it excludes shell, generic file reads, and generic mutation. The launcher must preload the applicable workflow and role guidance. During acceptance and corpus runs, ordinary subagents are reserved for assigned semantic roles; source and ledger access occurs through typed mem-import tools.
+
+When acceptance is required, launch a dedicated acceptance coordinator with only fixture/profile context. After validating and persisting its structured result, launch the corpus coordinator separately; do not ask one coordinator to transition from acceptance into a disclosed corpus job.
+
+Worker profiles contain only `assignment.tools` plus adapter-owned lifecycle controls. Extra installed extensions may exist, but the active `--tools` allowlist is the model-visible boundary.
+
+## Supervised launcher
+
+A stronger launcher may supervise a cheaper coordinator and workers without becoming a semantic worker. It may inspect native host lifecycle state and durable mem-import status, then steer the coordinator when a child stalls, terminates without an effect, repeats malformed calls, or the coordinator waits despite having no active children. It must not author extraction, proposal, merge, review, or repair effects inline.
+
+Treat host lifecycle as authoritative: once the facility reports a child terminal, record its actual outcome and inspect the ledger. Retry through a fresh assignment when the expected effect is absent. Supervision messages must not include grants or broaden worker tools.
 
 ## Conformance gate
 

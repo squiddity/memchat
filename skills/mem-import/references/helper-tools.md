@@ -14,6 +14,8 @@ Extractor reads are assignment-scoped and cursor-paginated. Pass a returned cont
 
 Extraction submission validates assignment identity, unit/source identity, candidate IDs, and local anchors. The service derives exact Unicode quote text from each anchor range and ignores model transcription. A successful submit writes one immutable authorized packet for that unit attempt.
 
+The coordinator can page exact candidate IDs, groups, and titles from one persisted packet with `mem_import_extraction_candidates`. Use this compact inventory to size proposer assignments by candidate volume and construct qualified `unitId:candidateId` subsets without loading semantic payloads.
+
 ## Proposals
 
 The proposer submit tool accepts typed semantic artifacts, one disposition for every assigned candidate, and a rationale. It derives packet version/kind/ID, current extraction packet hashes, candidate scope, and exact quotes. Missing or duplicate candidate accounting fails before persistence.
@@ -32,7 +34,7 @@ The merger's normal mutation is `mem_merge_commit`:
 
 One call is limited to twelve changes. The service carries proposal candidate dispositions, acquires the fenced writer lease, validates the bounded read set, commits against current canonical state, records content-addressed history, and releases the lease. Unrelated changes do not invalidate unchanged artifact observations; changed dependencies fail stale.
 
-Complete-snapshot worker mutation is not a production tool. Internal reconstruction/snapshot APIs remain implementation details for history and tests.
+Complete-snapshot mutation is not a production model tool for either workers or coordinators. Internal reconstruction/snapshot APIs remain implementation details for history and tests; normal coordinators cannot replace canonical state or disposition failed-worker candidates inline.
 
 ## Identity, review, and repair
 

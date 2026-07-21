@@ -7,14 +7,28 @@ description: Import a book or series into a provenance-rich world library with b
 
 Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, canonical transactions, reviews, checks, and the final run record are authoritative. Worker prose is only a receipt.
 
-## 1. Choose the run mode
+## 1. Mandatory preflight gate
+
+Do not call `mem_import_begin`, any normalize tool, or dispatch semantic workers until this gate passes.
+
+1. Determine the effective worker facility, model, thinking setting, adapter, tool allowlist, and repository/package revision.
+2. Inspect the deterministic acceptance state for that exact profile fingerprint.
+3. If the receipt is missing, stale, failed, unreadable, or mismatched, run the [installation acceptance ladder](references/acceptance-ladder.md) in a fresh disposable output root.
+4. When acceptance is required, the launcher starts a dedicated acceptance coordinator that receives only the fixture, disposable output root, exact profile, and acceptance contract—never the requested corpus input or output root.
+5. Stop on the first failed rung and persist the terminal failure; do not start the requested corpus import.
+6. The launcher validates the acceptance coordinator's structured result against durable ledger hashes and persists the sanitized acceptance receipt. Only then may it start a fresh corpus coordinator invocation.
+7. Continue only with current `accepted` evidence, while still performing per-run assignments, dispatch receipts, and lifecycle gates.
+
+The coordinator should state the preflight result before beginning the corpus run. A prior successful import, a model/launcher assertion, or an existing output directory is not acceptance evidence.
+
+## 2. Choose the run mode
 
 - **Standalone book:** `mem_import_begin`, then `mem_import_normalize`.
 - **Maintained book or series:** read [compendium runs](references/compendium-runs.md), then use its begin and normalize tools.
 
 Inspect the complete manifest. This step is complete when every intended source unit appears in the normalized ledger.
 
-## 2. Prove the worker profile
+## 3. Prove the worker profile
 
 Use an ordinary subagent facility that enforces a per-child tool allowlist and reports terminal child identity. Assignment results contain the complete child bootstrap and exact `tools` array; pass both verbatim to the child. Request an explicit model and thinking setting from the host.
 
@@ -26,7 +40,7 @@ When the host cannot enforce that profile, call `mem_import_fail` and stop. Read
 
 This step is complete when the exact profile has current acceptance evidence and the current run can enforce `assignment.tools`.
 
-## 3. Run the golden path
+## 4. Run the golden path
 
 Read [coordinator decisions](references/workflow.md), then repeat these bounded phases:
 
@@ -38,7 +52,7 @@ Read [coordinator decisions](references/workflow.md), then repeat these bounded 
 
 After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet.
 
-## 4. Complete the ledger
+## 5. Complete the ledger
 
 Success requires all of the following:
 

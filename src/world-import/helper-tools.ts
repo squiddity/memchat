@@ -461,18 +461,23 @@ export async function buildCoveragePlan(outputRoot: string): Promise<CoveragePla
     represented.add(key);
     if (!rawKey.includes(":")) for (const candidate of keysByCandidateId.get(rawKey) ?? []) represented.add(candidate);
   }
-  const dispositionCounts: Record<CandidateDisposition["disposition"], number> = { represented: 0, merged: 0, deferred: 0, dropped: 0 };
-  const accounted = new Set<string>(represented);
+  const dispositionByKey = new Map<string, CandidateDisposition["disposition"]>();
   for (const disposition of merge?.candidateDispositions ?? []) {
-    dispositionCounts[disposition.disposition]++;
     const key = candidateKey(disposition.unitId, disposition.candidateId);
-    accounted.add(key);
-    if (!disposition.unitId) for (const candidate of keysByCandidateId.get(disposition.candidateId) ?? []) accounted.add(candidate);
+    dispositionByKey.set(key, disposition.disposition);
+    if (!disposition.unitId) for (const candidate of keysByCandidateId.get(disposition.candidateId) ?? []) dispositionByKey.set(candidate, disposition.disposition);
   }
-  const unaccounted = [...allCandidateKeys].filter((key) => !accounted.has(key)).map((key) => {
-    const [unitId, candidateId] = key.split(":");
-    return { ...(unitId ? { unitId } : {}), candidateId: candidateId ?? "" };
-  });
+  const dispositionCounts: Record<CandidateDisposition["disposition"], number> = { represented: 0, merged: 0, deferred: 0, dropped: 0 };
+  const unaccounted: Array<{ unitId?: string; candidateId: string }> = [];
+  for (const key of allCandidateKeys) {
+    const disposition = dispositionByKey.get(key);
+    if (disposition) dispositionCounts[disposition]++;
+    else if (represented.has(key)) dispositionCounts.represented++;
+    else {
+      const [unitId, candidateId] = key.split(":");
+      unaccounted.push({ ...(unitId ? { unitId } : {}), candidateId: candidateId ?? "" });
+    }
+  }
 
   const recommendations: LintDiagnostic[] = [];
   for (const group of WORLD_IMPORT_GROUPS) if (groups[group] === 0) recommendations.push({ code: `no-${group}-artifacts`, level: "warning", message: `No artifacts exist in group ${group}` });
@@ -486,7 +491,7 @@ export async function buildCoveragePlan(outputRoot: string): Promise<CoveragePla
     unitCoverage,
     candidateAccounting: {
       totalCandidates: allCandidateKeys.size,
-      represented: represented.size,
+      represented: dispositionCounts.represented,
       merged: dispositionCounts.merged,
       deferred: dispositionCounts.deferred,
       dropped: dispositionCounts.dropped,

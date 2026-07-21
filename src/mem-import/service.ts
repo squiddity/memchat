@@ -537,6 +537,51 @@ export class MemImportService {
     return { runId: run.runId, normalized: true, unitCount: manifest.units.length, extractionStageCount: extractionStages.length };
   }
 
+  async inspectExtractionCandidates(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    unitId: string;
+    continuationCursor?: string;
+    maxItems?: number;
+  }): Promise<{
+    unitId: string;
+    packetHash: string;
+    totalCandidates: number;
+    candidates: Array<{ id: string; group: WorldImportGroup; title: string }>;
+    truncated: boolean;
+    continuationCursor?: string;
+  }> {
+    const run = await this.authorizeCoordinator(options);
+    const manifest = await readManifest(run.outputRoot);
+    if (!manifest.units.some((unit) => unit.unitId === options.unitId)) throw new Error(`Unknown normalized unit ${options.unitId}`);
+    const path = extractionStagePath(run.outputRoot, options.unitId);
+    if (!existsSync(path)) throw new Error(`Extraction packet ${options.unitId} does not exist`);
+    const stage = JSON.parse(await readFile(path, "utf-8")) as StageEnvelope;
+    if (!Array.isArray(stage.candidates)) throw new Error(`Extraction packet ${options.unitId} is invalid`);
+    const packetHash = createHash("sha256").update(JSON.stringify(stage)).digest("hex");
+    const maxItems = options.maxItems ?? 50;
+    if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 100) throw new Error("maxItems must be an integer between 1 and 100");
+    let offset = 0;
+    if (options.continuationCursor) {
+      const cursor = this.decodeExtractionPacketCursor(options.continuationCursor);
+      if (cursor.unitId !== options.unitId || cursor.packetHash !== packetHash || cursor.candidateIdsHash !== "coordinator-inventory") throw new Error("Extraction candidate continuation cursor is stale or belongs to another packet");
+      offset = cursor.offset;
+    }
+    if (offset > stage.candidates.length) throw new Error("Extraction candidate continuation cursor offset is invalid");
+    const page = stage.candidates.slice(offset, offset + maxItems).map((candidate) => ({ id: candidate.id, group: candidate.group, title: candidate.title }));
+    const next = offset + page.length;
+    const truncated = next < stage.candidates.length;
+    return {
+      unitId: options.unitId,
+      packetHash,
+      totalCandidates: stage.candidates.length,
+      candidates: page,
+      truncated,
+      ...(truncated ? { continuationCursor: this.encodeExtractionPacketCursor({ version: 1, kind: "extraction-packet", unitId: options.unitId, packetHash, candidateIdsHash: "coordinator-inventory", offset: next }) } : {}),
+    };
+  }
+
   async assignExtractor(options: {
     outputRoot: string;
     runId: string;
