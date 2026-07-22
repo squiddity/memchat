@@ -6,7 +6,7 @@ Turn one assigned extraction shard into immutable provisional artifacts with com
 
 ## Profile
 
-Launch a subagent with the assignment bootstrap and exactly `assignment.tools`. Prefer coherent unit-scoped assignments when they fit, which include every candidate in those units. Before assignment, the coordinator uses `mem_import_extraction_candidates` to inspect bounded candidate counts and IDs. Size shards by persisted candidate volume and expected artifact complexity, not unit count alone: begin conservatively for an unproven or budget model, then widen only after a clean proposal. For a subset, assign qualified `unitId:candidateId` values, partitioning the failed scope exactly once without dropping candidates.
+Launch a subagent with the assignment bootstrap and exactly `assignment.tools`. A unit-scoped assignment includes every candidate in those units; a subset uses qualified `unitId:candidateId` values and partitions its scope exactly once without omissions.
 
 ## Steps
 

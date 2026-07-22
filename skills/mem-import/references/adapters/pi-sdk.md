@@ -1,6 +1,6 @@
 # Optional maintainer conformance: Pi SDK
 
-This repository adapter runs fixture-backed production-tool conformance through authenticated in-memory Pi SDK sessions. It is useful when changing tool schemas, authorization, fixtures, or acceptance-service code. It is **not** normal mem-import preflight and does not certify another installed subagent facility.
+This adapter runs optional fixture-backed production-tool conformance in authenticated, in-memory Pi SDK sessions. Use it when maintaining tool schemas, authorization, fixtures, or acceptance services—not for mem-import preflight or facility certification.
 
 ## Contract
 
@@ -14,7 +14,7 @@ This repository adapter runs fixture-backed production-tool conformance through 
 - derives target call count and failure state from Pi tool lifecycle events;
 - returns native lifecycle evidence to the focused acceptance runner.
 
-The runner records the dispatch, validates the durable effect inventory, releases a repairer lease in `finally`, and persists only a sanitized conformance receipt.
+The runner records dispatch, validates durable effects, releases a repairer lease in `finally`, and persists only a sanitized receipt.
 
 ## Optional maintainer command
 
@@ -35,10 +35,10 @@ npm run conformance:mem-import -- \
   --all-roles
 ```
 
-Optional `--state-root` and `--disposable-root` arguments select local conformance state and disposable probe roots. Runtime authority remains confined to in-memory child prompts and disposable run ledgers; it is never copied into conformance receipts or tracked fixtures.
+Optional `--state-root` and `--disposable-root` select local conformance and probe roots. Runtime authority stays in memory or in disposable ledgers, never receipts or tracked fixtures.
 
 ## Boundaries
 
-This suite proves only its SDK transport and tracked production-tool routes. Do not require a comparable programmatic adapter for every subagent extension and do not combine its receipt with brief facility acceptance.
+The suite proves only its SDK transport and tracked tool routes. It is not a required programmatic adapter and its receipt is not brief facility acceptance.
 
-The adapter does not run a coordinator, make semantic decisions, chain roles, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed conformance probes restart from a fresh disposable root.
+It does not run a coordinator, make semantic decisions, chain roles, retry within a child, broaden tools, or treat worker prose as evidence. Retry failed probes from a fresh disposable root.

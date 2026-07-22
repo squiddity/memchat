@@ -1,13 +1,13 @@
 # Subagent facility recipes
 
-A facility recipe is a small record of invocation parameters that worked for a brief mem-import capability probe. Recipes let future imports skip repeated discovery when the local environment still matches.
+A facility recipe records sanitized invocation parameters that worked in a brief capability probe. Reuse it only while the local environment matches.
 
 ## Resolution order
 
 1. Reuse a matching repo-local finding from `.memchat/mem-import/facility-recipes/`.
 2. Consult a version-controlled adapter reference for a known popular facility.
-3. Inspect the live tool schema and run the brief probe in [acceptance](acceptance.md).
-4. If no facility can satisfy the planned run, stop with concrete missing capabilities. Do not implement an adapter during the import.
+3. Inspect the live tool schema and run [brief acceptance](acceptance.md).
+4. If none can satisfy the planned run, stop with the missing capabilities. Do not implement an adapter during the import.
 
 ## Suggested local shape
 
@@ -36,12 +36,13 @@ A facility recipe is a small record of invocation parameters that worked for a b
 }
 ```
 
-The shape is descriptive rather than a universal adapter API. Omit unsupported parameters and record capability values as `passed`, `failed`, `not-tested`, or `unavailable`.
+This is descriptive, not a universal adapter API. Omit unsupported parameters and use `passed`, `failed`, `not-tested`, or `unavailable` for capabilities.
+
+Recipes may contain only facility identity/version, non-sensitive invocation parameters, model/thinking/cwd/tool-list behavior, host-added lifecycle controls, extension loading/inheritance behavior, tested capability results, mem-import revision/time, and concise limitations. Never include prompts, grants, coordinator authority, credentials, source payloads, transcript paths, or hidden reasoning.
 
 ## Version-controlled examples
 
 - [pi-herdr-subagents](adapters/pi-herdr-subagents.md)
 - [generic pi-subagents](adapters/pi-subagents.md)
-- [Pi SDK maintainer conformance](adapters/pi-sdk.md) — optional developer suite, not normal facility discovery
 
-Checked-in examples contain no local session identities, absolute user paths, credentials, grants, prompts, or acceptance receipts.
+Checked-in examples must also omit local session identities, absolute user paths, and acceptance receipts.

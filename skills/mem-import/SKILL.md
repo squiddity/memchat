@@ -23,11 +23,11 @@ Inspect the complete manifest. This step is complete when every intended source 
 
 ## 3. Enforce worker assignments
 
-Assignment results contain the complete worker bootstrap and exact semantic `tools` array. The coordinator passes both verbatim to the selected facility and requests the chosen model/thinking setting. Confirm that the facility accepted the narrow tool profile; when it exposes active/denied telemetry, require an exact match apart from documented lifecycle controls. Record only evidence actually observed—never invent host telemetry from the assignment or worker prose. A cached facility recipe never replaces per-run assignment, dispatch, lifecycle, and durable-effect checks.
+Assignment results contain the complete worker bootstrap and exact semantic `tools` array. Pass both verbatim to the selected facility with the chosen model/thinking setting. Require the exact semantic profile, apart from documented lifecycle controls, and record the strongest lifecycle/tool evidence the facility exposes. Never derive observed evidence from the assignment or worker prose. If the facility cannot enforce `assignment.tools`, call `mem_import_fail` and stop.
 
-After launching a worker, **end the current turn and remain idle**. Worker completion is push-delivered and starts a new coordinator turn automatically. Never launch a child whose task is to wait, sleep, say “done,” monitor another child, or keep the coordinator alive. Never poll status/effect tools merely to detect completion, and do not schedule a timer for ordinary child waiting. A scheduled wake-up is appropriate only for a genuine external deadline that cannot produce a native completion event. Wait/helper children invalidate the corpus run and can create a self-waking launch loop.
+After launching a worker, **end the turn and remain idle** for push-delivered completion. Never poll merely to detect completion, schedule an ordinary wake-up, or launch a child to wait, sleep, monitor, say “done,” or keep the coordinator alive. Only a genuine external deadline without native completion may justify a timer. Wait/helper children invalidate the run.
 
-When the facility cannot enforce `assignment.tools`, call `mem_import_fail` and stop. Read the detected subagent adapter reference only when invocation details are needed.
+Read the selected facility's adapter reference only for invocation details. A recipe never replaces live assignment, dispatch, lifecycle, and durable-effect checks.
 
 ## 4. Run the golden path
 
@@ -62,6 +62,4 @@ A failure is complete only after `mem_import_fail` persists the terminal reason.
 - [Parent preflight](references/parent-preflight.md) — parent-only acceptance and coordinator launch.
 - [Coordinator decisions](references/workflow.md) — retries, waves, escalation, and phase gates.
 - [Tool behavior](references/helper-tools.md) — deterministic boundaries and durable outputs; model-call arguments live in tool schemas.
-- [Installation acceptance](references/acceptance.md) — harness contract; corpus coordinators do not load it.
-- [Subagent capabilities](references/subagent-capabilities.md) — facility assessment.
 - [Role packets](references/extractor-role.md), [proposer](references/proposal-role.md), [reconciler](references/reconciler-role.md), [merger](references/merger-role.md), [reviewer](references/reviewer-role.md), [repairer](references/repairer-role.md).

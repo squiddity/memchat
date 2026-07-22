@@ -13,7 +13,7 @@ Proceed for a shard when:
 - the persisted packet has been re-read and is complete at both ends, with no clipped title or payload text;
 - the child's completed dispatch receipt exactly matches `assignment.tools`.
 
-Revoke and retry weak, clipped, or interrupted assignments with fresh task IDs before proposal work. Increase concurrency only while early packets and parent completion traffic remain clean.
+Revoke and retry weak, clipped, or interrupted assignments with fresh task IDs before proposal work. Use `mem_import_extraction_candidates` to size coherent proposal shards by candidate volume and artifact complexity, not unit count; begin conservatively and widen only after clean results. Increase concurrency only while packets and parent completion traffic remain clean.
 
 ### Proposal → merge
 
@@ -38,13 +38,13 @@ Review one explicit lens at a time. The coordinator selects repair actions; a re
 For every semantic worker:
 
 1. Issue a role assignment.
-2. Pass the returned bootstrap and semantic `tools` array verbatim to the coordinator's `subagent` facility; inherit explicit extension mode and launch no helper child.
-3. End the coordinator turn immediately and wait at rest for the native terminal result. Completion is push-delivered; do not poll, schedule a wake-up, or launch a wait/no-op/monitor child. Require host-attested `profileStatus: verified` plus `toolProfile.status: exact` when the completion starts the next turn.
-4. Verify host-observed active tools equal the semantic allowlist plus documented lifecycle controls, deny telemetry matches, and no denied tool is active. For resumed work, require the same profile after `subagent_resume`.
-5. Record requested and host-observed semantic tools, model, thinking, host child ID, and outcome with `mem_import_record_dispatch`. Never derive observed values from the assignment or worker prose.
-6. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; the effect or model-authored dispatch record cannot replace host telemetry.
+2. Pass its bootstrap and semantic `tools` array verbatim to the selected facility; launch no helper child.
+3. End the turn and wait at rest for push-delivered terminal completion. Do not poll, schedule an ordinary wake-up, or launch a wait/no-op/monitor child.
+4. Require the exact semantic tool profile plus documented lifecycle controls. Verify active/denied tools and profile-preserving resume when the host exposes that evidence; record unavailable fields as unavailable.
+5. Record requested tools and only actually observed model, thinking, child ID, tools, lifecycle profile, and outcome with `mem_import_record_dispatch`. Never derive observations from the assignment or worker prose.
+6. Inspect the effect with `mem_import_effect_inventory` before dependent work. A durable effect cannot replace required dispatch evidence.
 
-A failed, cancelled, missing, mismatched, unrestricted, unverified, deny-drifted, raw-resumed, or non-host-observed subagent receipt invalidates that corpus dispatch; retry fresh or stop. Cached installation acceptance does not override a bad live dispatch. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
+A failed, cancelled, missing, mismatched, broadened, or inaccurately recorded receipt invalidates the dispatch; retry fresh or stop. Acceptance never overrides a bad live dispatch. Treat a terminal host result as final even if its prose claims otherwise, and inspect its durable effect immediately.
 
 For a non-extractor retry, revoke the old assignment and issue a fresh task ID without `retriesTaskId` or `supersedesTaskIds`; those lineage fields belong only to extractor assignment calls.
 
@@ -59,4 +59,4 @@ For a non-extractor retry, revoke the old assignment and issue a fresh task ID w
 
 ## Facility-specific setup
 
-Subagent launch syntax, extension setup, workspace layout, and model choices belong in the detected adapter reference. For the current installation, read [pi-herdr-subagents](adapters/pi-herdr-subagents.md).
+Read only the selected facility's adapter reference for launch syntax, extension setup, workspace layout, and model choices. [pi-herdr-subagents](adapters/pi-herdr-subagents.md) is one example recipe, not a required facility.

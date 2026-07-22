@@ -41,19 +41,19 @@ test("active guidance uses brief extension-agnostic facility acceptance", async 
   ]);
   assert.match(skill, /Parent agent:[\s\S]*parent preflight and coordinator launch/);
   assert.match(skill, /Corpus coordinator:[\s\S]*Do not run acceptance/);
-  assert.match(skill, /end the current turn and remain idle/i);
-  assert.match(skill, /never invent host telemetry/);
+  assert.match(skill, /end the turn and remain idle/i);
+  assert.match(skill, /Never derive observed evidence from the assignment or worker prose/);
   assert.match(parentPreflight, /Choose one facility/);
-  assert.match(parentPreflight, /short disposable probe/);
+  assert.match(parentPreflight, /otherwise run \[brief acceptance\]/);
   assert.match(parentPreflight, /Do not run role-by-role conformance/);
   assert.match(acceptance, /does not require a named extension, programmatic adapter, exhaustive role certification/);
-  assert.match(acceptance, /test it once:[\s\S]*one tiny nested child/);
-  assert.match(acceptance, /Stop as soon as the facility has demonstrated the capabilities/);
-  assert.match(acceptance, /optional maintainer conformance suite/);
+  assert.match(acceptance, /at most one tiny nested child/);
+  assert.match(acceptance, /Stop when the planned capabilities are demonstrated/);
+  assert.match(acceptance, /optional maintainer conformance/);
   assert.match(recipes, /\.memchat\/mem-import\/facility-recipes/);
-  assert.match(capabilities, /Prefer facilities with host-observed[\s\S]*not universal prerequisites/);
+  assert.match(capabilities, /do not make unavailable adapter-specific evidence universal/);
   assert.match(adapter, /known recipe, not a required mem-import backend or programmatic adapter/);
-  assert.match(adapter, /Do not run semantic roles or the fixture-backed multi-role conformance suite/);
+  assert.match(adapter, /Real imports still require each assignment's exact profile/);
 });
 
 async function tempOutput(label: string): Promise<string> {
