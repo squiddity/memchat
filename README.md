@@ -55,7 +55,7 @@ For project commands that may run for a while or emit useful streaming output, u
 - [`docs/playtesting.md`](docs/playtesting.md) — interactive-shell playtesting workflow and agent defaults
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
-- [`skills/mem-import/SKILL.md`](skills/mem-import/SKILL.md) — default agent-led import using one installed subagent facility for coordinator and workers, plus acceptance, merge, review, and finalization
+- [`skills/mem-import/SKILL.md`](skills/mem-import/SKILL.md) — default agent-led import using one explicit-mode subagent facility with host-attested coordinator/worker profiles, plus acceptance, merge, review, and finalization
 - [`docs/world-import.md`](docs/world-import.md) — legacy shell-runner quick-start, temporary Tailscale review, helper commands, lint/eval, and debugging
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 

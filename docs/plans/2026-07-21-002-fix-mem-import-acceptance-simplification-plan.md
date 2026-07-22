@@ -117,11 +117,11 @@ A three-chapter Alice import is useful for identity consolidation, narrative qua
 
 - **R8. One target call per probe:** Each model-backed role probe requires exactly one target production-tool call against independently seeded state.
 - **R9. Production tools only:** Probes call the same registered TypeBox tool and service route used by corpus imports. No acceptance-only semantic mutation wrapper is permitted.
-- **R10. Exact two-level profiles:** The installed subagent facility launches the coordinator with its accepted profile and lets that coordinator launch workers whose host-observed non-lifecycle tools equal `assignment.tools`; shell, generic file mutation, and unrelated mem-import tools are absent from workers.
+- **R10. Exact two-level profiles:** The facility uses explicit extension mode and host-attested profiles for coordinator and workers. Initial/resumed host telemetry must be `verified`/`exact`; active tools equal the allowlist plus lifecycle controls, deny telemetry matches, and shell, generic mutation, unrelated tools, and unrestricted helpers are absent.
 - **R11. Fixture-backed expectations:** Probe arguments and expected durable effects are derived from tracked, schema-versioned semantic fixtures.
 - **R12. Runtime authority is ephemeral:** Grants, output roots, task/run IDs, timestamps, host IDs, and credentials are generated at materialization time and never committed to fixtures.
 - **R13. Independent diagnosis:** Extractor, proposer, merger, reviewer, reconciler, and repairer probes can run independently and report role-specific failure.
-- **R14. Cached fingerprinting:** Acceptance receipts include protocol/tool-schema version, installed subagent extension/runtime identity, coordinator and worker profiles/allowlist hashes/model/thinking, fixture version/hash, and package/source revision.
+- **R14. Cached fingerprinting:** Acceptance receipts include protocol/tool-schema version, installed extension/runtime identity, explicit extension-entry hashes, host-attested coordinator/worker active and denied tool hashes, resume-preservation result, model/thinking, fixture version/hash, and package/source revision.
 - **R15. Conditional roles:** Reconciler and repairer probes are required only before the exact profile is used for those roles. Core import roles remain mandatory.
 
 ### Scope boundaries
@@ -374,7 +374,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 - Version the acceptance fingerprint and invalidate prior incompatible receipts.
 - Keep per-run dispatch and authorization checks mandatory after cached acceptance.
 
-**Done signal:** The parent-launched corpus coordinator proves the parent → coordinator → worker subagent topology with focused probes, then continues the import without a separate acceptance coordinator or semantic acceptance pipeline.
+**Done signal:** Focused probes prove explicit-mode parent → coordinator → worker topology and verified/exact resume preservation from host telemetry, with no unrestricted helpers, before the same coordinator continues the import.
 
 ### U7. Retain deterministic integration and separate Alice evaluation
 

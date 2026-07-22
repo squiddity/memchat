@@ -38,12 +38,13 @@ Review one explicit lens at a time. The coordinator selects repair actions; a re
 For every semantic worker:
 
 1. Issue a role assignment.
-2. Pass the returned bootstrap and `tools` array verbatim to the coordinator's `subagent` facility.
-3. Wait for its native terminal result.
-4. Record requested and observed model, thinking, exact tools, host child ID, and outcome with `mem_import_record_dispatch`.
-5. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; do not recover hashes from worker prose or filesystem helpers.
+2. Pass the returned bootstrap and semantic `tools` array verbatim to the coordinator's `subagent` facility; inherit explicit extension mode and launch no helper child.
+3. Wait for the native terminal result and require host-attested `profileStatus: verified` plus `toolProfile.status: exact`.
+4. Verify host-observed active tools equal the semantic allowlist plus documented lifecycle controls, deny telemetry matches, and no denied tool is active. For resumed work, require the same profile after `subagent_resume`.
+5. Record requested and host-observed semantic tools, model, thinking, host child ID, and outcome with `mem_import_record_dispatch`. Never derive observed values from the assignment or worker prose.
+6. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; the effect or model-authored dispatch record cannot replace host telemetry.
 
-A failed, cancelled, missing, or mismatched subagent receipt is evidence to retry or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
+A failed, cancelled, missing, mismatched, unrestricted, unverified, deny-drifted, raw-resumed, or non-host-observed subagent receipt is evidence to retry fresh or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
 
 For a non-extractor retry, revoke the old assignment and issue a fresh task ID without `retriesTaskId` or `supersedesTaskIds`; those lineage fields belong only to extractor assignment calls.
 

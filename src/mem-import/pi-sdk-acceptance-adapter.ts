@@ -93,6 +93,11 @@ export class PiSdkAcceptanceHostAdapter implements AssignmentBoundAcceptanceHost
     return {
       facility: "ordinary-subagent",
       hostTaskId: session.sessionId,
+      evidenceSource: "host-runtime",
+      profileStatus: "verified",
+      toolProfileStatus: "exact",
+      isolationMode: "sdk-in-memory",
+      auxiliaryLaunchCount: 0,
       requestedTools: [...request.tools],
       observedTools,
       toolCalls,

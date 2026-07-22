@@ -18,6 +18,12 @@ export type AcceptanceProfile = {
 export type HostProbeEvidence = {
   facility: "ordinary-subagent" | "coordinator-direct";
   hostTaskId?: string;
+  /** Must be derived from the child runtime, never copied from assignment prose. */
+  evidenceSource?: "host-runtime";
+  profileStatus?: "verified" | "unverified" | "untrusted";
+  toolProfileStatus?: "exact" | "mismatch" | "unrestricted" | "unverified";
+  isolationMode?: "explicit" | "sdk-in-memory";
+  auxiliaryLaunchCount?: number;
   requestedTools: string[];
   observedTools: string[];
   toolCalls: string[];
@@ -39,6 +45,13 @@ export type AcceptanceProbeReceipt = {
   assignmentToolsHash: string;
   observedToolsHash: string;
   hostTaskId?: string;
+  hostProfile?: {
+    evidenceSource: "host-runtime";
+    profileStatus: "verified";
+    toolProfileStatus: "exact";
+    isolationMode: "explicit" | "sdk-in-memory";
+    auxiliaryLaunchCount: 0;
+  };
   effect?: { kind: string; contentHash: string };
   completedAt: string;
 };
@@ -122,6 +135,9 @@ export class MemImportAcceptanceService {
       return common;
     }
     if (evidence.facility !== "ordinary-subagent" || !evidence.hostTaskId) throw new Error("Semantic acceptance requires an ordinary-subagent host identity");
+    if (evidence.evidenceSource !== "host-runtime" || evidence.profileStatus !== "verified" || evidence.toolProfileStatus !== "exact") throw new Error("Semantic acceptance requires host-derived verified/exact tool-profile evidence");
+    if (evidence.isolationMode !== "explicit" && evidence.isolationMode !== "sdk-in-memory") throw new Error("Semantic acceptance requires explicit or SDK-isolated runtime evidence");
+    if (evidence.auxiliaryLaunchCount !== 0) throw new Error("Semantic acceptance forbids auxiliary or helper child launches");
     const assignment = prepared.assignment;
     if (!assignment) throw new Error("Semantic acceptance probe is missing its live assignment");
     requireSafeText(evidence.hostTaskId, "hostTaskId");
@@ -147,7 +163,19 @@ export class MemImportAcceptanceService {
     if (typeof expectedKind !== "string" || effects[0]!.kind !== expectedKind) throw new Error(`Acceptance probe effect kind ${effects[0]!.kind} does not match expected ${String(expectedKind)}`);
     const expectedContentHash = prepared.expected.contentHash;
     if (expectedContentHash !== undefined && (typeof expectedContentHash !== "string" || effects[0]!.contentHash !== expectedContentHash)) throw new Error(`Acceptance probe effect hash ${effects[0]!.contentHash} does not match the tracked fixture expectation`);
-    return { ...common, taskId: assignment.taskId, hostTaskId: evidence.hostTaskId, effect: effects[0] };
+    return {
+      ...common,
+      taskId: assignment.taskId,
+      hostTaskId: evidence.hostTaskId,
+      hostProfile: {
+        evidenceSource: "host-runtime",
+        profileStatus: "verified",
+        toolProfileStatus: "exact",
+        isolationMode: evidence.isolationMode,
+        auxiliaryLaunchCount: 0,
+      },
+      effect: effects[0],
+    };
   }
 
   async persistProbe(options: {

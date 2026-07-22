@@ -26,7 +26,7 @@ Extraction is stable because its tools expose an explicit packet schema and a na
 6. **Complete local accounting:** every proposer assignment accounts for every assigned candidate; merge carries accepted accounting forward automatically.
 7. **Optional reconciliation:** fresh-corpus merges do not require a reconciliation wave. Reconciliation is used for cross-shard or existing-canon identity questions.
 8. **Exact profiles:** assignment results carry the exact host-enforced worker tool allowlist. Legacy snapshot and lifecycle tools are absent from production worker profiles.
-9. **One subagent facility:** the parent launches the coordinator through the installed subagent extension, and the coordinator uses that same facility for exact-profile workers.
+9. **One attested subagent facility:** the parent launches the coordinator in explicit extension mode, the coordinator uses the same facility for workers, and host telemetry proves exact active/denied tools across initial and resumed sessions.
 10. **Durable resumability:** a coordinator status tool reports unconsumed proposals, conflicts, accounting gaps, and canonical revision without relying on conversation history.
 11. **Concise skills:** `SKILL.md` contains the run-mode branch, golden path, and completion criteria. Tool schemas are the argument authority. Role files contain purpose, exact tools, steps, durable output, done criterion, and failure response.
 
@@ -95,7 +95,7 @@ Reviewer reads a revision-bound bounded view and submits findings. Repair remain
 - Add candidate-accounting and unconsumed-proposal status tests.
 - Run a fresh Alice import with early-wave inspection, then a multi-work compendium fixture.
 
-**Complete when:** fresh Alice finalizes with no errors after one installed subagent facility launches both the coordinator and exact-profile workers, and bounded inventories/transactions remain page-safe on the existing large-corpus fixture.
+**Complete when:** fresh Alice finalizes with no errors after one installed subagent facility launches coordinator and workers under explicit mode; every initial/resumed profile is host-attested verified/exact, no unrestricted helper launches occur, and bounded inventories/transactions remain page-safe.
 
 ## Migration
 

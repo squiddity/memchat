@@ -14,10 +14,11 @@ Unless the task bootstrap explicitly says **you are the corpus coordinator**, ac
 Before any import tool call:
 
 1. Confirm that an installed and enabled subagent extension exposes the `subagent` facility.
-2. Confirm that the facility can launch a bounded coordinator child with an explicit model, thinking setting, working directory, context, and tool allowlist.
-3. Confirm that the coordinator child receives the mem-import skill, coordinator tools, `subagent`, and lifecycle controls—and can use that same facility to launch exact-allowlist workers.
-4. Launch the corpus coordinator with `subagent`. Do not use an alternate or inline agent-hosting path.
-5. Treat the parent-to-coordinator launch like any other subagent call: use native completion, interruption, and resume behavior, and rely on the durable ledger for handoff.
+2. Confirm that the facility reports a host-attested launch profile and host-observed active/denied tools for initial and resumed children.
+3. Launch the bounded coordinator with an explicit model, thinking, cwd, context, and coordinator tool allowlist. For `pi-herdr-subagents`, set `extensionMode: "explicit"`, pass the absolute mem-import extension entry, and set `autoExit: false` so it can receive worker results.
+4. Confirm that the coordinator receives the mem-import skill, coordinator tools, `subagent`, and lifecycle controls—and can use that same facility to launch exact-allowlist workers. Descendants inherit explicit extension mode; do not reset it to normal.
+5. Do not launch unassigned helper/documentation children. Launch the corpus coordinator with `subagent`, and use only `subagent_resume` for recovery; a raw session resume bypasses profile preservation.
+6. Require every host completion to report `profileStatus: verified` and `toolProfile.status: exact`. Treat `mismatch`, `unrestricted`, `unverified`, missing telemetry, deny drift, or active denied tools as failure.
 
 If the installed facility cannot support both levels—parent → coordinator and coordinator → worker—stop with concrete installation guidance. Do not begin the import or build an adapter during the run.
 
@@ -25,7 +26,7 @@ If the installed facility cannot support both levels—parent → coordinator an
 
 The launched coordinator checks the deterministic acceptance state for the exact subagent installation, coordinator profile, worker profile, model/thinking settings, tool allowlists, and repository/package revision. If it is missing, stale, failed, partial, unreadable, or mismatched, run the focused [installation acceptance probes](references/acceptance-ladder.md) in disposable roots.
 
-Acceptance must prove both that the parent launched this coordinator with the accepted profile and that this coordinator can dispatch exact-assignment worker profiles through the same subagent facility. Stop at the first failed required probe. Persist only the sanitized fingerprinted receipt, then continue the requested corpus in this coordinator.
+Acceptance must prove both that the parent launched this coordinator with the accepted explicit profile and that this coordinator can dispatch exact-assignment worker profiles through the same subagent facility. It must also resume a disposable child through `subagent_resume` and prove the same profile remains verified and exact. Stop at the first failed required probe. Persist only the sanitized fingerprinted receipt, then continue the requested corpus in this coordinator.
 
 The coordinator states the preflight result before beginning the corpus run. A prior successful import, an extension-name assertion, or an existing output directory is not acceptance evidence.
 
@@ -38,7 +39,7 @@ Inspect the complete manifest. This step is complete when every intended source 
 
 ## 4. Enforce worker assignments
 
-Assignment results contain the complete worker bootstrap and exact `tools` array. The coordinator passes both verbatim to `subagent` and requests the accepted model and thinking setting. A current acceptance receipt never replaces per-run assignment, dispatch, lifecycle, and durable-effect checks.
+Assignment results contain the complete worker bootstrap and exact semantic `tools` array. The coordinator passes both verbatim to `subagent`, requests the accepted model/thinking setting, and inherits the coordinator's explicit extension runtime. The host may add only documented lifecycle controls. Before recording dispatch, require host-observed active tools to equal `assignment.tools` plus those controls, with exact deny telemetry; record only the semantic subset in `observedTools`. Never synthesize `observedTools` from the assignment or worker prose. A current acceptance receipt never replaces per-run assignment, host-profile, dispatch, lifecycle, and durable-effect checks.
 
 When the facility cannot enforce `assignment.tools`, call `mem_import_fail` and stop. Read the detected subagent adapter reference only when invocation details are needed.
 
@@ -59,8 +60,9 @@ After each child terminates, record its exact completed dispatch receipt and ins
 Success requires all of the following:
 
 - every intended unit has an accepted extraction packet;
-- the coordinator was launched through the accepted subagent facility;
-- every used semantic effect has a completed exact-profile subagent receipt;
+- the coordinator's initial or resumed launch has host-attested `verified`/`exact` profile evidence under explicit extension mode;
+- every used semantic effect has a completed host-observed exact-profile subagent receipt;
+- no unassigned or unrestricted helper child participated in the run;
 - every extraction candidate has a canonical disposition;
 - the canonical revision/hash and transaction history reconstruct successfully;
 - no blocking identity conflict remains;

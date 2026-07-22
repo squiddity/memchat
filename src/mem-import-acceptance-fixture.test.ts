@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -22,6 +22,30 @@ import { MemImportService } from "./mem-import/service.js";
 import { MemImportU2Service } from "./mem-import/u2-service.js";
 
 const fixtureRoot = resolve("fixtures/mem-import/acceptance/v1");
+const exactHostEvidence = {
+  evidenceSource: "host-runtime",
+  profileStatus: "verified",
+  toolProfileStatus: "exact",
+  isolationMode: "sdk-in-memory",
+  auxiliaryLaunchCount: 0,
+} as const;
+
+test("active acceptance guidance requires explicit host-attested launch and resume profiles", async () => {
+  const [skill, ladder, adapter] = await Promise.all([
+    readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/acceptance-ladder.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/adapters/pi-herdr-subagents.md"), "utf8"),
+  ]);
+  for (const text of [skill, ladder, adapter]) {
+    assert.match(text, /extensionMode: [`\"]explicit/);
+    assert.match(text, /profileStatus: [`]?verified/);
+    assert.match(text, /toolProfile\.status: [`]?exact/);
+    assert.match(text, /subagent_resume/);
+  }
+  assert.match(skill, /Never synthesize `observedTools`/);
+  assert.match(ladder, /no unassigned, unrestricted, or documentation\/helper child/);
+  assert.match(adapter, /A large available list is failure/);
+});
 
 async function tempOutput(label: string): Promise<string> {
   return join(await mkdtemp(join(tmpdir(), `memchat-acceptance-${label}-`)), "output");
@@ -143,8 +167,11 @@ test("focused acceptance validates one assigned production call and persists a c
     observedThinking: launch.thinking,
   });
   const acceptance = new MemImportAcceptanceService(base, () => new Date("2026-07-21T00:00:00.000Z"));
-  const evidence = { facility: "ordinary-subagent" as const, hostTaskId, requestedTools: launch.tools, observedTools: launch.tools, toolCalls: [prepared.targetTool], outcome: "completed" as const, observedModel: launch.model, observedThinking: launch.thinking };
+  const evidence = { ...exactHostEvidence, facility: "ordinary-subagent" as const, hostTaskId, requestedTools: launch.tools, observedTools: launch.tools, toolCalls: [prepared.targetTool], outcome: "completed" as const, observedModel: launch.model, observedThinking: launch.thinking };
   await assert.rejects(acceptance.validateProbe(prepared, { ...evidence, toolCalls: [prepared.targetTool, prepared.targetTool] }), /exactly once/);
+  await assert.rejects(acceptance.validateProbe(prepared, { ...evidence, toolProfileStatus: "unrestricted" }), /verified\/exact tool-profile evidence/);
+  await assert.rejects(acceptance.validateProbe(prepared, { ...evidence, auxiliaryLaunchCount: 1 }), /forbids auxiliary or helper child launches/);
+  await assert.rejects(acceptance.validateProbe(prepared, { ...evidence, evidenceSource: undefined }), /host-derived verified\/exact/);
   const stateRoot = join(await mkdtemp(join(tmpdir(), "memchat-acceptance-state-")), "acceptance");
   const persisted = await acceptance.persistProbe({
     stateRoot,
@@ -155,6 +182,7 @@ test("focused acceptance validates one assigned production call and persists a c
   });
   assert.equal(persisted.receipt.status, "accepted");
   assert.equal(persisted.receipt.probes.proposer?.effect?.kind, "proposal");
+  assert.deepEqual(persisted.receipt.probes.proposer?.hostProfile, exactHostEvidence);
   assert.doesNotMatch(JSON.stringify(persisted.receipt), new RegExp(prepared.assignment!.grant));
   assert.doesNotMatch(JSON.stringify(persisted.receipt), new RegExp(prepared.coordinatorGrant));
 });
@@ -170,7 +198,7 @@ test("focused acceptance receipt explicitly covers reconciler and repairer profi
     const base = new MemImportService();
     const evidence = probe === "normalize"
       ? { facility: "coordinator-direct" as const, requestedTools: prepared.assignmentTools, observedTools: prepared.assignmentTools, toolCalls: [prepared.targetTool], outcome: "completed" as const }
-      : { facility: "ordinary-subagent" as const, hostTaskId: `acceptance-${probe}-host`, requestedTools: prepared.assignmentTools, observedTools: prepared.assignmentTools, toolCalls: [prepared.targetTool], outcome: "completed" as const, observedModel: profile.model, observedThinking: profile.thinking };
+      : { ...exactHostEvidence, facility: "ordinary-subagent" as const, hostTaskId: `acceptance-${probe}-host`, requestedTools: prepared.assignmentTools, observedTools: prepared.assignmentTools, toolCalls: [prepared.targetTool], outcome: "completed" as const, observedModel: profile.model, observedThinking: profile.thinking };
     if (probe !== "normalize") {
       await base.recordWorkerDispatch({
         outputRoot: prepared.outputRoot,
@@ -178,7 +206,7 @@ test("focused acceptance receipt explicitly covers reconciler and repairer profi
         coordinatorGrant: prepared.coordinatorGrant,
         taskId: prepared.assignment!.taskId,
         facility: "ordinary-subagent",
-        hostTaskId: evidence.hostTaskId!,
+        hostTaskId: "hostTaskId" in evidence ? evidence.hostTaskId : "",
         requestedTools: prepared.assignmentTools,
         observedTools: prepared.assignmentTools,
         outcome: "completed",
@@ -219,6 +247,7 @@ test("conditional acceptance rejects valid but fixture-divergent identity and re
       outcome: "completed",
     });
     await assert.rejects(new MemImportAcceptanceService(base).validateProbe(prepared, {
+      ...exactHostEvidence,
       facility: "ordinary-subagent",
       hostTaskId,
       requestedTools: prepared.assignmentTools,
@@ -236,6 +265,7 @@ test("focused acceptance runner derives launch scope and persists all role recei
     async launch(prepared, options) {
       await executePrepared(prepared, false);
       return {
+        ...exactHostEvidence,
         facility: "ordinary-subagent",
         hostTaskId: `runner-${prepared.probe}`,
         requestedTools: prepared.assignmentTools,
@@ -269,6 +299,7 @@ test("focused acceptance runner rejects host-observed tool broadening", async ()
     async launch(prepared, options) {
       await executePrepared(prepared, false);
       return {
+        ...exactHostEvidence,
         facility: "ordinary-subagent",
         hostTaskId: "broadened-host",
         requestedTools: prepared.assignmentTools,
@@ -317,6 +348,7 @@ test("focused acceptance runner rejects host model or thinking clamping", async 
     async launch(prepared, options) {
       await executePrepared(prepared, false);
       return {
+        ...exactHostEvidence,
         facility: "ordinary-subagent",
         hostTaskId: "clamped-host",
         requestedTools: prepared.assignmentTools,

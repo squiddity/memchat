@@ -1262,12 +1262,12 @@ Continue to apply `docs/smoke-tests.md` after implementation changes. Long model
 
 ## Acceptance Criteria
 
-1. A capable Pi parent detects an installed subagent extension and launches the mem-import coordinator through its `subagent` facility without bash/helper CLI commands.
-2. The launched coordinator can use that same facility for exact-profile workers; a worker-only facility is insufficient.
+1. A capable Pi parent launches the mem-import coordinator through the installed `subagent` facility in explicit extension mode without bash/helper CLI commands or unrestricted helpers.
+2. The coordinator uses that facility for workers; host-attested active/denied tool telemetry is verified/exact for initial and resumed coordinator/worker sessions. Worker-only or model-authored evidence is insufficient.
 3. The coordinator, not TypeScript, chooses worker topology and semantic sequencing.
 4. The coordinator may use individual calls or native parallelism when supported.
 5. Extraction and reviewer workers can run with only typed role tools.
-6. Acceptance records the installed extension/runtime plus coordinator and worker profile evidence, including correlatable lifecycle identities at both levels.
+6. Acceptance records explicit extension hashes, host-attested active/denied tool hashes, resume-preservation evidence, and correlatable coordinator/worker lifecycle identities.
 7. Every worker-facing tool rejects forged, expired, revoked, cross-role, and out-of-assignment grants.
 8. Invalid operations fail locally with actionable errors.
 9. Incomplete drafts remain inspectable, but finalization refuses hard blockers.

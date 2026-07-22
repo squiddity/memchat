@@ -10,12 +10,15 @@ The parent verifies the installed facility and launches the corpus coordinator t
 
 Before fixture probes, assess the live installation described by [the subagent installation gate](subagent-capabilities.md). Acceptance requires evidence that:
 
-- the current coordinator was launched by the parent through `subagent`;
-- it received its intended tool profile, including its own `subagent` facility;
-- it can launch an exact-allowlist assigned worker through the same facility;
-- both levels expose correlatable host identities and terminal lifecycle outcomes.
+- the current coordinator was launched by the parent through `subagent` with `extensionMode: "explicit"` and only the trusted mem-import extension entry;
+- the host reports a valid attested launch profile and active/denied tool telemetry for the coordinator;
+- it can launch an exact-allowlist assigned worker through the same inherited explicit runtime;
+- `subagent_resume` reapplies the original coordinator/worker model, thinking, cwd, config root, extension runtime, deny policy, and tool allowlist;
+- initial and resumed completions report `profileStatus: verified` and `toolProfile.status: exact`;
+- both levels expose correlatable host identities and terminal lifecycle outcomes;
+- no unassigned, unrestricted, or documentation/helper child is launched.
 
-A worker-only adapter test is partial evidence. It cannot accept an installation that cannot host the coordinator or nested worker dispatch.
+A worker-only adapter test, a launch command, the tools widget alone, or coordinator-authored `observedTools` is partial evidence. None can accept an installation without host-derived exact profile telemetry for both levels.
 
 ## Fast path: accepted profile
 
@@ -23,8 +26,10 @@ A cached receipt may skip probes only when deterministic status inspection repor
 
 - mem-import protocol and tool-schema version;
 - installed subagent extension and host runtime identity/version;
-- coordinator profile, tool-allowlist hash, model ID, and thinking setting;
-- exact worker role-allowlist hashes, model ID, and thinking setting;
+- explicit extension mode and trusted absolute extension-entry hashes;
+- coordinator attested-profile hash, active/denied-tool hashes, model ID, and thinking setting;
+- exact worker role allowlist, host-observed active/denied-tool hashes, model ID, and thinking setting;
+- resume-profile preservation probe version/result;
 - acceptance fixture version/content hash;
 - package or source revision.
 
@@ -36,16 +41,25 @@ For each probe:
 
 1. Materialize a fresh independent probe root from the tracked fixture.
 2. For normalization, call the coordinator-owned production normalize tool once.
-3. For a semantic role, launch a worker through `subagent` from the returned live assignment.
-4. Set active worker tools exactly to `assignment.tools` and provide the exact fixture-backed call body.
-5. Require exactly one target production-tool call, then terminal worker completion. Do not retry inside the child.
-6. Record the current coordinator profile plus native worker identity, outcome, requested/observed profile, model, and thinking setting.
-7. Validate the durable effect through `mem_import_effect_inventory`; do not trust child prose or inspect files.
-8. Persist the sanitized probe receipt. A failed probe receives a fresh root and worker assignment if retried.
+3. For a semantic role, launch a worker through `subagent` from the returned live assignment; never launch helper children.
+4. Set semantic worker tools exactly to `assignment.tools`, inherit explicit extension mode, and provide the exact fixture-backed call body. The facility may add only its documented lifecycle controls.
+5. Require host completion evidence with an attested profile, `profileStatus: verified`, `toolProfile.status: exact`, exact active and denied tool sets, expected model/thinking, and terminal identity. Reject unrestricted/unverified/mismatched evidence even when the target effect exists.
+6. Require exactly one target production-tool call, then terminal worker completion. Do not retry inside the child.
+7. Record semantic `observedTools` only after removing documented lifecycle controls from the host-observed exact set; never copy the assignment into observed evidence.
+8. Validate the durable effect through `mem_import_effect_inventory`; do not trust child prose or the model-authored dispatch record alone.
+9. Persist the sanitized probe receipt. A failed probe receives a fresh root and worker assignment if retried.
 
 A semantic child prompt is intentionally mechanical: call the named production tool exactly once with the supplied JSON body, then stop. Semantic creativity is evaluated separately.
 
 ## Required probes
+
+### Resume preservation
+
+**Seed:** a harmless exact-allowlist disposable child launched under explicit extension mode.
+
+**Action:** let it terminate or ping, then resume only with `subagent_resume`.
+
+**Accept when:** initial and resumed host evidence is attested and `verified`/`exact`; active tools, deny policy, model, thinking, cwd, config root, extension mode/entries, and named-agent identity are unchanged. Missing legacy profiles, raw `pi --session`, unrestricted fallback, or resume drift fail the installation.
 
 ### Normalize
 
@@ -134,7 +148,7 @@ $XDG_STATE_HOME/memchat/mem-import/acceptance/<profile-fingerprint>.json
 
 Use `~/.local/state` when `XDG_STATE_HOME` is unset. CI may override the root.
 
-A receipt records the fingerprint components, two-level facility evidence, coordinator profile/identity/outcome, required and conditional probe coverage, fixture hash, target tool, worker assignment/observed tool hashes, sanitized worker identity, durable effect kind/hash, completion time, and `partial` or `accepted` status.
+A receipt records the fingerprint components, explicit runtime/extension-entry hashes, host-attested coordinator and worker profile evidence, active/denied-tool hashes, resume preservation result, required and conditional probe coverage, fixture hash, target tool, sanitized child identities, durable effect kind/hash, completion time, and `partial` or `accepted` status.
 
 It never records grants, coordinator authority, prompts, source payloads, credentials, filesystem paths, or hidden reasoning.
 
