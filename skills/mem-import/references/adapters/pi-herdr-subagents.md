@@ -1,15 +1,42 @@
 # Adapter: pi-herdr-subagents
 
-Load this reference only when the active catalog exposes the Herdr `subagent` facility.
+Load this reference only when the active catalog exposes the `subagent` tool from the installed `pi-herdr-subagents` (`subagents`) extension.
 
-## Dispatch profile
+## One launch facility
 
-- Pass the assignment bootstrap in the child task.
-- Set `tools` to the comma-separated `assignment.tools` array exactly. Herdr converts it to the child Pi `--tools` allowlist.
-- Set an explicit authenticated `model`, `thinking`, and repository `cwd` on every semantic launch.
-- Use fresh/lineage context for bounded roles; avoid full conversation forks unless the task genuinely needs parent history.
-- Use the returned host child/session ID for `mem_import_record_dispatch`.
-- Treat the automatic terminal steer as lifecycle completion; use interruption/resume facilities for recovery.
+Use `subagent` for both levels of mem-import:
+
+- the parent launches the coordinator;
+- the coordinator launches assigned semantic workers.
+
+Do not use an alternate or inline agent-hosting path for either level.
+
+## Coordinator launch
+
+The parent starts a fresh bounded coordinator with:
+
+- the mem-import skill and coordinator role guidance;
+- coordinator mem-import tools, `subagent`, and extension-owned lifecycle controls;
+- explicit authenticated model, thinking, repository `cwd`, and fresh context;
+- the requested input/output scope, without persisting coordinator authority in prompts or artifacts.
+
+Treat the returned child/session ID and automatic terminal steer as the coordinator lifecycle. Use the extension's interruption/resume operations when recovery is required. A resumed coordinator reconstructs progress from typed status tools and the ledger, not parent conversation replay.
+
+## Worker launch
+
+For every live assignment, the coordinator:
+
+- passes the assignment bootstrap verbatim in the child task;
+- sets `tools` to the comma-separated `assignment.tools` array exactly;
+- sets explicit model, thinking, repository `cwd`, and fresh/lineage context;
+- uses the returned host child/session ID for `mem_import_record_dispatch`;
+- treats the automatic terminal steer as final lifecycle evidence and inspects the durable effect before dependent work.
+
+Worker profiles contain only `assignment.tools` plus extension-owned lifecycle controls. Extra installed extensions may exist, but the active tool allowlist is the model-visible boundary.
+
+## Acceptance
+
+The parent-launched corpus coordinator first proves the live two-level topology by launching an exact-allowlist probe child. It then runs independent tracked-fixture probes before touching the requested corpus. Each semantic probe calls one named production tool exactly once; normalization is one coordinator tool call. Validate effects through `mem_import_effect_inventory`, persist only sanitized evidence, and continue the requested corpus in the same coordinator.
 
 For the current acceptance profile:
 
@@ -18,31 +45,15 @@ For the current acceptance profile:
 
 These are installation test choices, not portable mem-import requirements.
 
-## Local acceptance workspace
-
-Keep disposable configuration under `<repo>/.memchat-agent-testing/.pi/settings.json` with the repository package loaded as `../..`. Launch the long-lived coordinator from `<repo>/.memchat-agent-testing/`, so output roots are `output/<run>` or absolute repository-contained paths.
-
-The coordinator profile contains coordinator mem-import tools plus `subagent` and adapter-owned subagent lifecycle controls; it excludes shell, generic file reads, and generic mutation. The launcher must preload the applicable workflow and role guidance. During acceptance and corpus runs, ordinary subagents are reserved for assigned semantic roles; source and ledger access occurs through typed mem-import tools.
-
-When acceptance is required, the supervising launcher materializes independent tracked-fixture probes and launches each semantic child directly from its live assignment. Do not launch an acceptance coordinator. Require one named production-tool call, validate the automatic terminal result plus `mem_import_effect_inventory`, persist the sanitized receipt, and only then launch the separate corpus coordinator.
-
-Worker profiles contain only `assignment.tools` plus adapter-owned lifecycle controls. Extra installed extensions may exist, but the active `--tools` allowlist is the model-visible boundary.
-
-## Supervised launcher
-
-A stronger launcher may supervise a cheaper coordinator and workers without becoming a semantic worker. It may inspect native host lifecycle state and durable mem-import status, then steer the coordinator when a child stalls, terminates without an effect, repeats malformed calls, or the coordinator waits despite having no active children. It must not author extraction, proposal, merge, review, or repair effects inline.
-
-Treat host lifecycle as authoritative: once the facility reports a child terminal, record its actual outcome and inspect the ledger. Retry through a fresh assignment when the expected effect is absent. Supervision messages must not include grants or broaden worker tools.
-
 ## Conformance gate
 
-Before substantive work, run the required independent role probes. Each probe:
+Proceed only when:
 
-1. receives the exact fixture-backed body for one named production tool;
-2. calls that production tool exactly once and does not retry;
-3. has no shell, generic write, recursive coordinator, or unrelated mem-import tool active;
-4. returns a correlatable terminal child ID;
-5. records requested and observed tools equal to `assignment.tools`;
-6. produces exactly one expected durable effect discoverable through `mem_import_effect_inventory`.
+1. the extension is installed and the active parent exposes `subagent`;
+2. the coordinator child exposes its accepted coordinator profile and `subagent`;
+3. nested worker tools exactly equal `assignment.tools`;
+4. forbidden shell, generic mutation, and unrelated mem-import tools are absent from worker profiles;
+5. coordinator and worker terminal child IDs are correlatable;
+6. every semantic probe produces exactly one expected durable effect.
 
-Model-visible allowlisting is not an operating-system sandbox. Report only the controls actually observed.
+Model-visible allowlisting is not an operating-system sandbox. Report only controls actually observed.

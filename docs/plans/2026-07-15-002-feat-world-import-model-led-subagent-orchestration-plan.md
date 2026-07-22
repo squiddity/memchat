@@ -38,7 +38,7 @@ A fresh tiered extraction then completed with `openrouter/deepseek/deepseek-v4-p
 
 The first full tiered Alice merge exposed two production blockers that deterministic unit tests did not catch. Extraction completed for all 13 normalized units with 108 candidates, but no canonical merge revision was persisted.
 
-First, the coordinator correctly tried two ordinary `subagent` merger workers, then improperly changed facilities after provider-stream failures. Later merge attempts, including `merge-005`, were launched with `herdr_agent_start`. That tool creates a managed Herdr agent suitable for an isolated orchestrator; it is not the ordinary semantic-worker `subagent` facility required by this workflow. The fallback violated the run's fail-closed delegation gate and produced incompatible lifecycle behavior: ordinary subagent interruption/result handling could not control the managed agent. A model-authored adapter label in assignment audit did not prove which facility actually launched the worker.
+First, the coordinator correctly tried two `subagent` merger workers, then improperly changed away from the selected facility after provider-stream failures. Later merge attempts used a separate agent-hosting path with incompatible lifecycle behavior. The fallback violated the run's fail-closed delegation gate: the selected subagent facility could not interrupt or observe those workers. A model-authored adapter label in assignment audit did not prove which facility actually launched the worker.
 
 Second, U2 replaced the legacy path's proven persist-first 5–12 artifact batch workflow with one complete-snapshot `mem_merge_write` call under a five-minute lease. The `merge-005` session acquired a lease and began two complete-snapshot tool calls, but both assistant turns were interrupted before tool execution. The first partial tool argument had only 18 artifacts and no candidate dispositions; the second had one artifact and no dispositions. Neither reached authorization or persistence. This was not a service-side rejection. It demonstrated that all-or-nothing model generation, lease heartbeats, and durable progress are incompatible at realistic merge sizes. The current unfiltered extraction read, complete merge read/write, full-snapshot revision receipts, and one-run-per-output-root layout will scale worse for large books and incremental multi-book series.
 
@@ -53,9 +53,9 @@ The first U2b implementation slices are complete and committed. They deliberatel
 - `ed40636`, `2fdde78`, and `4b3f2c1` add persistent compendium/run records, isolated work roots, duplicate-source detection, shared canonical state/leases/receipts, and deterministic source/extraction projection with `stages/source-locator.json` for cross-run provenance lookup.
 - `0fc1243` adds a deterministic two-work integration test covering normalize → extract → propose → shared batch → projection → checks → finalization → emitted Markdown. The full suite passed with 115 tests, plus TypeScript build and `git diff --check`.
 
-This is service-level integration evidence, not the U2b facility gate: it does **not** launch ordinary semantic subagents or prove host-issued dispatch/lifecycle correlation. The complete-snapshot APIs remain legacy comparison surfaces; substantive coordinator guidance now uses bounded inventories and batch writes.
+This is service-level integration evidence, not the U2b facility gate: it does **not** launch semantic subagents or prove host-issued dispatch/lifecycle correlation. The complete-snapshot APIs remain legacy comparison surfaces; substantive coordinator guidance now uses bounded inventories and batch writes.
 
-**Next session:** continue U2b with immutable identity/conflict reconciliation proposals (`match`/`create`/`ambiguous`), global canonical-ID ownership, explicit aliases/retcons/conflicts, and blocking collision/accounting gates. Then add revision-bound parallel review and bounded repair batches, real ordinary-subagent dispatch/lifecycle enforcement, and the large-work/incremental-series stress matrix. Do not begin U3 yet.
+**Next session:** continue U2b with immutable identity/conflict reconciliation proposals (`match`/`create`/`ambiguous`), global canonical-ID ownership, explicit aliases/retcons/conflicts, and blocking collision/accounting gates. Then add revision-bound parallel review and bounded repair batches, real subagent dispatch/lifecycle enforcement, and the large-work/incremental-series stress matrix. Do not begin U3 yet.
 
 ## Progress Update — 2026-07-17 (U2b semantic/control-plane and integration progress)
 
@@ -65,7 +65,7 @@ The following U2b slices are implemented and have deterministic integration cove
 
 - **Identity/conflict:** `src/mem-import/identity-service.ts` persists immutable scoped `mem-import-identity` packets with model-authored `match`, `create`, and `ambiguous` decisions. Bounded canonical batches can accept identity-packet hashes and explicit conflict create/resolve/defer operations. Canonical identity state records canonical-ID ownership and unresolved conflicts; a blocking ambiguity prevents finalization until an explicit later resolution. Services validate scope, packet hashes, IDs, and ordering only; they do not decide identity, aliases, canon, or conflict outcomes.
 - **Review/repair:** reviewer packets can name exact bounded canonical artifact read sets. A derived review-validity projection marks an affected review `stale` and a root-stale but unaffected review `unaffected`, without overwriting immutable review packets. `mem_merge_apply_repair_batch` is a repairer-only bounded transaction that enforces its checkpoint/action assignment scope. Legacy complete-snapshot repair remains comparison-only.
-- **Dispatch correlation:** assignments can receive a durable dispatch receipt with host child/session ID, facility class, exact requested/observed profile allowlists, optional model/thinking fields, and terminal outcome. Effects are persisted for extraction, proposal, identity, merge/repair, and review writes. Finalization rejects missing, failed/cancelled, inline, orchestrator-host/managed, or allowlist-mismatched receipts. This is a deterministic correlation gate—not cryptographic proof of host origin—until the real external facility adapter supplies receipts from host telemetry.
+- **Dispatch correlation:** assignments can receive a durable dispatch receipt with host child/session ID, facility class, exact requested/observed profile allowlists, optional model/thinking fields, and terminal outcome. Effects are persisted for extraction, proposal, identity, merge/repair, and review writes. Finalization rejects missing, failed/cancelled, non-subagent, or allowlist-mismatched receipts. This is a deterministic correlation gate—not cryptographic proof of host origin—until the real external facility adapter supplies receipts from host telemetry.
 - **Repeatable integration suite:** `npm run test:mem-import` runs `src/mem-import-tools.test.ts`. It was executed twice consecutively before the latest pressure fixture (21/21 both times); the current focused suite is 22/22. It covers extraction, literal provenance, bounded proposal-backed canonical transactions, compendium projection/finalization, assignment/grant integrity, identity/conflict blocking, review invalidation, scoped repair, dispatch rejection, leases/fences, and cross-process forged-grant rejection.
 - **Initial stress fixtures:**
   - 500 normalized units, 5,000 extraction candidates, 1,000 canonical artifacts, and capped extraction/canonical inventory reads;
@@ -76,7 +76,7 @@ Validation completed after the transaction-pressure work: `npm run build`, `npm 
 
 ### Required next session work before another full model-backed merge or U3
 
-1. Repair the explicit coordinator launch profile, then rerun the fresh Alice U2b acceptance import through the proven real subagent facility. Do not use inline, orchestrator-host/managed fallback, or the legacy complete-snapshot merge path. The coordinator does not need worker mutation tools active in its own catalog: it needs the mem-import role contract plus a selected `subagent` facility that can activate the exact worker profile in the child. Preflight that child capability with a one-unit scoped typed-tool probe, not by requiring worker tools on the coordinator surface.
+1. Rerun the fresh Alice U2b acceptance import through one proven subagent facility for both parent → coordinator and coordinator → worker launches. Do not use a different or inline agent-hosting fallback or the legacy complete-snapshot merge path. The coordinator needs the mem-import role contract plus `subagent`; worker mutation tools remain confined to each exact child profile. Preflight the two-level topology and a one-unit scoped typed-tool probe.
 
 ### Storage/reconstruction and external-adapter follow-up — 2026-07-17
 
@@ -86,15 +86,15 @@ The final U2b stress additions are also complete: an unrelated global revision r
 
 The first Alice acceptance launch intentionally failed closed after normalization (13 units) and before semantic work. The normal-extension coordinator profile had no loaded mem-import skill and its strict active catalog omitted worker tools. Its model incorrectly treated that omission as evidence that the child facility could not activate worker profiles, then attempted unrelated `bash` reader subagents. The parent interrupted it; it persisted `mem_import_fail` with `missing-worker-tools`.
 
-The second launch proved that Herdr child `--tools` profiles work (an extractor launch script contained only its five role tools plus `caller_ping`/`subagent_done`), but the coordinator manually copied incomplete bootstraps. It omitted `taskId` from initial child tasks, causing three extractor recovery/resume loops; four units did submit before the terminal failure, but the run is not acceptance evidence and was stopped. `mem_import_assignment_brief` now validates a current assignment grant and renders the complete non-persistent task bootstrap, including the distinct `taskId` and all unit/source pairs. Coordinator guidance requires the launcher to call it immediately and paste its result verbatim. The corrected next launch must use this renderer, explicit DeepSeek Pro/high coordinator plus DeepSeek Flash/high worker overrides, and no documentation-reader subagents.
+The second launch proved that Herdr child `--tools` profiles work (an extractor launch script contained only its five role tools plus `caller_ping`/`subagent_done`), but the coordinator manually copied incomplete bootstraps. It omitted `taskId` from initial child tasks, causing three extractor recovery/resume loops; four units did submit before the terminal failure, but the run is not acceptance evidence and was stopped. `mem_import_assignment_brief` now validates a current assignment grant and renders the complete non-persistent task bootstrap, including the distinct `taskId` and all unit/source pairs. Coordinator guidance requires the coordinator to call it immediately and pass its result verbatim to the worker subagent. The corrected next launch must use this renderer, explicit DeepSeek Pro/high coordinator plus DeepSeek Flash/high worker overrides, and no documentation-reader subagents.
 
-**External adapter mapping is now complete.** Initial probes failed safely: an intentionally insufficient three-tool child profile was rejected as non-exact; the parent live catalog lacked `mem_import_record_dispatch`; and a managed coordinator started with `extensionMode: "explicit"` lacked `subagent`. The successful configuration is a fresh coordinator hosted externally through `herdr_agent_start` with `extensionMode: "normal"`: it loads the project mem-import package/extension and the global `pi-herdr-subagents` package. Its strict coordinator allowlist included `subagent` and `mem_import_record_dispatch`, but not `herdr_agent_start` or `bash`.
+**External adapter mapping established the required profile.** Initial probes failed safely when the child profile was non-exact or the coordinator lacked `subagent` and dispatch recording. The supported configuration uses the installed `pi-herdr-subagents` extension for both levels: the parent launches a fresh coordinator through `subagent`, and that coordinator launches exact-profile workers through its own `subagent` tool. The strict coordinator allowlist includes `subagent` and `mem_import_record_dispatch`, but not shell.
 
 That fresh coordinator ran the one-unit fixture at `.memchat-agent-testing/adapter-map-sanitized`: it launched an extractor through `subagent` with exactly `mem_source_read_unit`, `mem_extraction_status`, `mem_extraction_read`, `mem_extraction_validate`, and `mem_extraction_submit`; durable status recorded no missing unit; and `stages/orchestration/dispatches/adapter-map-mira-u001.json` records a completed exact allowlist plus an opaque host-session stem. The extraction packet has one literal-provenance Mira candidate. A follow-up service/schema hardening rejects absolute paths as `hostTaskId`, so session paths, grants, and prompts cannot be written to dispatch audit. The model-backed capability gate is therefore passed for this Herdr/Pi profile; it remains a profile-specific result, not a claim that arbitrary adapters are compatible.
 
 ### U4 vocabulary decision recorded during this work
 
-U4 retains named semantic worker profiles (`extractor`, `reconciler`, `merger`, `reviewer`, `repairer`): each needs a defining Markdown template, exact tools, and a narrow assignment contract. Profiles are distinct from control-plane actors (`coordinator` and external launcher) and host facilities. U4 should replace ambiguous `ordinary-subagent` / `managed-agent` terms with capability-oriented `subagent` and `orchestrator-host`. A coordinator receives only a generic subagent-capable launcher; it does not receive `herdr_agent_start`.
+U4 retains named semantic worker profiles (`extractor`, `reconciler`, `merger`, `reviewer`, `repairer`): each needs a defining Markdown template, exact tools, and a narrow assignment contract. The parent launches the coordinator through the installed `subagent` facility; that coordinator receives the same facility for exact-assignment workers. Both levels use capability-oriented `subagent` terminology.
 
 ## Goal Capsule
 
@@ -285,7 +285,7 @@ Do not make the primary interface:
 mem_import_run_dag({ input, output, modelPolicy })
 ```
 
-where TypeScript internally decides every extraction, merge, review, and repair step. That would recreate the current runner behind a different tool name and reduce the main model to a launcher.
+where TypeScript internally decides every extraction, merge, review, and repair step. That would recreate the current runner behind a different tool name and remove model-owned coordination.
 
 ### What is allowed and encouraged
 
@@ -1004,8 +1004,8 @@ Reviewer findings are immutable task-keyed packets only, hash-bound to the revie
 
 #### Required outcomes
 
-1. Every semantic worker—extractor, proposal author, identity reconciler, canonical merger, reviewer, and repairer—is launched through the selected ordinary `subagent` facility with an exact role tool allowlist. `herdr_agent_start` may host a coordinator or a deliberately isolated orchestrator, but it is never a semantic-worker fallback.
-2. If the selected `subagent` facility cannot launch, enforce the allowlist, resume, or complete within bounded retry policy, the coordinator records `mem_import_fail` and stops. It must not change to a managed-agent or inline semantic fallback.
+1. One installed `subagent` facility launches both the coordinator and every semantic worker—extractor, proposal author, identity reconciler, canonical merger, reviewer, and repairer. Each worker has an exact role tool allowlist.
+2. If that facility cannot launch either level, enforce the allowlist, resume, or complete within bounded retry policy, the run stops. It must not change to another or inline agent-hosting fallback.
 3. Parallelize semantic preparation, identity analysis, and review, while retaining one logical canonical commit queue. Do not permit uncontrolled parallel canonical writers.
 4. Replace complete-snapshot model writes with bounded, resumable transactions. A worker failure or interruption must preserve all earlier accepted batches.
 5. Separate compendium identity from import-run identity so repeated book/edition runs can update one series compendium without recreating or rereading the entire corpus.
@@ -1143,7 +1143,7 @@ Where the host cannot provide an independently correlatable dispatch receipt, re
 #### Implementation sequence
 
 1. Freeze U3 and retain the legacy CLI as comparison evidence until U2b passes.
-2. Add failing scale/delegation fixtures before replacing contracts: managed-agent fallback, interrupted partial merge, stale proposal, duplicate cross-book identity, and incremental existing-compendium begin.
+2. Add failing scale/delegation fixtures before replacing contracts: alternate agent-host fallback, interrupted partial merge, stale proposal, duplicate cross-book identity, and incremental existing-compendium begin.
 3. Introduce semantic production modules for compendium/run state, bounded inventories, proposal packets, canonical manifests/blobs, transactions, and conflicts. Do not add new roadmap-numbered production filenames or identifiers.
 4. Add cursor/filter read tools and remove whole-corpus reads from role guidance; retain any complete debug read as coordinator-only and explicitly non-routine.
 5. Add proposal and identity worker assignments/submission tools with candidate/source scope and immutable packet hashes.
@@ -1152,7 +1152,7 @@ Where the host cannot provide an independently correlatable dispatch receipt, re
 8. Rewrite coordinator and role prompts to be concise, execution-first, and packet-oriented. The coordinator controls adaptive fanout/backpressure and waits for durable packets rather than prose.
 9. Add parallel partitioned review plus read-set invalidation and bounded repair transactions.
 10. Port emission, lint, coverage, provenance audit, and finalization to the canonical manifest/transaction model.
-11. Run focused unit/concurrency/storage tests, then the full suite, then a fresh Alice import through ordinary subagents only.
+11. Run focused unit/concurrency/storage tests, then the full suite, then a fresh Alice import with one subagent facility handling coordinator and workers.
 12. Run the large-book and incremental-series stress matrix below before unblocking U3.
 
 #### Stress and failure matrix
@@ -1167,13 +1167,13 @@ Where the host cannot provide an independently correlatable dispatch receipt, re
 - **Lease/fence:** expiry, recovery, stale fence, and stale global CAS cannot lose accepted transactions.
 - **Storage:** hundreds of small transactions demonstrate changed-content-proportional history rather than repeated full snapshots.
 - **Review invalidation:** reviewers bind to exact roots/read sets; affected reviews become stale after repair while unrelated reviews remain valid.
-- **Facility:** every semantic worker effect correlates to an ordinary subagent lifecycle record and exact allowlist; managed-agent and inline fallbacks fail finalization.
+- **Facility:** the coordinator and every semantic worker correlate to subagent lifecycle records; every worker has an exact allowlist, and non-subagent fallbacks fail acceptance or finalization.
 
 #### U2b acceptance gate
 
 U2b is complete only when:
 
-1. A fresh Alice run finalizes through ordinary subagents with no managed-agent or inline semantic fallback.
+1. A fresh Alice run finalizes with one installed subagent facility handling both coordinator and worker launches, with no alternate or inline agent-hosting fallback.
 2. Merge progress is visible after the first bounded accepted transaction and survives interruption.
 3. No normal merger/reviewer must load every extraction packet or the entire canonical compendium.
 4. Canonical commits are serialized, fenced, CAS-checked, immutable, reconstructable, and bounded.
@@ -1195,7 +1195,7 @@ U2b is complete only when:
 - Gate this unit on U3 completion and execute it as the final pre-`main` migration, not as an optional compatibility task.
 - Move/rewrite reusable deterministic code under `src/mem-import/`; remove `src/world-import/`, `world-import-cli`, helper commands, the old embedded model runner, old skills, old tests, old docs, and all `WorldImport*`/`world-import` identifiers.
 - Replace the emitted `world/` projection with the canonical compendium-root layout at `compendia/<compendium-id>/`: source/stage evidence and rendered category/index/coverage/log Markdown live in that single compendium directory.
-- Rename types, schemas, diagnostics, audit records, command/help text, paths, fixtures, and documentation so the implementation reads as a first-generation `mem-import` design. Keep the semantic worker profiles `extractor`, `reconciler`, `merger`, `reviewer`, and `repairer`: each owns a defining Markdown template, exact tool allowlist, and narrow assignment contract. Distinguish these task profiles from the two control-plane actors, `coordinator` and external launcher. The coordinator may see only a generic `subagent`-capable worker launcher; it must not receive `herdr_agent_start` or another orchestrator-launch tool. An external launcher may use `herdr_agent_start` to host the coordinator, but that implementation detail never qualifies a child as a semantic worker. Replace ambiguous dispatch vocabulary such as `ordinary-subagent` / `managed-agent` with capability-oriented terms such as `subagent` and `orchestrator-host`. Do not preserve aliases, compatibility readers, byte-parity gates, or migration shims.
+- Rename types, schemas, diagnostics, audit records, command/help text, paths, fixtures, and documentation so the implementation reads as a first-generation `mem-import` design. Keep the semantic worker profiles `extractor`, `reconciler`, `merger`, `reviewer`, and `repairer`: each owns a defining Markdown template, exact tool allowlist, and narrow assignment contract. The parent launches the coordinator through `subagent`; the coordinator uses that same facility for exact-assignment workers. Use `subagent` consistently and do not preserve alternate agent-hosting paths, aliases, compatibility readers, byte-parity gates, or migration shims.
 - Port only deterministic behavior that remains useful—normalization, span/provenance validation, artifact rendering, lint, coverage, checks, and audit logic—under `MemImport*` names and contracts. Retain semantic decisions in model-led skills.
 - Add deletion-oriented regression checks: source/build output contains no legacy identifiers or `world/` artifact paths, the default compendia layout is emitted, and all active tools/docs reference only mem-import/compendium vocabulary.
 - Remove roadmap milestone labels from the product implementation. `U0`, `U1`, `U1a`, `U2`, `U2b`, and similar labels belong only in planning/history documents—not runtime class names, variables, filenames, comments, tool descriptions, schemas, tests, active skills, or user-facing docs. In particular, replace `src/mem-import/u2-service.ts`, `MemImportU2Service`, the `u2` extension variable, `mem-import U2` comments/headings, and remaining U-number role/tool prose with semantic production names such as canonical store, merge service, extraction service, or orchestration service.
@@ -1205,7 +1205,7 @@ U2b is complete only when:
 ### U5. Revisit whether `mem-import-cli` is needed
 
 - Do not implement a CLI by default. First evaluate whether the host-agent-led interactive path has made a separate CLI unnecessary.
-- Treat the launcher as the arbitrary-capability **host Pi agent**, not as a restricted worker or a second semantic coordinator. It may use `bash`, installation, user questions, and host lifecycle facilities to set up and launch a constrained coordinator. The `mem-import` Pi package supplies the coordinator skill and typed tools; users install it through a normal Pi package source (for example `pi install npm:@scope/mem-import` or a pinned git source), not through a special skill-only installer. The launcher owns the user-visible choice of coordinator-start facility—such as a selected `subagent` profile versus an async-job/new-Pi-process profile—and records that choice. The coordinator must be blind to how it was started; it sees only its intentionally selected tool surface and uses its available worker `subagent` facility. Do not require a separate launcher skill unless a later usability evaluation shows the single `mem-import` skill/package cannot communicate this host setup clearly.
+- Treat the active **host Pi agent** as the parent, not as a second semantic coordinator. It assesses the installed subagent extension and launches the constrained coordinator through `subagent`. The `mem-import` package supplies the skill and typed tools; the coordinator uses the same facility for workers. There is no separate coordinator-start mechanism or parent skill.
 - If a CLI is still desired, make an explicit host/resource-policy decision rather than inheriting legacy embedded-Pi, `.memchat/pi`, or project-local-adapter assumptions.
 - Only after that decision, design any lifecycle plumbing as a thin non-semantic host: stream events, wait for authoritative terminal state, deliver bounded coordinator continuations, enforce budgets, and propagate cancellation/cleanup. It never selects an import stage.
 
@@ -1262,22 +1262,23 @@ Continue to apply `docs/smoke-tests.md` after implementation changes. Long model
 
 ## Acceptance Criteria
 
-1. A capable Pi parent can invoke the coordinator skill and complete an import without using bash/helper CLI commands.
-2. The parent, not TypeScript, chooses worker topology and semantic sequencing.
-3. The parent may use individual calls, native parallelism, chains, or dynamic DAG features when supported.
-4. Extraction and reviewer workers can run with only typed role tools.
-5. The coordinator makes an explicit, auditable suitability judgment before delegation and avoids or stops using a facility whose observed behavior or artifact outcomes are inadequate; no claim of formally proven enforcement is made before later hardening.
-6. Every worker-facing tool rejects forged, expired, revoked, cross-role, and out-of-assignment grants.
-7. Invalid operations fail locally with actionable errors.
-8. Incomplete drafts remain inspectable, but finalization refuses hard blockers.
-9. Concurrent merge writers cannot cause lost updates; lease and revision/CAS enforcement rejects stale writers.
-10. Existing world-import output structure and quality gates remain available.
-11. Parent and worker model assignments, actual runtimes, costs/usage when available, and artifact effects are auditable.
-12. If a new CLI is explicitly chosen, it contains materially less orchestration logic than the legacy `world-import` `model-runner.ts` path.
-13. If a new CLI is explicitly chosen, early coordinator return cannot terminate a nonterminal run; the host reaches authoritative terminal state or bounded failure/cancellation.
-14. Legacy `world-import` and any explicitly chosen new CLI pass the defined artifact/checkpoint/audit/exit-semantics parity gate before promotion.
-15. No memchat-bundled or project-local `pi-subagents` dependency is implied by the interactive `mem-import` path; any later CLI backend decision is documented separately.
-16. Semantic quality remains model-owned; helper tools do not decide canon, identity, merge meaning, synopsis quality, or review correctness.
+1. A capable Pi parent detects an installed subagent extension and launches the mem-import coordinator through its `subagent` facility without bash/helper CLI commands.
+2. The launched coordinator can use that same facility for exact-profile workers; a worker-only facility is insufficient.
+3. The coordinator, not TypeScript, chooses worker topology and semantic sequencing.
+4. The coordinator may use individual calls or native parallelism when supported.
+5. Extraction and reviewer workers can run with only typed role tools.
+6. Acceptance records the installed extension/runtime plus coordinator and worker profile evidence, including correlatable lifecycle identities at both levels.
+7. Every worker-facing tool rejects forged, expired, revoked, cross-role, and out-of-assignment grants.
+8. Invalid operations fail locally with actionable errors.
+9. Incomplete drafts remain inspectable, but finalization refuses hard blockers.
+10. Concurrent merge writers cannot cause lost updates; lease and revision/CAS enforcement rejects stale writers.
+11. Existing world-import output structure and quality gates remain available.
+12. Coordinator and worker model assignments, actual runtimes, costs/usage when available, and artifact effects are auditable.
+13. If a new CLI is explicitly chosen, it contains materially less orchestration logic than the legacy `world-import` `model-runner.ts` path.
+14. If a new CLI is explicitly chosen, early coordinator return cannot terminate a nonterminal run; the host reaches authoritative terminal state or bounded failure/cancellation.
+15. Legacy `world-import` and any explicitly chosen new CLI pass the defined artifact/checkpoint/audit/exit-semantics parity gate before promotion.
+16. No memchat-bundled or project-local `pi-subagents` dependency is implied by the interactive `mem-import` path; any later CLI backend decision is documented separately.
+17. Semantic quality remains model-owned; helper tools do not decide canon, identity, merge meaning, synopsis quality, or review correctness.
 
 ## Non-Goals
 
@@ -1362,7 +1363,7 @@ These are implementation decisions, not blockers to the architectural direction.
 
 ## Recommended Next Session
 
-Resume with **U2b only**. Do not begin U3 and do not run another full model-backed import against the complete-snapshot merge contract. Bounded reads, immutable proposal packets, serialized bounded canonical transactions, compendium/run separation, shared projection/finalization, and a deterministic two-work integration path are now implemented. Start next with immutable identity/conflict reconciliation and canonical-ID ownership, then revision-bound parallel review/repair, actual ordinary-subagent dispatch/lifecycle correlation, and the large-work/incremental-series stress matrix. Keep the legacy CLI unchanged as comparison evidence. U3 begins only after the U2b acceptance gate passes; U4 then removes legacy `world-import` vocabulary plus all roadmap milestone labels from production code, filenames, active skills, tests, and user-facing docs before merging to `main`.
+Resume with **U2b only**. Do not begin U3 and do not run another full model-backed import against the complete-snapshot merge contract. Bounded reads, immutable proposal packets, serialized bounded canonical transactions, compendium/run separation, shared projection/finalization, and a deterministic two-work integration path are now implemented. Start next with immutable identity/conflict reconciliation and canonical-ID ownership, then revision-bound parallel review/repair, actual subagent dispatch/lifecycle correlation, and the large-work/incremental-series stress matrix. Keep the legacy CLI unchanged as comparison evidence. U3 begins only after the U2b acceptance gate passes; U4 then removes legacy `world-import` vocabulary plus all roadmap milestone labels from production code, filenames, active skills, tests, and user-facing docs before merging to `main`.
 
 ## New-Session Resume Checklist
 

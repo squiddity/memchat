@@ -6,7 +6,7 @@ Integrate immutable shard proposals into canonical state through small, resumabl
 
 ## Profile
 
-Launch one ordinary subagent with the merger bootstrap and exactly `assignment.tools`.
+Launch one subagent with the merger bootstrap and exactly `assignment.tools`.
 
 ## Steps
 

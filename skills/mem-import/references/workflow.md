@@ -38,12 +38,12 @@ Review one explicit lens at a time. The coordinator selects repair actions; a re
 For every semantic worker:
 
 1. Issue a role assignment.
-2. Pass the returned bootstrap and `tools` array verbatim to the ordinary subagent facility.
+2. Pass the returned bootstrap and `tools` array verbatim to the coordinator's `subagent` facility.
 3. Wait for its native terminal result.
 4. Record requested and observed model, thinking, exact tools, host child ID, and outcome with `mem_import_record_dispatch`.
 5. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; do not recover hashes from worker prose or filesystem helpers.
 
-A failed, cancelled, inline, managed-agent, missing, or mismatched receipt is evidence to retry or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
+A failed, cancelled, missing, or mismatched subagent receipt is evidence to retry or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
 
 For a non-extractor retry, revoke the old assignment and issue a fresh task ID without `retriesTaskId` or `supersedesTaskIds`; those lineage fields belong only to extractor assignment calls.
 
@@ -56,6 +56,6 @@ For a non-extractor retry, revoke the old assignment and issue a fresh task ID w
 - Use durable status/inventory tools to reconstruct work instead of relying on conversation memory.
 - Stop fanout on repeated schema failures, provider failures, weak source coverage, or parent backlog.
 
-## Host-specific setup
+## Facility-specific setup
 
-Host launch syntax, workspace layout, model choices, and pane lifecycle belong in the detected adapter reference. For the current Herdr test installation, read [pi-herdr-subagents](adapters/pi-herdr-subagents.md).
+Subagent launch syntax, extension setup, workspace layout, and model choices belong in the detected adapter reference. For the current installation, read [pi-herdr-subagents](adapters/pi-herdr-subagents.md).

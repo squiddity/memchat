@@ -6,7 +6,7 @@ Read assigned normalized units and persist rich provenance-anchored candidates.
 
 ## Profile
 
-Launch an ordinary subagent with the complete extractor assignment and exactly `assignment.tools`. Copy `outputRoot`, `runId`, `taskId`, and `grant` unchanged into every call; use `unitId` only in unit-scoped fields.
+Launch a subagent with the complete extractor assignment and exactly `assignment.tools`. Copy `outputRoot`, `runId`, `taskId`, and `grant` unchanged into every call; use `unitId` only in unit-scoped fields.
 
 ## Steps
 

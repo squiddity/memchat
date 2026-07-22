@@ -4,16 +4,27 @@ Use these focused probes for a new installation or whenever the effective adapte
 
 Tracked semantic inputs live under `fixtures/mem-import/acceptance/v1/`. A deterministic materializer creates one fresh disposable run per probe, seeds only that probe's prerequisites, issues one live assignment, and resolves runtime IDs, hashes, grants, and read controls. Fixture files never contain runtime authority.
 
-The launcher owns acceptance. Do not launch an acceptance coordinator. Do not disclose the requested corpus input or destination to a probe child. The repository's concrete assignment-bound implementation is documented in [the Pi SDK adapter](adapters/pi-sdk.md); host-native Herdr launches may use [the Pi/Herdr adapter](adapters/pi-herdr-subagents.md) when its lifecycle telemetry is available.
+The parent verifies the installed facility and launches the corpus coordinator through `subagent`; that coordinator owns the focused role probes and then continues the requested import. Do not disclose the requested corpus input or destination to probe workers. The supported interactive topology is documented in [the pi-herdr-subagents adapter](adapters/pi-herdr-subagents.md).
+
+## Required facility topology
+
+Before fixture probes, assess the live installation described by [the subagent installation gate](subagent-capabilities.md). Acceptance requires evidence that:
+
+- the current coordinator was launched by the parent through `subagent`;
+- it received its intended tool profile, including its own `subagent` facility;
+- it can launch an exact-allowlist assigned worker through the same facility;
+- both levels expose correlatable host identities and terminal lifecycle outcomes.
+
+A worker-only adapter test is partial evidence. It cannot accept an installation that cannot host the coordinator or nested worker dispatch.
 
 ## Fast path: accepted profile
 
 A cached receipt may skip probes only when deterministic status inspection reports `accepted` for the exact effective fingerprint. The fingerprint includes:
 
 - mem-import protocol and tool-schema version;
-- exact role-allowlist hashes;
-- adapter and host runtime identity/version;
-- worker model ID and thinking setting;
+- installed subagent extension and host runtime identity/version;
+- coordinator profile, tool-allowlist hash, model ID, and thinking setting;
+- exact worker role-allowlist hashes, model ID, and thinking setting;
 - acceptance fixture version/content hash;
 - package or source revision.
 
@@ -25,13 +36,12 @@ For each probe:
 
 1. Materialize a fresh independent probe root from the tracked fixture.
 2. For normalization, call the coordinator-owned production normalize tool once.
-3. For a semantic role, launch an ordinary subagent directly from the returned live assignment.
-4. Set active non-lifecycle tools exactly to `assignment.tools`.
-5. Give the child the exact fixture-backed call body and named target production tool.
-6. Require exactly one target tool call, then terminal child completion. Do not retry inside the child.
-7. Record native host identity, outcome, requested tools, observed tools, model, and thinking.
-8. Validate the durable effect through `mem_import_effect_inventory`; do not trust worker prose or inspect files.
-9. Persist the sanitized probe receipt. A failed probe receives a fresh root and assignment if retried.
+3. For a semantic role, launch a worker through `subagent` from the returned live assignment.
+4. Set active worker tools exactly to `assignment.tools` and provide the exact fixture-backed call body.
+5. Require exactly one target production-tool call, then terminal worker completion. Do not retry inside the child.
+6. Record the current coordinator profile plus native worker identity, outcome, requested/observed profile, model, and thinking setting.
+7. Validate the durable effect through `mem_import_effect_inventory`; do not trust child prose or inspect files.
+8. Persist the sanitized probe receipt. A failed probe receives a fresh root and worker assignment if retried.
 
 A semantic child prompt is intentionally mechanical: call the named production tool exactly once with the supplied JSON body, then stop. Semantic creativity is evaluated separately.
 
@@ -43,7 +53,7 @@ A semantic child prompt is intentionally mechanical: call the named production t
 
 **Call once:** `mem_import_normalize`.
 
-**Accept when:** the normalized unit/block expectations match the fixture. This probe is coordinator-direct and does not launch a semantic child.
+**Accept when:** the current coordinator's launched profile is exact and the normalized unit/block expectations match the fixture. This probe launches no semantic worker.
 
 ### Extractor
 
@@ -91,11 +101,11 @@ Run these independently before using the corresponding profile in a maintained c
 
 ### Repairer
 
-**Seed:** canonical revision, selected review checkpoint/action, and a launcher-preissued worker lease.
+**Seed:** canonical revision, selected review checkpoint/action, and a parent-preissued worker lease.
 
 **Call once:** `mem_merge_apply_repair_batch`.
 
-**Accept when:** one scoped repair effect creates the expected compact receipt. The launcher releases the lease after child termination; lease setup and cleanup are not child semantic calls.
+**Accept when:** one scoped repair effect creates the expected compact receipt. The parent releases the lease after child termination; lease setup and cleanup are not child semantic calls.
 
 The version-1 tracked fixture includes both conditional probes. Receipts still mark them uncovered unless they were explicitly run for the exact role profile.
 
@@ -122,9 +132,9 @@ Write sanitized receipts under:
 $XDG_STATE_HOME/memchat/mem-import/acceptance/<profile-fingerprint>.json
 ```
 
-Use `~/.local/state` when `XDG_STATE_HOME` is unset. CI or isolated launchers may override the root.
+Use `~/.local/state` when `XDG_STATE_HOME` is unset. CI may override the root.
 
-A receipt records the fingerprint components, required/conditional probe coverage, fixture hash, target tool, assignment/observed tool hashes, sanitized host task identity, durable effect kind/hash, completion time, and `partial` or `accepted` status.
+A receipt records the fingerprint components, two-level facility evidence, coordinator profile/identity/outcome, required and conditional probe coverage, fixture hash, target tool, worker assignment/observed tool hashes, sanitized worker identity, durable effect kind/hash, completion time, and `partial` or `accepted` status.
 
 It never records grants, coordinator authority, prompts, source payloads, credentials, filesystem paths, or hidden reasoning.
 

@@ -117,11 +117,11 @@ A three-chapter Alice import is useful for identity consolidation, narrative qua
 
 - **R8. One target call per probe:** Each model-backed role probe requires exactly one target production-tool call against independently seeded state.
 - **R9. Production tools only:** Probes call the same registered TypeBox tool and service route used by corpus imports. No acceptance-only semantic mutation wrapper is permitted.
-- **R10. Exact role profile:** The host-observed non-lifecycle tools equal `assignment.tools`; shell, generic file mutation, recursive coordinator, and unrelated mem-import tools are absent.
+- **R10. Exact two-level profiles:** The installed subagent facility launches the coordinator with its accepted profile and lets that coordinator launch workers whose host-observed non-lifecycle tools equal `assignment.tools`; shell, generic file mutation, and unrelated mem-import tools are absent from workers.
 - **R11. Fixture-backed expectations:** Probe arguments and expected durable effects are derived from tracked, schema-versioned semantic fixtures.
 - **R12. Runtime authority is ephemeral:** Grants, output roots, task/run IDs, timestamps, host IDs, and credentials are generated at materialization time and never committed to fixtures.
 - **R13. Independent diagnosis:** Extractor, proposer, merger, reviewer, reconciler, and repairer probes can run independently and report role-specific failure.
-- **R14. Cached fingerprinting:** Acceptance receipts include protocol/tool-schema version, role allowlist hashes, adapter/runtime identity, model/thinking, fixture version/hash, and package/source revision.
+- **R14. Cached fingerprinting:** Acceptance receipts include protocol/tool-schema version, installed subagent extension/runtime identity, coordinator and worker profiles/allowlist hashes/model/thinking, fixture version/hash, and package/source revision.
 - **R15. Conditional roles:** Reconciler and repairer probes are required only before the exact profile is used for those roles. Core import roles remain mandatory.
 
 ### Scope boundaries
@@ -130,7 +130,7 @@ A three-chapter Alice import is useful for identity consolidation, narrative qua
 
 - Runtime terminal guards and authorization checks.
 - No-op transaction detection.
-- Assignment-bound ordinary-subagent launch integration.
+- Two-level subagent launch integration for parent → coordinator and coordinator → assigned worker.
 - Bounded coordinator effect inventory.
 - Retry/task/effect ownership rules.
 - Consistent weighted batch enforcement.
@@ -209,31 +209,31 @@ Implement a deterministic fixture materializer that:
 
 The materializer does not make semantic decisions. It only reproduces a known stage boundary and resolves runtime identifiers.
 
-### D3. Dispatch without an acceptance coordinator
+### D3. Prove the installed two-level subagent topology
 
-The acceptance launcher, not a model coordinator, dispatches each role probe from the live assignment. The launcher must use an assignment-bound host surface that:
+The parent launches the corpus coordinator through the installed `subagent` facility. Before touching the corpus, that coordinator verifies its exact profile, including `subagent`, and dispatches each role probe from the live assignment. The facility must:
 
-- accepts the assignment identity rather than arbitrary tool names;
-- renders or validates the current bootstrap;
-- sets active tools exactly to `assignment.tools` plus adapter lifecycle controls;
-- records the native terminal child/session identifier and actual outcome;
-- rejects stale, revoked, terminal, or mismatched assignments;
-- records dispatch evidence from host telemetry rather than child prose.
+- expose correlatable native identities and outcomes for coordinator and worker children;
+- accept the assignment identity rather than arbitrary worker tool names;
+- render or validate the current bootstrap;
+- set active worker tools exactly to `assignment.tools` plus lifecycle controls;
+- reject stale, revoked, terminal, or mismatched assignments;
+- record dispatch evidence from host telemetry rather than child prose.
 
-The child prompt is bounded: call the named production tool exactly once with the supplied body, then stop. Semantic invention, stage discovery, retries, and dependent scheduling are not part of the probe.
+The worker prompt is bounded: call the named production tool exactly once with the supplied body, then stop. Semantic invention, stage discovery, retries, and dependent scheduling are not part of the probe.
 
 ### D4. Define the probe matrix
 
 | Probe | Seeded semantic state | Target production tool | Expected evidence |
 |---|---|---|---|
 | Allowlist | Fresh scoped assignment | One harmless assigned read/status tool | Successful routed call or expected authorization/state result, exact observed allowlist, terminal host ID. |
-| Normalize | Tiny tracked HTML source | `mem_import_normalize` | Normalized semantic units and anchors match tracked expectation. This may run directly under the acceptance harness because normalization is coordinator-owned and deterministic. |
+| Normalize | Tiny tracked HTML source | `mem_import_normalize` | Parent-launched coordinator has the exact profile; normalized semantic units and anchors match tracked expectation. |
 | Extractor | Normalized two-block unit | `mem_extraction_submit` | One immutable packet, derived quotes, exact task/effect ownership, completed dispatch. |
 | Proposer | Accepted extraction packet | `mem_proposal_submit` | One immutable proposal and complete assigned candidate accounting. |
 | Merger | Accepted proposal and canonical baseline | `mem_merge_commit` | Compact receipt, new revision, consumed proposal, carried dispositions, completed dispatch. |
 | Reviewer | Canonical revision | `mem_review_submit` | Immutable revision/hash-bound review with bounded read set. |
 | Reconciler, conditional | Two proposals and canonical alternatives | `mem_identity_submit` | Immutable identity decisions and any declared blocking conflict. |
-| Repairer, conditional | Review checkpoint/action and launcher-preissued lease | `mem_merge_apply_repair_batch` | Scoped compact repair receipt; unrelated actions remain unauthorized. |
+| Repairer, conditional | Review checkpoint/action and parent-preissued lease | `mem_merge_apply_repair_batch` | Scoped compact repair receipt; unrelated actions remain unauthorized. |
 
 Negative schema, stale-token, pagination, reconstruction, no-op, and finalization cases remain deterministic tests rather than additional model turns.
 
@@ -248,7 +248,7 @@ Persist one sanitized receipt per profile fingerprint under the configured accep
 - terminal outcome and concise diagnostic;
 - completion time and optional expiration.
 
-The launcher validates durable effects itself before marking a probe accepted. Worker prose is not evidence. Conditional role coverage remains explicit in the receipt.
+The parent validates durable effects before marking a probe accepted. Worker prose is not evidence. Conditional role coverage remains explicit in the receipt.
 
 ### D6. Keep deterministic pipeline coverage
 
@@ -349,7 +349,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 
 **Status:** Complete on 2026-07-22 for the Pi SDK assignment-bound adapter.
 
-- Introduce or adapt a launcher surface that consumes a live assignment rather than arbitrary child tools.
+- Use the installed subagent surface with a coordinator that consumes live assignments rather than arbitrary child tools.
 - Derive bootstrap and allowlist from durable assignment state.
 - Record authoritative host lifecycle evidence.
 - Reject stale/revoked/terminal assignments and task reuse.
@@ -374,7 +374,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 - Version the acceptance fingerprint and invalidate prior incompatible receipts.
 - Keep per-run dispatch and authorization checks mandatory after cached acceptance.
 
-**Done signal:** Installation acceptance no longer launches a free-running coordinator or executes a semantic pipeline.
+**Done signal:** The parent-launched corpus coordinator proves the parent → coordinator → worker subagent topology with focused probes, then continues the import without a separate acceptance coordinator or semantic acceptance pipeline.
 
 ### U7. Retain deterministic integration and separate Alice evaluation
 
@@ -458,7 +458,7 @@ Do not rerun the old coordinator-driven acceptance ladder during migration.
   **Mitigation:** Version fixture schema and include fixture/tool/protocol hashes in the acceptance fingerprint.
 
 - **Risk:** Conditional roles are used without acceptance.  
-  **Mitigation:** Launcher checks required role coverage before issuing that role in a corpus run and runs the missing independent probe first.
+  **Mitigation:** The parent checks required topology/role coverage before starting the corpus coordinator and runs the missing probe first.
 
 - **Risk:** Terminal guards block legitimate inspection.  
   **Mitigation:** Block semantic writes and new assignments while retaining bounded read-only status/audit tools.

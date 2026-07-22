@@ -7,41 +7,42 @@ description: Import a book or series into a provenance-rich world library with b
 
 Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, canonical transactions, reviews, checks, and the final run record are authoritative. Worker prose is only a receipt.
 
-## 1. Mandatory preflight gate
+## 1. Launch through the installed subagent facility
 
-Do not call `mem_import_begin`, any normalize tool, or dispatch semantic workers until this gate passes.
+Unless the task bootstrap explicitly says **you are the corpus coordinator**, act as the parent and do not call import tools yourself. Launch one coordinator child with a bootstrap that names that role and tells it to continue at section 2. A coordinator must not recursively launch another coordinator.
 
-1. Determine the effective worker facility, model, thinking setting, adapter, tool allowlist, and repository/package revision.
-2. Inspect the deterministic acceptance state for that exact profile fingerprint.
-3. If the receipt is missing, stale, failed, partial, unreadable, or mismatched, run the independent [installation acceptance probes](references/acceptance-ladder.md) in fresh disposable roots.
-4. The launcher materializes each required role probe from tracked fixtures, then launches the semantic child directly from its live assignment. Do not start an acceptance coordinator and never disclose the requested corpus input or output root.
-5. Each semantic child calls its named production tool exactly once with the supplied fixture-backed body. The launcher validates host lifecycle, exact observed tools, and the durable effect hash.
-6. Stop at the first failed required probe; do not start the requested corpus import.
-7. Persist only the sanitized fingerprinted receipt, then start a fresh corpus coordinator invocation.
-8. Continue only with current `accepted` evidence, while still performing per-run assignments, dispatch receipts, and lifecycle gates.
+Before any import tool call:
 
-The coordinator should state the preflight result before beginning the corpus run. A prior successful import, a model/launcher assertion, or an existing output directory is not acceptance evidence.
+1. Confirm that an installed and enabled subagent extension exposes the `subagent` facility.
+2. Confirm that the facility can launch a bounded coordinator child with an explicit model, thinking setting, working directory, context, and tool allowlist.
+3. Confirm that the coordinator child receives the mem-import skill, coordinator tools, `subagent`, and lifecycle controls—and can use that same facility to launch exact-allowlist workers.
+4. Launch the corpus coordinator with `subagent`. Do not use an alternate or inline agent-hosting path.
+5. Treat the parent-to-coordinator launch like any other subagent call: use native completion, interruption, and resume behavior, and rely on the durable ledger for handoff.
 
-## 2. Choose the run mode
+If the installed facility cannot support both levels—parent → coordinator and coordinator → worker—stop with concrete installation guidance. Do not begin the import or build an adapter during the run.
+
+## 2. Mandatory acceptance gate
+
+The launched coordinator checks the deterministic acceptance state for the exact subagent installation, coordinator profile, worker profile, model/thinking settings, tool allowlists, and repository/package revision. If it is missing, stale, failed, partial, unreadable, or mismatched, run the focused [installation acceptance probes](references/acceptance-ladder.md) in disposable roots.
+
+Acceptance must prove both that the parent launched this coordinator with the accepted profile and that this coordinator can dispatch exact-assignment worker profiles through the same subagent facility. Stop at the first failed required probe. Persist only the sanitized fingerprinted receipt, then continue the requested corpus in this coordinator.
+
+The coordinator states the preflight result before beginning the corpus run. A prior successful import, an extension-name assertion, or an existing output directory is not acceptance evidence.
+
+## 3. Choose the run mode
 
 - **Standalone book:** `mem_import_begin`, then `mem_import_normalize`.
 - **Maintained book or series:** read [compendium runs](references/compendium-runs.md), then use its begin and normalize tools.
 
 Inspect the complete manifest. This step is complete when every intended source unit appears in the normalized ledger.
 
-## 3. Prove the worker profile
+## 4. Enforce worker assignments
 
-Use an ordinary subagent facility that enforces a per-child tool allowlist and reports terminal child identity. Assignment results contain the complete child bootstrap and exact `tools` array; pass both verbatim to the child. Request an explicit model and thinking setting from the host.
+Assignment results contain the complete worker bootstrap and exact `tools` array. The coordinator passes both verbatim to `subagent` and requests the accepted model and thinking setting. A current acceptance receipt never replaces per-run assignment, dispatch, lifecycle, and durable-effect checks.
 
-Before normalizing the requested corpus, tell the user whether exact-profile acceptance is current or whether the acceptance ladder will run first.
+When the facility cannot enforce `assignment.tools`, call `mem_import_fail` and stop. Read the detected subagent adapter reference only when invocation details are needed.
 
-For a new or changed installation, or when no deterministic exact-fingerprint acceptance receipt is available, run the independent [installation acceptance probes](references/acceptance-ladder.md). A current accepted receipt skips that detailed reference, but never the per-run assignment and dispatch gates.
-
-When the host cannot enforce that profile, call `mem_import_fail` and stop. Read a detected host's adapter reference only when invocation details are needed.
-
-This step is complete when the exact profile has current acceptance evidence and the current run can enforce `assignment.tools`.
-
-## 4. Run the golden path
+## 5. Run the golden path
 
 Read [coordinator decisions](references/workflow.md), then repeat these bounded phases:
 
@@ -53,12 +54,13 @@ Read [coordinator decisions](references/workflow.md), then repeat these bounded 
 
 After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet.
 
-## 5. Complete the ledger
+## 6. Complete the ledger
 
 Success requires all of the following:
 
 - every intended unit has an accepted extraction packet;
-- every used semantic effect has a completed exact-profile ordinary-subagent receipt;
+- the coordinator was launched through the accepted subagent facility;
+- every used semantic effect has a completed exact-profile subagent receipt;
 - every extraction candidate has a canonical disposition;
 - the canonical revision/hash and transaction history reconstruct successfully;
 - no blocking identity conflict remains;

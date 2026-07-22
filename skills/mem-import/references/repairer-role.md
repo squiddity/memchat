@@ -6,7 +6,7 @@ Apply only the review actions selected by the coordinator.
 
 ## Profile
 
-Launch an ordinary subagent with explicit checkpoint/action scope and exactly `assignment.tools`.
+Launch a subagent with explicit checkpoint/action scope and exactly `assignment.tools`.
 
 ## Steps
 

@@ -129,7 +129,7 @@ The transaction model permits bounded safety, but current operation limits and p
 
 ### P3. Long-lived coordinators retain irrelevant lifecycle prose
 
-The main coordinator processed 23.69M tokens. It retained extraction and proposal child summaries while later coordinating merge/finalization. Follow-up finalization coordinators added more context after workflow bugs. Some continuation coordinators also spawned helper subagents to inspect lifecycle records, work better owned by the supervising launcher.
+The main coordinator processed 23.69M tokens. It retained extraction and proposal child summaries while later coordinating merge/finalization. Follow-up finalization coordinators added more context after workflow bugs. Some continuation coordinators also spawned helper subagents to inspect lifecycle records, work better owned by the parent.
 
 The ledger already supports fresh resumption. Coordinator context should be phase-bounded instead of serving as the durable state store.
 
@@ -169,7 +169,7 @@ The implementation authority for these runtime safeguards and the replacement of
 - **R4. Bounded batching:** A merger can accept many immutable proposal artifact references in one transaction without retranscribing artifact bodies.
 - **R5. Semantic synthesis remains bounded:** Explicit synthesized/upserted artifact bodies retain a lower independent limit than lightweight accept references.
 - **R6. Phase-bounded coordination:** Extraction, proposal/reconciliation, merge, and review/finalization can run in fresh coordinator invocations against the same durable run.
-- **R7. Host lifecycle authority:** Launcher lifecycle evidence, not final worker prose, determines completed/failed/cancelled dispatch outcome.
+- **R7. Host lifecycle authority:** Subagent lifecycle evidence, not final child prose, determines completed/failed/cancelled outcomes.
 - **R8. Identity-aware planning:** Before proposals or merge, recurring entity observations receive a model-owned cross-unit clustering/reconciliation opportunity.
 - **R9. No silent coverage loss:** Efficiency changes may not drop candidates, weaken provenance, or replace explicit disposition accounting.
 - **R10. Usage telemetry:** Final run records must expose sanitized per-role/model usage totals when the adapter can obtain them.
@@ -186,7 +186,7 @@ The implementation authority for these runtime safeguards and the replacement of
 
 - Contracting model-visible merge, repair, and state responses.
 - Separate lightweight acceptance-reference and heavyweight synthesis limits.
-- Phase-specific coordinator invocation guidance and launcher support.
+- Phase-specific coordinator subagent invocation guidance.
 - Identity-aware candidate/proposal planning with model-owned decisions.
 - Per-role/model token/cost telemetry.
 - Alice A/B fixtures and token/quality budgets.
@@ -196,7 +196,7 @@ The implementation authority for these runtime safeguards and the replacement of
 - Multi-call proposal draft/finalize protocol. Reconsider only if 5–9-candidate shards still clip on a clean run.
 - Fully deterministic scheduling of semantic clusters.
 - Provider-specific prompt caching controls.
-- Replacing ordinary subagents with a custom batch inference backend.
+- Replacing the installed subagent facility with a custom batch inference backend.
 
 #### Outside scope
 
@@ -256,14 +256,14 @@ A fresh-world merger should be able to consume several proposals per transaction
 
 ### D4. Use phase-specific coordinators
 
-Recommended launcher sequence after acceptance:
+Recommended parent sequence after acceptance:
 
 1. **Extraction coordinator** — normalize, dispatch extractors, validate packet ledger, exit.
 2. **Proposal/reconciliation coordinator** — inspect compact candidate inventory, plan identity-aware shards, dispatch proposers/reconcilers, exit.
 3. **Merge coordinator** — dispatch one merger over immutable proposals and identity packets, verify work status, exit.
 4. **Review/finalization coordinator** — review current revision, repair if selected, require a new review after mutation, check and finalize.
 
-Each invocation receives the same coordinator authority transiently from the launcher. No authority is written to artifacts. Durable state, not conversation replay, is the handoff.
+Each coordinator subagent invocation receives the same coordinator authority transiently from the parent. No authority is written to artifacts. Durable state, not conversation replay, is the handoff.
 
 ### D5. Add identity-aware shard planning
 
@@ -286,7 +286,7 @@ Merger workers should not read extraction/source data when accepting an unchange
 
 ### D7. Persist usage telemetry
 
-Extend launcher/run audit with sanitized aggregates:
+Extend parent/run audit with sanitized aggregates:
 
 - model and thinking setting;
 - role and phase;
@@ -307,7 +307,7 @@ The clean-run baseline includes fixes made during the observed run:
 - `mem_check_run` surfaces dispatch and identity readiness diagnostics;
 - finalization packets retain flattened diagnostics;
 - complete coordinator snapshot mutation is not model-visible;
-- launcher lifecycle status is authoritative.
+- subagent lifecycle status is authoritative.
 
 These changes must be present before measuring protocol efficiency again.
 
@@ -315,7 +315,7 @@ These changes must be present before measuring protocol efficiency again.
 
 Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) for the detailed design. In summary:
 
-- dispatch semantic workers through an assignment-bound launcher surface derived from durable assignments;
+- dispatch semantic workers through the coordinator's assignment-bound subagent surface;
 - expose bounded authoritative effect inventories;
 - require fresh retry task identities;
 - make failed/finalized run state mutation-terminal;
@@ -360,7 +360,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 ### U4. Add phase-bounded coordinator launch contract
 
 - **Goal:** Stop carrying extraction/proposal lifecycle prose into merge/finalization.
-- **Files:** `skills/mem-import/SKILL.md`, `skills/mem-import/references/workflow.md`, Herdr adapter guidance, launcher integration/tests.
+- **Files:** `skills/mem-import/SKILL.md`, `skills/mem-import/references/workflow.md`, subagent adapter guidance and integration tests.
 - **Work:** Define sanitized structured phase handoffs and fresh coordinator invocations sharing only durable run identity/authority.
 - **Done signal:** A full import uses separate coordinator sessions for the four phases and resumes solely from typed status tools.
 
@@ -381,7 +381,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 ### U7. Persist role/model usage telemetry
 
 - **Goal:** Make future legacy/mem-import comparisons exact and reproducible.
-- **Files:** run audit types/services, adapter/launcher integration, docs/tests.
+- **Files:** run audit types/services, subagent integration, docs/tests.
 - **Work:** Aggregate sanitized host usage into schema-versioned run telemetry.
 - **Done signal:** Final import-run audit reports per-role/model token and cost totals or explicit unavailability.
 
@@ -389,7 +389,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 - **Status:** Pending. This is now the next evaluation milestone after implementing U4–U7.
 - **Goal:** Verify efficiency and quality after U1–U7.
-- **Controls:** Same EPUB, skill revision, coordinator/worker models, thinking settings, acceptance profile, launcher behavior, and reviewer rubric.
+- **Controls:** Same EPUB, skill revision, coordinator/worker models, thinking settings, acceptance profile, subagent behavior, and reviewer rubric.
 - **Compare:** Current finalized baseline, compact-response mem-import, and a newly instrumented legacy run where practical.
 - **Done signal:** Report exact token, duration, retry, transaction, artifact-identity, provenance, narrative-surface, and reviewer metrics.
 

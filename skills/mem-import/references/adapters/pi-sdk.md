@@ -1,6 +1,6 @@
-# Adapter: Pi SDK assignment-bound acceptance
+# Adapter: Pi SDK worker-transport probes
 
-Use this adapter for focused installation acceptance when the repository can create authenticated Pi SDK child sessions directly.
+Use this adapter only for focused assignment-bound worker transport tests when the repository can create authenticated Pi SDK child sessions directly. It does not replace the live installed-subagent topology gate.
 
 ## Contract
 
@@ -39,4 +39,6 @@ Optional `--state-root` and `--disposable-root` arguments select local acceptanc
 
 ## Boundaries
 
-This adapter is a focused acceptance host, not a corpus coordinator. It does not make semantic decisions, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed probes must be retried from a fresh disposable root.
+This adapter proves worker tool transport only. It does not prove that the active parent can launch a coordinator through the installed `subagent` extension or that the coordinator can recursively launch workers. Therefore its receipt is worker-only evidence and cannot by itself accept an installation; the live two-level topology gate must also pass for the same profile fingerprint.
+
+It does not make semantic decisions, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed probes must be retried from a fresh disposable root.

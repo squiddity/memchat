@@ -6,7 +6,7 @@ Resolve real cross-proposal or existing-canon identity questions without mutatin
 
 ## Profile
 
-Launch an ordinary subagent with a reconciler assignment naming exact proposal hashes and exactly `assignment.tools`.
+Launch a subagent with a reconciler assignment naming exact proposal hashes and exactly `assignment.tools`.
 
 ## Steps
 

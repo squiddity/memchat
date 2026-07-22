@@ -6,7 +6,7 @@ Inspect one canonical revision through a specific semantic lens and persist an i
 
 ## Profile
 
-Launch an ordinary subagent with the reviewer bootstrap and exactly `assignment.tools`. This role reads world state; `mem_review_submit` is its only write.
+Launch a subagent with the reviewer bootstrap and exactly `assignment.tools`. This role reads world state; `mem_review_submit` is its only write.
 
 ## Steps
 
