@@ -11,6 +11,8 @@ related_plan: docs/plans/2026-07-21-001-fix-mem-import-efficiency-parity-plan.md
 
 # Mem-import Acceptance Simplification and Runtime Safety - Plan
 
+> **Canonical acceptance decision record.** Installation acceptance is harness-owned, independently materialized, and limited to one specified production-tool call per semantic probe. No requested corpus coordinator runs probes or continues from a probe into an import. Host catalog/resume conformance is disposable and separate from semantic stage progression.
+
 ## Goal Capsule
 
 | Field | Value |
@@ -117,7 +119,7 @@ A three-chapter Alice import is useful for identity consolidation, narrative qua
 
 - **R8. One target call per probe:** Each model-backed role probe requires exactly one target production-tool call against independently seeded state.
 - **R9. Production tools only:** Probes call the same registered TypeBox tool and service route used by corpus imports. No acceptance-only semantic mutation wrapper is permitted.
-- **R10. Exact two-level profiles:** The facility uses explicit extension mode and host-attested profiles for coordinator and workers. Initial/resumed host telemetry must be `verified`/`exact`; active tools equal the allowlist plus lifecycle controls, deny telemetry matches, and shell, generic mutation, unrelated tools, and unrestricted helpers are absent.
+- **R10. Exact host profiles:** The harness verifies the exact adapter profile used by each probe. Initial/resumed host telemetry must be `verified`/`exact`; active tools equal the assignment allowlist plus lifecycle controls, deny telemetry matches, and shell, generic mutation, unrelated tools, and unrestricted helpers are absent. Coordinator catalog/resume conformance is a separate disposable host-profile check, not a semantic pipeline.
 - **R11. Fixture-backed expectations:** Probe arguments and expected durable effects are derived from tracked, schema-versioned semantic fixtures.
 - **R12. Runtime authority is ephemeral:** Grants, output roots, task/run IDs, timestamps, host IDs, and credentials are generated at materialization time and never committed to fixtures.
 - **R13. Independent diagnosis:** Extractor, proposer, merger, reviewer, reconciler, and repairer probes can run independently and report role-specific failure.
@@ -130,7 +132,7 @@ A three-chapter Alice import is useful for identity consolidation, narrative qua
 
 - Runtime terminal guards and authorization checks.
 - No-op transaction detection.
-- Two-level subagent launch integration for parent → coordinator and coordinator → assigned worker.
+- Production two-level subagent launch integration for real imports, tested independently from installation acceptance.
 - Bounded coordinator effect inventory.
 - Retry/task/effect ownership rules.
 - Consistent weighted batch enforcement.
@@ -209,25 +211,24 @@ Implement a deterministic fixture materializer that:
 
 The materializer does not make semantic decisions. It only reproduces a known stage boundary and resolves runtime identifiers.
 
-### D3. Prove the installed two-level subagent topology
+### D3. Prove the exact host adapter profile
 
-The parent launches the corpus coordinator through the installed `subagent` facility. Before touching the corpus, that coordinator verifies its exact profile, including `subagent`, and dispatches each role probe from the live assignment. The facility must:
+The acceptance harness—not the requested corpus coordinator—owns launch and evidence collection. For every independently materialized probe, the host adapter must:
 
-- expose correlatable native identities and outcomes for coordinator and worker children;
-- accept the assignment identity rather than arbitrary worker tool names;
-- render or validate the current bootstrap;
+- expose a correlatable native identity and terminal outcome;
+- launch from the live assignment rather than arbitrary model-selected tools;
 - set active worker tools exactly to `assignment.tools` plus lifecycle controls;
 - reject stale, revoked, terminal, or mismatched assignments;
-- record dispatch evidence from host telemetry rather than child prose.
+- report verified/exact active and denied tool telemetry;
+- record dispatch evidence from host events rather than child prose.
 
-The worker prompt is bounded: call the named production tool exactly once with the supplied body, then stop. Semantic invention, stage discovery, retries, and dependent scheduling are not part of the probe.
+Coordinator catalog and resume preservation use separate disposable host-profile checks. They do not schedule semantic roles or continue into a corpus. The semantic worker prompt remains mechanical: call the named production tool exactly once with the supplied body, then stop.
 
 ### D4. Define the probe matrix
 
 | Probe | Seeded semantic state | Target production tool | Expected evidence |
 |---|---|---|---|
-| Allowlist | Fresh scoped assignment | One harmless assigned read/status tool | Successful routed call or expected authorization/state result, exact observed allowlist, terminal host ID. |
-| Normalize | Tiny tracked HTML source | `mem_import_normalize` | Parent-launched coordinator has the exact profile; normalized semantic units and anchors match tracked expectation. |
+| Normalize | Tiny tracked HTML source | `mem_import_normalize` | Harness-observed coordinator-owned tool route is exact; normalized semantic units and anchors match tracked expectation. |
 | Extractor | Normalized two-block unit | `mem_extraction_submit` | One immutable packet, derived quotes, exact task/effect ownership, completed dispatch. |
 | Proposer | Accepted extraction packet | `mem_proposal_submit` | One immutable proposal and complete assigned candidate accounting. |
 | Merger | Accepted proposal and canonical baseline | `mem_merge_commit` | Compact receipt, new revision, consumed proposal, carried dispositions, completed dispatch. |
@@ -354,13 +355,13 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 - Record authoritative host lifecycle evidence.
 - Reject stale/revoked/terminal assignments and task reuse.
 
-**Done signal:** An acceptance or corpus coordinator cannot make an unassigned helper child count as semantic dispatch, and observed tools must equal the assignment profile.
+**Done signal:** The acceptance host adapter and real corpus coordinator cannot make an unassigned helper child count as semantic dispatch, and observed tools must equal the assignment profile.
 
 ### U5. Implement independent production-tool probes
 
 **Status:** Complete on 2026-07-22 for core and conditional roles; live seven-role acceptance passed.
 
-- Implement core normalize, allowlist, extractor, proposer, merger, and reviewer probes.
+- Implement core normalize, extractor, proposer, merger, and reviewer probes. Verify allowlists as host evidence on every semantic probe rather than as a standalone probe.
 - Implement conditional reconciler and repairer probes.
 - Require exactly one target production-tool call per semantic child.
 - Validate durable effects and write per-probe acceptance results.
@@ -374,7 +375,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 - Version the acceptance fingerprint and invalidate prior incompatible receipts.
 - Keep per-run dispatch and authorization checks mandatory after cached acceptance.
 
-**Done signal:** Focused probes prove explicit-mode parent → coordinator → worker topology and verified/exact resume preservation from host telemetry, with no unrestricted helpers, before the same coordinator continues the import.
+**Done signal:** The parent/harness completes independent one-call probes and separate verified/exact host-profile/resume checks before launching any requested corpus coordinator. No acceptance child continues into another probe or an import.
 
 ### U7. Retain deterministic integration and separate Alice evaluation
 

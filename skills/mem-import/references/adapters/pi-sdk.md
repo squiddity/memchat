@@ -1,6 +1,6 @@
 # Adapter: Pi SDK worker-transport probes
 
-Use this adapter only for focused assignment-bound worker transport tests when the repository can create authenticated Pi SDK child sessions directly. It does not replace the live installed-subagent topology gate.
+Use this adapter for focused assignment-bound acceptance when the effective production adapter creates authenticated Pi SDK child sessions directly. Its receipt applies only to the exact `pi-sdk-assignment-bound` fingerprint; it does not accept a different installed subagent adapter.
 
 ## Contract
 
@@ -39,6 +39,6 @@ Optional `--state-root` and `--disposable-root` arguments select local acceptanc
 
 ## Boundaries
 
-This adapter proves worker tool transport only. It does not prove that the active parent can launch a coordinator through the installed `subagent` extension or that the coordinator can recursively launch workers. Therefore its receipt is worker-only evidence and cannot by itself accept an installation; the live two-level topology gate must also pass for the same profile fingerprint.
+This adapter proves the exact SDK profile recorded in its receipt. A `pi-herdr-subagents` installation needs equivalent host-profile evidence from that adapter; do not combine unrelated adapter evidence into one accepted fingerprint.
 
-It does not make semantic decisions, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed probes must be retried from a fresh disposable root.
+The adapter does not run a coordinator, make semantic decisions, chain roles, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed probes restart from a fresh disposable root.

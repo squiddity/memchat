@@ -8,6 +8,8 @@ status: in progress; U0/U1/U1a implemented; U2b has bounded reads/proposals/tran
 
 # feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
 
+> **Historical architecture plan.** Its typed-tool, compendium, and migration decisions remain useful, but every coordinator-driven or full-corpus “acceptance” gate in this file is superseded by [the July 21 focused acceptance plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md). Installation acceptance now uses harness-owned independent one-call probes. Full Alice imports are evaluation, not acceptance. See the [weekly consolidation](2026-07-22-mem-import-weekly-consolidation.md) for current authority.
+
 ## Progress Update — 2026-07-16
 
 U0 and the U1 extraction vertical slice are implemented: the `mem-import` coordinator/extractor skill guidance, typed normalization and bounded-read tools, durable cross-process extractor grants, extraction submission, revocation/expiry checks, and deterministic tests are present. The full test suite passed after this work.
@@ -59,7 +61,7 @@ This is service-level integration evidence, not the U2b facility gate: it does *
 
 ## Progress Update — 2026-07-17 (U2b semantic/control-plane and integration progress)
 
-The following U2b slices are implemented and have deterministic integration coverage. They do **not** yet satisfy the U2b acceptance gate.
+The following U2b slices were implemented with deterministic integration coverage. The historical full-run gate described here is now evaluation evidence, not installation acceptance.
 
 ### Implemented
 
@@ -74,9 +76,9 @@ The following U2b slices are implemented and have deterministic integration cove
 
 Validation completed after the transaction-pressure work: `npm run build`, `npm run test:mem-import` (22/22), `git diff --check`, and full `npm test` (120/120). The full suite was also rerun after the first large/incremental fixtures (118/118 and 119/119).
 
-### Required next session work before another full model-backed merge or U3
+### Superseded full-run instruction
 
-1. Rerun the fresh Alice U2b acceptance import through one proven subagent facility for both parent → coordinator and coordinator → worker launches. Do not use a different or inline agent-hosting fallback or the legacy complete-snapshot merge path. The coordinator needs the mem-import role contract plus `subagent`; worker mutation tools remain confined to each exact child profile. Preflight the two-level topology and a one-unit scoped typed-tool probe.
+The original next step called for a fresh Alice model-backed gate through parent → coordinator → worker launches. Do not use that flow for installation acceptance. Use independent focused probes; retain a full Alice run only as an explicitly requested semantic/efficiency evaluation.
 
 ### Storage/reconstruction and external-adapter follow-up — 2026-07-17
 
@@ -86,7 +88,7 @@ The final U2b stress additions are also complete: an unrelated global revision r
 
 The first Alice acceptance launch intentionally failed closed after normalization (13 units) and before semantic work. The normal-extension coordinator profile had no loaded mem-import skill and its strict active catalog omitted worker tools. Its model incorrectly treated that omission as evidence that the child facility could not activate worker profiles, then attempted unrelated `bash` reader subagents. The parent interrupted it; it persisted `mem_import_fail` with `missing-worker-tools`.
 
-The second launch proved that Herdr child `--tools` profiles work (an extractor launch script contained only its five role tools plus `caller_ping`/`subagent_done`), but the coordinator manually copied incomplete bootstraps. It omitted `taskId` from initial child tasks, causing three extractor recovery/resume loops; four units did submit before the terminal failure, but the run is not acceptance evidence and was stopped. `mem_import_assignment_brief` now validates a current assignment grant and renders the complete non-persistent task bootstrap, including the distinct `taskId` and all unit/source pairs. Coordinator guidance requires the coordinator to call it immediately and pass its result verbatim to the worker subagent. The corrected next launch must use this renderer, explicit DeepSeek Pro/high coordinator plus DeepSeek Flash/high worker overrides, and no documentation-reader subagents.
+The second launch proved that Herdr child `--tools` profiles work (an extractor launch script contained only its five role tools plus `caller_ping`/`subagent_done`), but the coordinator manually copied incomplete bootstraps. It omitted `taskId` from initial child tasks, causing three extractor recovery/resume loops; four units did submit before the terminal failure, but the run is not acceptance evidence and was stopped. `mem_import_assignment_brief` now validates a current assignment grant and renders the complete non-persistent task bootstrap, including the distinct `taskId` and all unit/source pairs. This historical incident motivated assignment-bound dispatch; it must not be retried as coordinator-driven acceptance.
 
 **External adapter mapping established the required profile.** Initial probes failed safely when the child profile was non-exact or the coordinator lacked `subagent` and dispatch recording. The supported configuration uses the installed `pi-herdr-subagents` extension for both levels: the parent launches a fresh coordinator through `subagent`, and that coordinator launches exact-profile workers through its own `subagent` tool. The strict coordinator allowlist includes `subagent` and `mem_import_record_dispatch`, but not shell.
 
@@ -1169,7 +1171,7 @@ Where the host cannot provide an independently correlatable dispatch receipt, re
 - **Review invalidation:** reviewers bind to exact roots/read sets; affected reviews become stale after repair while unrelated reviews remain valid.
 - **Facility:** the coordinator and every semantic worker correlate to subagent lifecycle records; every worker has an exact allowlist, and non-subagent fallbacks fail acceptance or finalization.
 
-#### U2b acceptance gate
+#### Historical U2b model-backed gate (superseded as installation acceptance)
 
 U2b is complete only when:
 

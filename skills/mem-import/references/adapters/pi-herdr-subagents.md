@@ -23,7 +23,7 @@ The parent starts a fresh bounded coordinator with:
 
 Explicit mode suppresses ambient extension discovery only; it is not an OS sandbox and does not suppress every config file or instruction. Its purpose here is deterministic extension provenance. Descendant Pi subagents inherit the explicit mode and absolute extension entry when those fields are omitted.
 
-Treat the returned child/session ID and automatic terminal steer as the coordinator lifecycle. Use only `subagent_resume` for recovery; never run `pi --session` directly. Resume must report a host-attested verified profile and exact active/denied tools. A legacy, isolated-unverified, unrestricted, or mismatched resume is not acceptance evidence; start a fresh coordinator instead.
+Treat the returned child/session ID and automatic terminal steer as the coordinator lifecycle. Use only `subagent_resume` for recovery; never run `pi --session` directly. Resume must report a host-attested verified profile and exact active/denied tools. A legacy, isolated-unverified, unrestricted, or mismatched resume is not valid corpus-run evidence; start a fresh coordinator instead.
 
 ## Worker launch
 
@@ -40,30 +40,14 @@ For every live assignment, the coordinator:
 - uses the returned host child/session ID for `mem_import_record_dispatch`, recording the host-observed semantic subset rather than copying expected tools;
 - inspects the durable effect before dependent work.
 
-The widget's **available** list is the active surface; its separate **denied** list is deny policy, not the set removed by `--tools`. A large available list is failure even if many names appear under denied. The host completion profile, not the widget or coordinator prose alone, is acceptance authority.
+The widget's **available** list is the active surface; its separate **denied** list is deny policy, not the set removed by `--tools`. A large available list is failure even if many names appear under denied. The host completion profile, not the widget or coordinator prose alone, is dispatch evidence.
 
-## Acceptance
+## Installation acceptance
 
-The parent-launched corpus coordinator first proves the live two-level topology and resume continuity by launching and resuming an exact-allowlist probe child under explicit mode. It then runs independent tracked-fixture probes before touching the requested corpus. Each semantic probe calls one named production tool exactly once; normalization is one coordinator tool call. Validate effects through `mem_import_effect_inventory`, persist only sanitized evidence, and continue the requested corpus in the same coordinator.
+Run the focused harness from [installation acceptance probes](../acceptance-ladder.md) before launching the requested corpus coordinator. Adapter conformance uses disposable sessions to verify explicit extension entries, coordinator and worker catalogs, exact active/denied tools, lifecycle identity, and resume preservation. Semantic probes remain independent and make one specified production-tool call each.
 
-For the current acceptance profile:
+Never ask a corpus coordinator to run acceptance. Do not chain acceptance probes, continue a probe into the corpus, finalize a probe run, or use an import as acceptance evidence.
 
-- coordinator: `openrouter/deepseek/deepseek-v4-pro`, `high`;
-- workers: `openrouter/deepseek/deepseek-v4-flash`, `high`.
+Proceed only when the exact adapter/profile receipt is current and every used role is covered. During the real import, continue to require exact host evidence for every dispatch; cached acceptance does not authorize a broader launch.
 
-These are installation test choices, not portable mem-import requirements.
-
-## Conformance gate
-
-Proceed only when:
-
-1. the extension is installed and the active parent exposes `subagent`;
-2. coordinator launch uses explicit mode with only the trusted absolute mem-import extension entry;
-3. coordinator initial/resumed host evidence is attested, verified, and exact;
-4. nested worker host-observed tools equal `assignment.tools` plus documented lifecycle controls, before and after resume;
-5. deny telemetry matches and no denied tool is active;
-6. forbidden shell, generic mutation, unrelated mem-import tools, unrestricted helpers, and ambient extensions are absent from worker profiles;
-7. coordinator and worker terminal child IDs are correlatable;
-8. every semantic probe produces exactly one expected durable effect.
-
-Model-visible allowlisting is not an operating-system sandbox. Report only controls actually observed.
+Model-visible allowlisting and explicit extension mode are not an operating-system sandbox. Report only controls actually observed.

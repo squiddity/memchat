@@ -11,18 +11,18 @@ The same `subagent` facility must support both:
 
 Both levels require completed/failed/cancelled outcomes, interruption or cancellation, host-attested launch profiles, host-observed active/denied tool sets, and enough lifecycle telemetry to correlate child identity with the durable run. Assignment grants enforce application scope independently; an exact tool allowlist and explicit extension mode are not an operating-system sandbox.
 
-## Conformance probe
+## Conformance evidence
 
-Before substantive work:
+Before substantive work, the parent or acceptance harness verifies:
 
-1. the parent verifies the `subagent` facility is installed and active;
-2. the parent launches the corpus coordinator in explicit extension mode with the intended profile and no unassigned helpers;
-3. before touching the corpus, that coordinator launches one harmless assigned child through its own `subagent` tool;
-4. resume the disposable child through the facility's resume tool;
-5. require host-attested `verified`/`exact` profile evidence, exact active/denied tools, no active denied tools, and stable profile controls for coordinator, worker, and resumed worker;
-6. record only host-observed controls. A command line, widget, model-authored `observedTools`, or successful semantic effect alone is insufficient.
+1. the `subagent` facility and trusted mem-import extension entries are installed and active;
+2. the intended coordinator profile contains coordinator tools, `subagent`, and lifecycle controls;
+3. each worker profile can be restricted to its exact assignment tools plus lifecycle controls;
+4. initial and resumed disposable profiles have host-attested `verified`/`exact` active and denied tool telemetry with no active denied tool;
+5. model, thinking, cwd, config root, explicit extension entries, allowlist, deny policy, and named-agent identity survive supported resume;
+6. only host-observed controls are recorded.
 
-The same coordinator then runs any required fixture-backed role probes from [the acceptance ladder](acceptance-ladder.md) and continues the corpus import.
+Use disposable host-profile sessions and the independent [acceptance probes](acceptance-ladder.md). Do not launch the requested corpus coordinator to run conformance, and do not turn conformance into a semantic pipeline. A command line, widget, model-authored `observedTools`, successful effect, or worker prose alone is insufficient.
 
 ## Decision
 

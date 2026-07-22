@@ -1,97 +1,64 @@
-# Mem-import subagent hardening handoff
+# Mem-import subagent hardening handoff — superseded historical record
 
-## Objective
+> **Status: superseded.** This file records the July 22 runtime-hardening work and two rejected coordinator-driven acceptance attempts. It is not an acceptance contract or current next-step list.
+>
+> - Installation acceptance authority: [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance-ladder.md`.
+> - Real-import efficiency/evaluation authority: [Mem-import Efficiency and Quality Parity](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
+> - Current weekly authority map: [Mem-import weekly plan consolidation](2026-07-22-mem-import-weekly-consolidation.md).
 
-Tighten mem-import acceptance so coordinator and worker launches are proven by host-derived tool telemetry, and harden `pi-herdr-subagents` so exact tool/extension profiles survive resume.
+## Runtime hardening delivered
 
-## Repository state
+Repository `/home/squiddity/projects/pi-herdr-subagents`, branch `feat/explicit-extension-mode`:
 
-### memchat
+- commit `a1d9512 feat: preserve verified subagent profiles on resume`;
+- host-HMAC-attested, session-bound, prompt/grant/credential-free launch profile sidecars;
+- profile-preserving `subagent_resume` for model, thinking, cwd, config root, named-agent identity, exact tools, deny policy, and explicit extension entries;
+- fail-closed handling for malformed or untrusted profiles;
+- isolated-unverified legacy resume fallback with no ambient extensions;
+- safe bounded regular-file reads and serialized-size limits;
+- host-observed active and denied tool telemetry;
+- exact/mismatch/unrestricted/unverified completion evidence;
+- deny-drift and active-denied-tool detection;
+- telemetry capture at `before_agent_start` after startup handlers;
+- explicit clearing of null/false child identity and auto-exit environment state.
 
-- Branch: `feat/world-import-model-led-subagents-u0`
-- Last pushed commit: `a5bc37b docs: simplify mem-import subagent orchestration`
-- The current working tree has validated, uncommitted acceptance-hardening changes.
-- Earlier DeepSeek acceptance output under `.memchat-agent-testing/output/deepseek-flash-pro-acceptance-retry/` is **not accepted evidence**. Its extractor launch script was narrow, but unrestricted documentation helpers were launched and the resumed coordinator lost its original `--tools` restriction.
+Validation: 198/198 tests passed, lint reported zero findings, and `git diff --check` passed.
 
-Current memchat edits:
+Repository `/home/squiddity/projects/memchat`, branch `feat/world-import-model-led-subagents-u0`:
 
-- Active skill/reference guidance now requires:
-  - parent → coordinator → worker through one subagent facility;
-  - `pi-herdr-subagents` `extensionMode: "explicit"` with the absolute trusted mem-import extension entry;
-  - no unassigned helper/documentation children;
-  - `subagent_resume`, never raw `pi --session`;
-  - host-attested `profileStatus: verified` and `toolProfile.status: exact`;
-  - exact host active/denied telemetry, no active denied tools;
-  - resumed-profile preservation;
-  - lifecycle controls removed only after host exactness is established before recording semantic `observedTools`.
-- `src/mem-import/acceptance-service.ts` now requires semantic probe evidence fields:
-  - `evidenceSource: "host-runtime"`
-  - `profileStatus: "verified"`
-  - `toolProfileStatus: "exact"`
-  - `isolationMode: "explicit" | "sdk-in-memory"`
-  - `auxiliaryLaunchCount: 0`
-- `src/mem-import/pi-sdk-acceptance-adapter.ts` emits the SDK-isolated form.
-- `src/mem-import-acceptance-fixture.test.ts` is being updated for the stricter fields and includes a guidance contract test. A malformed edit in the fake host return was already fixed. This file still needs build/test validation.
+- `aad7773 feat: require attested mem-import subagent profiles`;
+- `046126a docs: require idle waits for mem-import workers`.
 
-### pi-herdr-subagents
+These changes strengthen host evidence. They do not authorize a model coordinator to run installation acceptance.
 
-- Repository: `/home/squiddity/projects/pi-herdr-subagents`
-- Branch: `feat/explicit-extension-mode`
-- Commit `a1d9512 feat: preserve verified subagent profiles on resume` was pushed to `origin/feat/explicit-extension-mode`.
-- Initial implementation passed tests but had security review blockers; all known findings were addressed.
+## Rejected runs
 
-Implemented runtime changes:
+Neither run below is acceptance evidence:
 
-- Host-HMAC-attested, session-bound, prompt/grant/credential-free launch profile sidecar.
-- Sidecar records effective model, thinking, cwd, named-agent identity, exact tool allowlist or unrestricted state, deny list, extension mode/absolute entries, inherited extension entries, and config root.
-- `subagent_resume` verifies attestation and session binding, then reapplies tools/model/thinking/cwd/config/deny/extension profile.
-- Malformed/untrusted profiles fail closed.
-- Legacy/external sessions resume only with `--no-extensions` and are marked isolated-unverified.
-- Safe regular-file, no-symlink, nonblocking bounded reads for session/profile/activity/key files; serialized-size limits on writes.
-- Named-agent identity restored so recursive self-spawn guard survives resume.
-- Host activity telemetry records actual active tools and denied tools.
-- Completion reports exact/mismatch/unrestricted/unverified and checks deny drift/active denied tools.
-- Explicit extension mode documentation clarifies that it suppresses ambient extension discovery only, not OS access or every config/instruction.
-- Raw resume instructions replaced with `subagent_resume`.
+1. `.memchat-agent-testing/output/deepseek-flash-pro-acceptance-retry/`
+   - one extractor launch had a narrow allowlist;
+   - unrestricted helper children participated;
+   - raw resume lost the original tool restriction;
+   - coordinator-authored `observedTools` was not host authority.
+2. `.memchat-agent-testing/output/deepseek-flash-pro-attested-acceptance/`
+   - a long-lived DeepSeek Pro coordinator was incorrectly asked to execute semantic stages;
+   - it launched a self-waking loop of unassigned Pro wait/no-op children;
+   - proposal/merge work was duplicated and reviewer transport failed;
+   - the run was interrupted and all runaway panes were closed.
 
-Security review history:
+The second incident reinforced an already-decided boundary: acceptance must not be a miniature import. Normal subagent completion is push-delivered; real corpus coordinators end their turn and wait at rest after dispatch.
 
-1. First review found untrusted sidecar execution, missing named-agent restore, incomplete deny comparison, unsafe reads, and write/read size mismatch. Fixed.
-2. Second review found telemetry captured too early and false/null environment state not explicitly cleared. Fixed by:
-   - capturing telemetry at `before_agent_start`;
-   - always setting/clearing `PI_SUBAGENT_AGENT` and `PI_SUBAGENT_AUTO_EXIT`.
+## Correct disposition
 
-Latest pi-herdr-subagents validation after those final fixes:
+Do not retry either coordinator-driven design. The existing command is focused acceptance for the **Pi SDK adapter only**:
 
-- `npm test`: 198/198 passed
-- `npm run lint`: 0 warnings/errors
-- `git diff --check`: passed
+```bash
+npm run acceptance:mem-import -- \
+  --model <provider/model-id> \
+  --thinking high \
+  --all-roles
+```
 
-Latest memchat validation:
+It independently materializes each tracked fixture, permits one specified production-tool call, validates SDK host/durable evidence, and stops. Its receipt does not accept `pi-herdr-subagents`. That adapter still requires an equivalent focused host adapter with exact extension/profile/resume telemetry; until it exists, stop rather than substituting an SDK receipt or a model coordinator.
 
-- `git diff --check`: passed
-- `npm run build`: passed
-- `npm run test:mem-import`: 47/47 passed
-
-## Remaining work
-
-1. **Review mem-import acceptance boundary**
-   - Ensure successful synthetic host fixtures include `exactHostEvidence`.
-   - Ensure broadened/clamped tests still fail for their intended reason.
-   - Decide whether the corpus `mem_import_record_dispatch` schema also needs explicit profile-status fields, or whether host completion evidence plus stricter installation acceptance is the intended boundary. Do not claim model-supplied `observedTools` is cryptographic host proof.
-2. **Inspect both diffs**
-   - Confirm no prompts, grants, coordinator authority, credentials, or sensitive task text enter the new subagent sidecars/telemetry.
-   - Confirm explicit-mode examples use the actual mem-import extension path/name rather than generic “memory import” wording where appropriate.
-3. **Live conformance retry**
-   - The first explicit-mode DeepSeek Pro/high coordinator run was interrupted and rejected after it created a self-waking loop of unassigned Pro no-op children (`please-wait`, `w3`–`w12`). It also duplicated proposer/merger work and lost the reviewer to a provider stream failure.
-   - All runaway panes were closed. No output from that run is acceptance evidence.
-   - Guidance now requires the coordinator to end its turn and wait at rest for push-delivered completion; wait/no-op/monitor children, polling, and ordinary scheduled waits are forbidden.
-   - Retry only from a freshly loaded parent runtime and verify the coordinator actually remains idle between worker launches.
-4. **Latest follow-up validation**
-   - `git diff --check`, `npm run build`, and all 47 `test:mem-import` tests pass after the wait-at-rest guidance change.
-
-## Task tracker
-
-- #8 Harden subagent runtime: completed locally and validated.
-- #9 Tighten mem-import acceptance: completed locally and validated.
-- #10 Validate both repositories: in progress; automated checks pass, first live conformance was rejected, clean retry remains.
+Host-profile and resume conformance are disposable checks, never semantic stage orchestration. Alice and complete import runs are separate evaluation work.

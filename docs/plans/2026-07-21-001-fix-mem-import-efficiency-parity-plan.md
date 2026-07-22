@@ -11,6 +11,8 @@ acceptance_plan: docs/plans/2026-07-21-002-fix-mem-import-acceptance-simplificat
 
 # Mem-import Efficiency and Legacy Parity - Plan
 
+> **Authority boundary:** This plan governs real-import orchestration, compactness, semantic quality, usage telemetry, and Alice evaluation. It does not govern installation acceptance. All acceptance language delegates to [the focused acceptance plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md), whose probes are harness-owned, independent, and limited to one specified production-tool call each.
+
 ## Goal Capsule
 
 | Field | Value |

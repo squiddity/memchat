@@ -1,5 +1,7 @@
 # Mem-import simplification plan
 
+> **Status: implemented design input, no longer an acceptance authority.** The golden-path role/tool simplification remains relevant. Installation acceptance is governed by [the focused acceptance plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md); Alice and full-import efficiency evaluation are governed by [the efficiency/parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md). The Alice completion signal below is evaluation coverage, not installation acceptance.
+
 ## Goal
 
 Turn the experimental import coordinator into a predictable, skill-driven pipeline that scales from one book to a series. Semantic judgment remains model-owned; deterministic tools own packet construction, authorization, bounded state, provenance transcription, concurrency, and accounting.
@@ -99,4 +101,4 @@ Reviewer reads a revision-bound bounded view and submits findings. Repair remain
 
 ## Migration
 
-Use a clean, new-run-only protocol revision. Failed U2b acceptance outputs remain diagnostic evidence and are not upgraded. Internal snapshot reconstruction APIs may remain for tests and history, but snapshot mutation/read tools are not exposed to semantic workers.
+Use a clean, new-run-only protocol revision. Failed historical U2b full-run outputs remain diagnostic/evaluation evidence and are not upgraded into installation acceptance. Internal snapshot reconstruction APIs may remain for tests and history, but snapshot mutation/read tools are not exposed to semantic workers.

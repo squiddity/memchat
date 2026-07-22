@@ -30,22 +30,24 @@ const exactHostEvidence = {
   auxiliaryLaunchCount: 0,
 } as const;
 
-test("active acceptance guidance requires explicit host-attested launch and resume profiles", async () => {
-  const [skill, ladder, adapter] = await Promise.all([
+test("active guidance keeps focused acceptance outside corpus coordination", async () => {
+  const [skill, ladder, capabilities, adapter] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/acceptance-ladder.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/adapters/pi-herdr-subagents.md"), "utf8"),
   ]);
-  for (const text of [skill, ladder, adapter]) {
-    assert.match(text, /extensionMode: [`\"]explicit/);
-    assert.match(text, /profileStatus: [`]?verified/);
-    assert.match(text, /toolProfile\.status: [`]?exact/);
-    assert.match(text, /subagent_resume/);
-  }
+  assert.match(skill, /harness—not a model coordinator—materializes independent fixtures/);
+  assert.match(skill, /Do not run probes, inspect acceptance fixtures, or launch an acceptance coordinator/);
   assert.match(skill, /end the current turn and remain idle/i);
   assert.match(skill, /Never synthesize `observedTools`/);
-  assert.match(ladder, /no unassigned, unrestricted, or documentation\/helper child/);
-  assert.match(adapter, /A large available list is failure/);
+  assert.match(ladder, /corpus coordinator never runs acceptance/);
+  assert.match(ladder, /call the named production tool exactly once/);
+  assert.match(ladder, /never normalizes for a later model/);
+  assert.match(ladder, /Do not use installation acceptance for:[\s\S]*free-running or long-lived acceptance coordinator/);
+  assert.match(capabilities, /Do not launch the requested corpus coordinator to run conformance/);
+  assert.match(adapter, /Run the focused harness[\s\S]*before launching the requested corpus coordinator/);
+  assert.match(adapter, /Never ask a corpus coordinator to run acceptance/);
 });
 
 async function tempOutput(label: string): Promise<string> {

@@ -35,7 +35,7 @@ npm run dev
 
 Embedded pi sessions use a project-local `.memchat/pi/` runtime and do not inherit account-level pi instructions or resources. Put custom models and optional credentials there, or explicitly provide an external credential file with `MEMCHAT_PI_AUTH_FILE=/path/to/auth.json` (credentials only).
 
-For an agent-led book or series import, ask the agent normally or invoke `/skill:mem-import`; a new or changed installation runs its small role-by-role acceptance ladder before the requested corpus. The legacy shell runner remains available explicitly for compatibility and debugging.
+For an agent-led book or series import, ask the agent normally or invoke `/skill:mem-import`. A new or changed installation first runs harness-owned, independent one-call capability probes; it never performs a miniature import as acceptance. The legacy shell runner remains available explicitly for compatibility and debugging.
 
 Useful variants:
 
@@ -55,7 +55,7 @@ For project commands that may run for a while or emit useful streaming output, u
 - [`docs/playtesting.md`](docs/playtesting.md) — interactive-shell playtesting workflow and agent defaults
 - [`docs/architecture.md`](docs/architecture.md) — goals, design direction, memory quality bar, roadmap
 - [`docs/memory-backends.md`](docs/memory-backends.md) — backend strategy and comparison
-- [`skills/mem-import/SKILL.md`](skills/mem-import/SKILL.md) — default agent-led import using one explicit-mode subagent facility with host-attested coordinator/worker profiles, plus acceptance, merge, review, and finalization
+- [`skills/mem-import/SKILL.md`](skills/mem-import/SKILL.md) — default agent-led import using one explicit-mode subagent facility; installation acceptance is a separate focused harness
 - [`docs/world-import.md`](docs/world-import.md) — legacy shell-runner quick-start, temporary Tailscale review, helper commands, lint/eval, and debugging
 - [`docs/smoke-tests.md`](docs/smoke-tests.md) — validation commands and expected results
 

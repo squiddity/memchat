@@ -44,7 +44,7 @@ For every semantic worker:
 5. Record requested and host-observed semantic tools, model, thinking, host child ID, and outcome with `mem_import_record_dispatch`. Never derive observed values from the assignment or worker prose.
 6. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; the effect or model-authored dispatch record cannot replace host telemetry.
 
-A failed, cancelled, missing, mismatched, unrestricted, unverified, deny-drifted, raw-resumed, or non-host-observed subagent receipt is evidence to retry fresh or stop; it is not acceptance evidence. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
+A failed, cancelled, missing, mismatched, unrestricted, unverified, deny-drifted, raw-resumed, or non-host-observed subagent receipt invalidates that corpus dispatch; retry fresh or stop. Cached installation acceptance does not override a bad live dispatch. A terminal host result is final even when its prose says it is still reading or asks for help: inspect the durable effect immediately and never wait for a child the host reports as terminal.
 
 For a non-extractor retry, revoke the old assignment and issue a fresh task ID without `retriesTaskId` or `supersedesTaskIds`; those lineage fields belong only to extractor assignment calls.
 
