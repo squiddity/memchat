@@ -662,7 +662,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_import_work_status",
     label: "Read Import Work Status",
-    description: "Summarize durable progress: canonical revision, consumed proposals, candidate accounting gaps, and open conflicts. Use this to resume without conversation history.",
+    description: "Summarize the durable cross-phase ledger: terminal status, proposal-stage candidate coverage and duplicates, identity packets, canonical revision/consumption/accounting, and conflicts. Fresh phase coordinators use this without prior coordinator prose.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
       try { return result(await u2.workStatus(params)); } catch (error) { return failure(error); }
@@ -672,7 +672,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_import_merge_state",
     label: "Read Merge Controls",
-    description: "Read compact canonical revision/hash controls, counts, conflicts, accounting, and review validity as the coordinator. Use bounded inventory and explicit artifact reads for canonical content.",
+    description: "Read compact terminal, proposal/identity, canonical revision/hash, conflict, accounting, and review-validity controls. Use bounded inventory and explicit artifact reads for canonical content.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
       try { return result(await u2.mergeControls(params)); } catch (error) { return failure(error); }

@@ -10,6 +10,8 @@ Assignment results are complete child bootstraps. Their `tools` array is the exa
 
 `mem_import_effect_inventory` pages compact assignment, retry-lineage, dispatch, and immutable effect-hash summaries. Use it instead of worker prose or filesystem helpers to discover proposal, identity, merge, review, and extraction effects. It never returns grants or artifact paths.
 
+`mem_import_work_status` is the compact cross-phase ledger handoff. In addition to revision, proposal consumption, canonical candidate accounting, and conflicts, it reports unique candidates covered by proposal dispositions, unproposed candidates, duplicate proposal dispositions, identity packet count, and explicit `active`/`failed`/`finalized` terminal status. `mem_import_merge_state` adds canonical artifact/disposition counts and review validity without artifact bodies. Fresh phase coordinators rebuild these values from durable files; no status depends on an earlier service instance or coordinator conversation.
+
 An explicit `mem_import_fail` and a successful finalization make the run mutation-terminal. Read-only coordinator status remains available, but new assignments, launches, submissions, leases, reviews, and canonical mutations reject. Semantic no-op merge transactions create no revision or effect.
 
 ## Source and extraction

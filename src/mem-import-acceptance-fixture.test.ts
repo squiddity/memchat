@@ -30,19 +30,38 @@ const exactHostEvidence = {
   auxiliaryLaunchCount: 0,
 } as const;
 
-test("active guidance uses brief extension-agnostic facility acceptance", async () => {
-  const [skill, parentPreflight, acceptance, recipes, capabilities, adapter] = await Promise.all([
+test("active guidance keeps brief acceptance and enforces artifact-led phase handoffs", async () => {
+  const [skill, parentPreflight, workflow, helperTools, acceptance, recipes, capabilities, adapter, genericAdapter] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/parent-preflight.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/workflow.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/helper-tools.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/acceptance.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/facility-recipes.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/adapters/pi-herdr-subagents.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/adapters/pi-subagents.md"), "utf8"),
   ]);
-  assert.match(skill, /Parent agent:[\s\S]*parent preflight and coordinator launch/);
-  assert.match(skill, /Corpus coordinator:[\s\S]*Do not run acceptance/);
+  assert.match(skill, /Parent agent:[\s\S]*call exactly one begin tool[\s\S]*four fresh phase coordinators in order/);
+  assert.match(skill, /Phase coordinator:[\s\S]*Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase/);
+  assert.match(skill, /extraction[\s\S]*proposal-reconciliation[\s\S]*merge[\s\S]*review-finalization/);
+  assert.match(skill, /Never use a prior coordinator transcript, summary, or claimed hash as an input/);
+  assert.match(skill, /resume or restart only the current phase/);
+  assert.match(skill, /Never persist authority/);
   assert.match(skill, /end the turn and remain idle/i);
   assert.match(skill, /Never derive observed evidence from the assignment or worker prose/);
+  assert.match(parentPreflight, /calls exactly one run-creation tool/);
+  assert.match(parentPreflight, /sequentially for exactly these fresh contexts/);
+  assert.match(parentPreflight, /Do not pass earlier coordinator prose, transcripts, copied status results/);
+  assert.match(parentPreflight, /resume the current phase only/);
+  assert.match(workflow, /At startup[\s\S]*typed read tools/);
+  assert.match(workflow, /At exit[\s\S]*typed reads again/);
+  assert.match(workflow, /uniqueProposedCandidateCount === candidateCount/);
+  assert.match(workflow, /duplicateProposalDispositionCount === 0/);
+  assert.match(workflow, /terminalStatus: "finalized"/);
+  assert.match(workflow, /Do not add or persist cluster planning/);
+  assert.match(helperTools, /compact cross-phase ledger handoff/);
+  assert.match(helperTools, /no status depends on an earlier service instance or coordinator conversation/);
   assert.match(parentPreflight, /Choose one facility/);
   assert.match(parentPreflight, /otherwise run \[brief acceptance\]/);
   assert.match(parentPreflight, /Do not run role-by-role conformance/);
@@ -52,8 +71,13 @@ test("active guidance uses brief extension-agnostic facility acceptance", async 
   assert.match(acceptance, /optional maintainer conformance/);
   assert.match(recipes, /\.memchat\/mem-import\/facility-recipes/);
   assert.match(capabilities, /do not make unavailable adapter-specific evidence universal/);
+  assert.match(capabilities, /exact-profile resume of the current phase only/);
   assert.match(adapter, /known recipe, not a required mem-import backend or programmatic adapter/);
   assert.match(adapter, /Real imports still require each assignment's exact profile/);
+  assert.match(adapter, /four sequential fresh bounded coordinators/);
+  assert.match(adapter, /Recover only the current incomplete phase/);
+  assert.match(genericAdapter, /four sequential fresh phase coordinators/);
+  assert.match(genericAdapter, /passes no prior coordinator prose between phases/);
 });
 
 async function tempOutput(label: string): Promise<string> {

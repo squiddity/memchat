@@ -347,6 +347,77 @@ test("mem-import worker extraction reads are bounded, filtered, and monotonic", 
   );
 });
 
+test("fresh services rebuild proposal-stage, identity, and terminal work status from the durable ledger", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const identities = new MemImportIdentityService(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "status-extractor", unitIds: units.map((unit) => unit.unitId) });
+  for (const unit of units) await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+
+  const unit = units[0]!;
+  const proposer = await service.assignWorker({ ...run, taskId: "status-proposer", role: "proposer", unitIds: [unit.unitId] });
+  const artifacts = [{
+    id: "status-ada",
+    group: "people" as const,
+    title: "Ada",
+    description: "A guard at the glass tower.",
+    sections: [{ heading: "Summary", body: "Ada guards the glass tower." }],
+    provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }],
+  }];
+  const candidateDispositions = [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented" as const, artifactId: "status-ada" }];
+  const first = await proposals.submitWorkerProposalBody({ ...proposer, artifacts, candidateDispositions, rationale: "First durable proposal disposition." });
+  const duplicate = await proposals.submitWorkerProposalBody({ ...proposer, artifacts, candidateDispositions, rationale: "Second durable proposal disposition for duplicate detection." });
+  assert.notEqual(first.contentHash, duplicate.contentHash);
+
+  const reconciler = await service.assignWorker({ ...run, taskId: "status-reconciler", role: "reconciler", proposalHashes: [first.contentHash, duplicate.contentHash] });
+  await identities.submitWorkerIdentity({
+    ...reconciler,
+    packet: {
+      version: 1,
+      kind: "mem-import-identity",
+      id: "status-identity",
+      proposalHashes: [first.contentHash, duplicate.contentHash],
+      baselineRevision: 0,
+      baselineContentHash: null,
+      decisions: [{ id: "status-create", provisionalId: "status-ada", disposition: "create", canonicalId: "status-ada", rationale: "Create the fresh-corpus identity." }],
+      rationale: "Persist one typed identity packet for the phase handoff.",
+    },
+  });
+
+  const rebuilt = await new MemImportU2Service(new MemImportService()).workStatus(run);
+  assert.deepEqual(rebuilt, {
+    revision: 0,
+    contentHash: null,
+    proposalCount: 2,
+    consumedProposalCount: 0,
+    unconsumedProposalCount: 2,
+    candidateCount: 2,
+    uniqueProposedCandidateCount: 1,
+    unproposedCandidateCount: 1,
+    duplicateProposalDispositionCount: 1,
+    accountedCandidateCount: 0,
+    unaccountedCandidateCount: 2,
+    identityPacketCount: 1,
+    openConflictCount: 0,
+    blockingConflictCount: 0,
+    terminalStatus: "active",
+  });
+  const rebuiltControls = await new MemImportU2Service(new MemImportService()).mergeControls(run);
+  assert.equal(rebuiltControls.uniqueProposedCandidateCount, 1);
+  assert.equal(rebuiltControls.unproposedCandidateCount, 1);
+  assert.equal(rebuiltControls.duplicateProposalDispositionCount, 1);
+  assert.equal(rebuiltControls.identityPacketCount, 1);
+  assert.equal(rebuiltControls.terminalStatus, "active");
+  assert.ok(serializedModelToolResultSize(rebuiltControls) < 10_000);
+
+  await new MemImportU2Service(new MemImportService()).fail({ ...run, reasonCode: "phase-status-test", message: "Persist terminal status for a fresh reader." });
+  const terminal = await new MemImportU2Service(new MemImportService()).workStatus(run);
+  assert.equal(terminal.terminalStatus, "failed");
+  assert.equal(terminal.uniqueProposedCandidateCount, 1);
+  assert.equal(terminal.identityPacketCount, 1);
+});
+
 test("mem-import persists immutable scoped shard proposals against exact extraction hashes", async () => {
   const { output, run, units } = await setup();
   const service = new MemImportService();
@@ -892,6 +963,7 @@ test("mem-import finalization rejects inline, managed, or missing semantic dispa
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success", fence: finalLease.fence });
   const terminalRun = JSON.parse(await readFile(join(output, "stages", "orchestration", "run.json"), "utf-8")) as { terminal?: { status?: string } };
   assert.equal(terminalRun.terminal?.status, "finalized");
+  assert.equal((await new MemImportU2Service(new MemImportService()).workStatus(run)).terminalStatus, "finalized");
   assert.equal((await service.status(run)).normalized, true);
   await assert.rejects(service.assignWorker({ ...run, taskId: "after-finalization", role: "reviewer" }), /run is terminal/);
   await assert.rejects(u2.acquireCoordinatorLease({ ...run, taskId: "after-finalization" }), /run is terminal/);

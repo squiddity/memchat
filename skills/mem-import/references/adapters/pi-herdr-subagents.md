@@ -2,13 +2,13 @@
 
 Load this reference only when the active catalog exposes the `subagent` tool from the installed `pi-herdr-subagents` (`subagents`) extension.
 
-Use `subagent` for both parent → coordinator and coordinator → worker launches. Do not mix it with an alternate or inline host.
+Use `subagent` for both parent → phase coordinator and phase coordinator → worker launches. Do not mix it with an alternate or inline host.
 
-## Coordinator launch
+## Phase coordinator launch
 
-The parent starts a fresh bounded coordinator with:
+After calling begin exactly once, the parent starts four sequential fresh bounded coordinators (`extraction`, `proposal-reconciliation`, `merge`, `review-finalization`). Each launch has:
 
-- the mem-import skill and coordinator role guidance;
+- the mem-import skill, exact phase name, small run/scope envelope, and coordinator role guidance;
 - coordinator mem-import tools, `subagent`, and extension-owned lifecycle controls;
 - explicit authenticated model, thinking, repository `cwd`, fresh context, and `autoExit: false`;
 - `extensionMode: "explicit"` and the absolute trusted path to `extensions/mem-import-tools.ts`;
@@ -16,7 +16,9 @@ The parent starts a fresh bounded coordinator with:
 
 Explicit mode provides deterministic extension provenance by suppressing ambient extension discovery; it is not an OS sandbox and does not suppress all configuration or instructions. Descendants inherit explicit mode and the extension entry when those fields are omitted.
 
-Use the returned child/session ID and terminal steer as lifecycle evidence. Recover only with `subagent_resume`, never `pi --session`; require its host-attested verified profile and exact active/denied tools. Otherwise start a fresh coordinator.
+Never pass prior coordinator prose or copied status into the next launch. Keep coordinator authority in the live task only; do not place it in a recipe, artifact, or summary.
+
+Use each returned child/session ID and terminal steer as lifecycle evidence. Recover only the current incomplete phase with `subagent_resume`, never `pi --session`, and require its host-attested verified profile and exact active/denied tools. If preservation is unavailable, start a fresh coordinator for that same phase. Never resume a completed earlier phase.
 
 ## Worker launch
 
@@ -39,7 +41,7 @@ The widget's **available** list is active; **denied** is policy, not the tools r
 This is a known recipe, not a required mem-import backend or programmatic adapter:
 
 - facility/tool: installed `subagent`;
-- coordinator: `autoExit: false`, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, trusted mem-import extension entry;
+- phase coordinators: four sequential fresh contexts with `autoExit: false`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry;
 - workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries;
 - lifecycle additions: `caller_ping` and `subagent_done`;
 - completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison;

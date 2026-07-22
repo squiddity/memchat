@@ -17,7 +17,7 @@ import {
 } from "../world-import/staging.js";
 import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
 import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
-import { MemImportService, type AssignmentRole, type MemImportAssignmentRecord, type MemImportCapability } from "./service.js";
+import { MemImportService, type AssignmentRole, type MemImportAssignmentRecord, type MemImportCapability, type MemImportTerminalStatus } from "./service.js";
 import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
 
 const LEASE_HEARTBEAT_MS = 60_000;
@@ -86,19 +86,27 @@ export type MergeInventoryResult = {
   continuationCursor?: string;
 };
 
-export type MergeControls = {
+export type MemImportWorkStatus = {
   revision: number;
   contentHash: string | null;
-  artifactCount: number;
-  candidateDispositionCount: number;
   proposalCount: number;
   consumedProposalCount: number;
   unconsumedProposalCount: number;
   candidateCount: number;
+  uniqueProposedCandidateCount: number;
+  unproposedCandidateCount: number;
+  duplicateProposalDispositionCount: number;
   accountedCandidateCount: number;
   unaccountedCandidateCount: number;
+  identityPacketCount: number;
   openConflictCount: number;
   blockingConflictCount: number;
+  terminalStatus: "active" | MemImportTerminalStatus;
+};
+
+export type MergeControls = MemImportWorkStatus & {
+  artifactCount: number;
+  candidateDispositionCount: number;
   reviewValidity: {
     current: boolean;
     currentReviewCount: number;
@@ -182,6 +190,7 @@ function transactionPath(outputRoot: string, revision: number, contentHash: stri
 function artifactBlobPath(outputRoot: string, contentHash: string): string { return join(outputRoot, "stages", "merge", "artifacts", `${contentHash}.json`); }
 function checkpointPath(outputRoot: string, revision: number, contentHash: string): string { return join(outputRoot, "stages", "merge", "checkpoints", `${String(revision).padStart(8, "0")}-${contentHash}.json`); }
 function proposalDir(outputRoot: string, runId: string): string { return join(outputRoot, "stages", "runs", runId, "proposals"); }
+function identityPacketDir(outputRoot: string, runId: string): string { return join(outputRoot, "stages", "runs", runId, "identity"); }
 function eventPath(outputRoot: string, kind: string): string { return join(orchestrationDir(outputRoot), "events", `${new Date().toISOString().replace(/[:.]/g, "-")}-${kind}-${randomBytes(6).toString("hex")}.json`); }
 function reviewPath(outputRoot: string, checkpointId: string, taskId: string, hash: string): string { return join(outputRoot, "stages", "reviews", checkpointId, `${taskId}-${hash}.json`); }
 function identityStatePath(outputRoot: string): string { return join(outputRoot, "stages", "identity", "state.json"); }
@@ -273,27 +282,36 @@ export class MemImportU2Service {
     return this.readMergeState(await this.base.canonicalRootForRun(assignment.outputRoot));
   }
 
-  async workStatus(options: CoordinatorAuthority): Promise<{
-    revision: number;
-    contentHash: string | null;
-    proposalCount: number;
-    consumedProposalCount: number;
-    unconsumedProposalCount: number;
-    candidateCount: number;
-    accountedCandidateCount: number;
-    unaccountedCandidateCount: number;
-    openConflictCount: number;
-    blockingConflictCount: number;
-  }> {
+  async workStatus(options: CoordinatorAuthority): Promise<MemImportWorkStatus> {
     const run = await this.base.authorizeCoordinator(options);
     const canonicalRoot = await this.base.canonicalRootForRun(run.outputRoot);
     const state = await this.readMergeState(canonicalRoot);
+    const candidateKeys = new Set((await readExtractionStages(run.outputRoot)).flatMap((stage) => (stage.candidates ?? []).map((candidate) => `${stage.unitId}:${candidate.id}`)));
     const proposalsRoot = proposalDir(run.outputRoot, run.runId);
     const proposalHashes = new Set<string>();
+    const proposedCandidateKeys = new Set<string>();
+    let duplicateProposalDispositionCount = 0;
     for (const file of existsSync(proposalsRoot) ? await readdir(proposalsRoot) : []) {
       if (!file.endsWith(".json")) continue;
-      const packet = JSON.parse(await readFile(join(proposalsRoot, file), "utf-8")) as { contentHash?: unknown };
+      const packet = JSON.parse(await readFile(join(proposalsRoot, file), "utf-8")) as { contentHash?: unknown; candidateDispositions?: unknown };
       if (typeof packet.contentHash === "string") proposalHashes.add(packet.contentHash);
+      if (!Array.isArray(packet.candidateDispositions)) continue;
+      for (const raw of packet.candidateDispositions) {
+        if (!raw || typeof raw !== "object") continue;
+        const disposition = raw as { unitId?: unknown; candidateId?: unknown };
+        if (typeof disposition.unitId !== "string" || typeof disposition.candidateId !== "string") continue;
+        const key = `${disposition.unitId}:${disposition.candidateId}`;
+        if (!candidateKeys.has(key)) continue;
+        if (proposedCandidateKeys.has(key)) duplicateProposalDispositionCount += 1;
+        else proposedCandidateKeys.add(key);
+      }
+    }
+    const identityPacketHashes = new Set<string>();
+    const identitiesRoot = identityPacketDir(run.outputRoot, run.runId);
+    for (const file of existsSync(identitiesRoot) ? await readdir(identitiesRoot) : []) {
+      if (!file.endsWith(".json")) continue;
+      const packet = JSON.parse(await readFile(join(identitiesRoot, file), "utf-8")) as { contentHash?: unknown };
+      if (typeof packet.contentHash === "string") identityPacketHashes.add(packet.contentHash);
     }
     const consumed = new Set<string>();
     const transactionsRoot = join(canonicalRoot, "stages", "merge", "transactions");
@@ -301,7 +319,6 @@ export class MemImportU2Service {
       const receipt = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { proposalHashes?: unknown };
       if (Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string" && proposalHashes.has(proposalHash)) consumed.add(proposalHash);
     }
-    const candidateKeys = new Set((await readExtractionStages(run.outputRoot)).flatMap((stage) => (stage.candidates ?? []).map((candidate) => `${stage.unitId}:${candidate.id}`)));
     const accountedKeys = new Set((state.stage.candidateDispositions ?? []).map((item) => `${item.unitId}:${item.candidateId}`).filter((key) => candidateKeys.has(key)));
     let openConflictCount = 0;
     let blockingConflictCount = 0;
@@ -319,10 +336,15 @@ export class MemImportU2Service {
       consumedProposalCount: consumed.size,
       unconsumedProposalCount: proposalHashes.size - consumed.size,
       candidateCount: candidateKeys.size,
+      uniqueProposedCandidateCount: proposedCandidateKeys.size,
+      unproposedCandidateCount: candidateKeys.size - proposedCandidateKeys.size,
+      duplicateProposalDispositionCount,
       accountedCandidateCount: accountedKeys.size,
       unaccountedCandidateCount: candidateKeys.size - accountedKeys.size,
+      identityPacketCount: identityPacketHashes.size,
       openConflictCount,
       blockingConflictCount,
+      terminalStatus: run.terminal?.status ?? "active",
     };
   }
 

@@ -2,7 +2,7 @@
 
 This document covers the explicitly invoked compatibility/debugging CLI for turning HTML/XHTML directories, ZIPs, and EPUB-like archives into a provenance-rich Markdown world wiki.
 
-For a normal agent-led book or series import, use [`mem-import`](../skills/mem-import/SKILL.md). The parent selects an available subagent facility, reuses a matching local invocation recipe or performs one brief disposable capability probe, and then launches the corpus coordinator. This confidence check is not an import pipeline or exhaustive role certification. The coordinator uses the selected facility for assignment-bound workers. Invoke this legacy workflow explicitly with `/skill:world-import` or the commands below when shell-runner compatibility or staged runner debugging is the goal.
+For a normal agent-led book or series import, use [`mem-import`](../skills/mem-import/SKILL.md). The parent selects an available subagent facility, reuses a matching local invocation recipe or performs one brief disposable capability probe, calls begin once, and then launches four sequential fresh phase coordinators. This confidence check is not an import pipeline or exhaustive role certification. Each phase coordinator reconstructs from the durable ledger and uses the selected facility for assignment-bound workers. Invoke this legacy workflow explicitly with `/skill:world-import` or the commands below when shell-runner compatibility or staged runner debugging is the goal.
 
 ## Getting started
 

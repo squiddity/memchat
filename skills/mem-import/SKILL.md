@@ -5,21 +5,20 @@ description: Import a book or series into a provenance-rich world library with b
 
 # Mem Import
 
-Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, canonical transactions, reviews, checks, and the final run record are authoritative. Worker prose is only a receipt.
+Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, identity packets, canonical transactions, reviews, checks, and the final run record are authoritative. Worker and coordinator prose is only a receipt.
 
 ## 1. Choose your role
 
-- **Parent agent:** do not call corpus import tools. Read [parent preflight and coordinator launch](references/parent-preflight.md), complete it, launch exactly one corpus coordinator, and stop this workflow.
-- **Corpus coordinator:** the bootstrap must name this role. Do not run acceptance, inspect acceptance fixtures, or launch another coordinator. Continue at section 2 and enforce host evidence on every real worker dispatch.
+- **Parent agent:** read [parent preflight and phase launch](references/parent-preflight.md). After preflight, call exactly one begin tool, retain its run identity and coordinator authority only in live context, and launch the four fresh phase coordinators in order.
+- **Phase coordinator:** the bootstrap must name exactly one phase: `extraction`, `proposal-reconciliation`, `merge`, or `review-finalization`. Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase. Continue at section 2.
 
-If neither role is explicit, stop and clarify rather than mixing parent acceptance with corpus work.
+If neither role and phase are explicit, stop and clarify rather than mixing parent, coordinator, and worker duties.
 
-## 2. Choose the run mode
+## 2. Honor the phase handoff
 
-- **Standalone book:** `mem_import_begin`, then `mem_import_normalize`.
-- **Maintained book or series:** read [compendium runs](references/compendium-runs.md), then use its begin and normalize tools.
+The parent supplies only a small launch envelope (`phase`, `outputRoot`, `runId`, requested scope, and extraction input only when needed) plus coordinator authority transiently. Never persist authority or copy it into an assignment, recipe, audit, packet, or completion prose.
 
-Inspect the complete manifest. This step is complete when every intended source unit appears in the normalized ledger.
+At phase startup, reconstruct inputs by calling the typed status, manifest, controls, inventory, and effect tools named in [coordinator decisions](references/workflow.md). Never use a prior coordinator transcript, summary, or claimed hash as an input. At phase exit, re-read the typed durable outputs for that phase. If interrupted, resume or restart only the current phase; never resume a completed earlier phase or skip a phase whose exit ledger is incomplete.
 
 ## 3. Enforce worker assignments
 
@@ -29,15 +28,14 @@ After launching a worker, **end the turn and remain idle** for push-delivered co
 
 Read the selected facility's adapter reference only for invocation details. A recipe never replaces live assignment, dispatch, lifecycle, and durable-effect checks.
 
-## 4. Run the golden path
+## 4. Execute only the assigned phase
 
-Read [coordinator decisions](references/workflow.md), then repeat these bounded phases:
+Read [coordinator decisions](references/workflow.md), then perform one phase:
 
-1. **Extract:** assign disjoint units, dispatch [extractors](references/extractor-role.md), and inspect persisted packets. Start with one to three workers; widen only after clean evidence.
-2. **Propose:** assign accepted extraction shards and dispatch [proposers](references/proposal-role.md). Each proposal accounts for every assigned candidate.
-3. **Reconcile when needed:** dispatch [reconcilers](references/reconciler-role.md) for cross-shard or existing-canon identity questions. A fresh shard with no identity question needs no reconciliation wave.
-4. **Merge:** dispatch one [merger](references/merger-role.md). It reads immutable proposals and commits bounded batches; the commit tool owns lease and CAS lifecycle.
-5. **Review and repair:** dispatch a [reviewer](references/reviewer-role.md). The coordinator selects any actions worth a scoped [repair](references/repairer-role.md).
+1. **Extraction:** assess run/manifest status, normalize if needed, dispatch [extractors](references/extractor-role.md), and exit only after the extraction ledger is complete.
+2. **Proposal/reconciliation:** assess completed extraction and proposal coverage, dispatch [proposers](references/proposal-role.md), and use [reconcilers](references/reconciler-role.md) only for actual cross-proposal or existing-canon identity questions. Exit with complete, non-duplicated proposal disposition coverage.
+3. **Merge:** assess immutable proposals and identity packets, dispatch one [merger](references/merger-role.md), and exit only after proposal consumption and canonical candidate accounting are complete with no blocking conflict.
+4. **Review/finalization:** assess current canonical controls, dispatch a [reviewer](references/reviewer-role.md), select any scoped [repair](references/repairer-role.md), require a current post-repair review, run checks, and finalize.
 
 After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet.
 
@@ -45,21 +43,22 @@ After each child terminates, record its exact completed dispatch receipt and ins
 
 Success requires all of the following:
 
+- all four fresh coordinator phases completed sequentially against the same run;
 - every intended unit has an accepted extraction packet;
-- the coordinator was launched through the selected facility with the intended model, tools, and usable lifecycle identity;
 - every used semantic effect has a completed assignment-bound receipt matching the worker's exact requested tool profile and the strongest lifecycle/tool evidence the facility exposes;
 - no unassigned or unrestricted helper child participated in the run;
-- every extraction candidate has a canonical disposition;
+- every extraction candidate has exactly one proposal-stage disposition and a canonical disposition;
 - the canonical revision/hash and transaction history reconstruct successfully;
 - no blocking identity conflict remains;
+- a current review covers the final canonical revision;
 - `mem_check_run` reports no errors;
-- `mem_import_finalize` writes a successful schema-v2 `stages/import-run.json`.
+- `mem_import_finalize` writes a successful schema-v2 `stages/import-run.json`, and fresh work status reports `terminalStatus: "finalized"`.
 
-A failure is complete only after `mem_import_fail` persists the terminal reason. Never report success from worker prose alone.
+A failure is complete only after `mem_import_fail` persists the terminal reason. Never report success from worker or coordinator prose alone.
 
 ## Reference map
 
-- [Parent preflight](references/parent-preflight.md) — parent-only acceptance and coordinator launch.
-- [Coordinator decisions](references/workflow.md) — retries, waves, escalation, and phase gates.
+- [Parent preflight and phase launch](references/parent-preflight.md) — parent-only acceptance, single begin, and four coordinator launches.
+- [Coordinator decisions](references/workflow.md) — typed phase inputs/outputs, retries, waves, and phase gates.
 - [Tool behavior](references/helper-tools.md) — deterministic boundaries and durable outputs; model-call arguments live in tool schemas.
 - [Role packets](references/extractor-role.md), [proposer](references/proposal-role.md), [reconciler](references/reconciler-role.md), [merger](references/merger-role.md), [reviewer](references/reviewer-role.md), [repairer](references/repairer-role.md).
