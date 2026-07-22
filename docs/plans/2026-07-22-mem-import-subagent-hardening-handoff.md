@@ -2,7 +2,7 @@
 
 > **Status: superseded.** This file records the July 22 runtime-hardening work and two rejected coordinator-driven acceptance attempts. It is not an acceptance contract or current next-step list.
 >
-> - Installation acceptance authority: [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance-ladder.md`.
+> - Installation acceptance authority: [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance.md`.
 > - Real-import efficiency/evaluation authority: [Mem-import Efficiency and Quality Parity](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
 > - Current weekly authority map: [Mem-import weekly plan consolidation](2026-07-22-mem-import-weekly-consolidation.md).
 

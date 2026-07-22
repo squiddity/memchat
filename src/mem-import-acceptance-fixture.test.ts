@@ -31,20 +31,23 @@ const exactHostEvidence = {
 } as const;
 
 test("active guidance keeps focused acceptance outside corpus coordination", async () => {
-  const [skill, ladder, capabilities, adapter] = await Promise.all([
+  const [skill, parentPreflight, acceptance, capabilities, adapter] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
-    readFile(resolve("skills/mem-import/references/acceptance-ladder.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/parent-preflight.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/acceptance.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/adapters/pi-herdr-subagents.md"), "utf8"),
   ]);
-  assert.match(skill, /harness—not a model coordinator—materializes independent fixtures/);
-  assert.match(skill, /Do not run probes, inspect acceptance fixtures, or launch an acceptance coordinator/);
+  assert.match(skill, /Parent agent:[\s\S]*parent preflight and coordinator launch/);
+  assert.match(skill, /Corpus coordinator:[\s\S]*Do not run acceptance/);
   assert.match(skill, /end the current turn and remain idle/i);
   assert.match(skill, /Never synthesize `observedTools`/);
-  assert.match(ladder, /corpus coordinator never runs acceptance/);
-  assert.match(ladder, /call the named production tool exactly once/);
-  assert.match(ladder, /never normalizes for a later model/);
-  assert.match(ladder, /Do not use installation acceptance for:[\s\S]*free-running or long-lived acceptance coordinator/);
+  assert.match(parentPreflight, /harness—not a model coordinator—materializes independent fixtures/);
+  assert.match(parentPreflight, /After acceptance, launch a fresh bounded coordinator/);
+  assert.match(acceptance, /corpus coordinator never runs acceptance/);
+  assert.match(acceptance, /call the named production tool exactly once/);
+  assert.match(acceptance, /never normalizes for a later model/);
+  assert.match(acceptance, /Do not use installation acceptance for:[\s\S]*free-running or long-lived acceptance coordinator/);
   assert.match(capabilities, /Do not launch the requested corpus coordinator to run conformance/);
   assert.match(adapter, /Run the focused harness[\s\S]*before launching the requested corpus coordinator/);
   assert.match(adapter, /Never ask a corpus coordinator to run acceptance/);

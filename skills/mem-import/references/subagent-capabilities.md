@@ -22,7 +22,7 @@ Before substantive work, the parent or acceptance harness verifies:
 5. model, thinking, cwd, config root, explicit extension entries, allowlist, deny policy, and named-agent identity survive supported resume;
 6. only host-observed controls are recorded.
 
-Use disposable host-profile sessions and the independent [acceptance probes](acceptance-ladder.md). Do not launch the requested corpus coordinator to run conformance, and do not turn conformance into a semantic pipeline. A command line, widget, model-authored `observedTools`, successful effect, or worker prose alone is insufficient.
+Use disposable host-profile sessions and the independent [acceptance probes](acceptance.md). Do not launch the requested corpus coordinator to run conformance, and do not turn conformance into a semantic pipeline. A command line, widget, model-authored `observedTools`, successful effect, or worker prose alone is insufficient.
 
 ## Decision
 

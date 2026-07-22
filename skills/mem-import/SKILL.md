@@ -7,21 +7,12 @@ description: Import a book or series into a provenance-rich world library with b
 
 Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, canonical transactions, reviews, checks, and the final run record are authoritative. Worker prose is only a receipt.
 
-## 1. Parent preflight and acceptance
+## 1. Choose your role
 
-Unless the task bootstrap explicitly says **you are the corpus coordinator**, act as the parent and do not call corpus import tools yourself.
+- **Parent agent:** do not call corpus import tools. Read [parent preflight and coordinator launch](references/parent-preflight.md), complete it, launch exactly one corpus coordinator, and stop this workflow.
+- **Corpus coordinator:** the bootstrap must name this role. Do not run acceptance, inspect acceptance fixtures, or launch another coordinator. Continue at section 2 and enforce host evidence on every real worker dispatch.
 
-Before launching the corpus coordinator:
-
-1. Confirm that the installed subagent facility and mem-import extension are available.
-2. Check for a current acceptance receipt matching the exact host adapter/runtime, extension entries, model/thinking profile, role allowlists, fixture/tool schema, and source revision.
-3. If evidence is missing or stale, invoke the deterministic focused acceptance harness described in [installation acceptance probes](references/acceptance-ladder.md). The harness—not a model coordinator—materializes independent fixtures and permits exactly one specified production-tool call per probe.
-4. Stop on failed, partial, unrestricted, unverified, or mismatched evidence. Do not replace the harness with an acceptance coordinator, a miniature import, or an Alice run.
-5. After acceptance, launch one bounded corpus coordinator with explicit model, thinking, cwd, context, skill, and coordinator tool allowlist. For `pi-herdr-subagents`, use `extensionMode: "explicit"`, pass the absolute mem-import extension entry, and set `autoExit: false`.
-
-If the parent cannot run the accepted harness or enforce the coordinator profile, stop with concrete installation guidance. A prior import, extension-name assertion, tools widget, or output directory is not acceptance evidence.
-
-If the bootstrap says **you are the corpus coordinator**, acceptance is already a parent responsibility. Do not run probes, inspect acceptance fixtures, or launch an acceptance coordinator. Begin at section 2 and enforce host evidence on every real worker dispatch.
+If neither role is explicit, stop and clarify rather than mixing parent acceptance with corpus work.
 
 ## 2. Choose the run mode
 
@@ -68,8 +59,9 @@ A failure is complete only after `mem_import_fail` persists the terminal reason.
 
 ## Reference map
 
+- [Parent preflight](references/parent-preflight.md) — parent-only acceptance and coordinator launch.
 - [Coordinator decisions](references/workflow.md) — retries, waves, escalation, and phase gates.
 - [Tool behavior](references/helper-tools.md) — deterministic boundaries and durable outputs; model-call arguments live in tool schemas.
-- [Installation acceptance probes](references/acceptance-ladder.md) — load only for missing, partial, or stale exact-profile acceptance.
+- [Installation acceptance](references/acceptance.md) — harness contract; corpus coordinators do not load it.
 - [Subagent capabilities](references/subagent-capabilities.md) — facility assessment.
 - [Role packets](references/extractor-role.md), [proposer](references/proposal-role.md), [reconciler](references/reconciler-role.md), [merger](references/merger-role.md), [reviewer](references/reviewer-role.md), [repairer](references/repairer-role.md).

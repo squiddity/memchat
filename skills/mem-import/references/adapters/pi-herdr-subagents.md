@@ -44,7 +44,7 @@ The widget's **available** list is the active surface; its separate **denied** l
 
 ## Installation acceptance
 
-Run the focused harness from [installation acceptance probes](../acceptance-ladder.md) before launching the requested corpus coordinator. Adapter conformance uses disposable sessions to verify explicit extension entries, coordinator and worker catalogs, exact active/denied tools, lifecycle identity, and resume preservation. Semantic probes remain independent and make one specified production-tool call each.
+Run the focused harness from [installation acceptance probes](../acceptance.md) before launching the requested corpus coordinator. Adapter conformance uses disposable sessions to verify explicit extension entries, coordinator and worker catalogs, exact active/denied tools, lifecycle identity, and resume preservation. Semantic probes remain independent and make one specified production-tool call each.
 
 Never ask a corpus coordinator to run acceptance. Do not chain acceptance probes, continue a probe into the corpus, finalize a probe run, or use an import as acceptance evidence.
 

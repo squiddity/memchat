@@ -8,7 +8,7 @@ This index resolves overlap among the July 20–22 mem-import plans. It is the c
 
 ### 1. Installation acceptance
 
-**Authority:** [Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance-ladder.md`.
+**Authority:** [Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance.md`.
 
 Acceptance asks whether an exact adapter/profile can expose and invoke the production tools needed by an import. The harness independently materializes each tiny tracked fixture and permits one specified production-tool call. Host catalog, allowlist, lifecycle, extension, and resume evidence must be exact.
 
@@ -61,8 +61,9 @@ Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not ac
 
 ## Documentation authority map
 
-- `skills/mem-import/SKILL.md`: parent/corpus runtime behavior.
-- `skills/mem-import/references/acceptance-ladder.md`: acceptance contract and exclusions.
+- `skills/mem-import/SKILL.md`: short role branch and corpus coordinator behavior.
+- `skills/mem-import/references/parent-preflight.md`: parent-only acceptance check and coordinator launch.
+- `skills/mem-import/references/acceptance.md`: harness contract and exclusions.
 - `skills/mem-import/references/subagent-capabilities.md`: host profile and resume requirements.
 - `skills/mem-import/references/adapters/*.md`: adapter mechanics only.
 - `skills/mem-import/references/workflow.md`: real corpus coordinator decisions only.

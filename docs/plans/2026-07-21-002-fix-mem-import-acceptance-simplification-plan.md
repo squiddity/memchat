@@ -370,7 +370,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 
 ### U6. Simplify acceptance receipts and guidance
 
-- Update `skills/mem-import/references/acceptance-ladder.md` into the independent-probe contract.
+- Update `skills/mem-import/references/acceptance.md` into the independent-probe contract.
 - Update `skills/mem-import/SKILL.md` and adapter guidance to remove the acceptance coordinator pipeline.
 - Version the acceptance fingerprint and invalidate prior incompatible receipts.
 - Keep per-run dispatch and authorization checks mandatory after cached acceptance.
