@@ -14,6 +14,11 @@
     "artifactIds": ["ada", "glass-tower"],
     "candidateDispositionCount": 2
   },
+  "reconciler": {
+    "kind": "identity",
+    "contentHash": "8b748502a5a5970cecb03245c86fd84df7eca9836bf3cef3923c2b0d15faf0ae",
+    "decisionIds": ["fixture-ada-match"]
+  },
   "merger": {
     "kind": "merge",
     "artifactIds": ["ada", "glass-tower"],
@@ -22,5 +27,12 @@
   "reviewer": {
     "kind": "review",
     "checkpointId": "fixture-review"
+  },
+  "repairer": {
+    "kind": "repair",
+    "contentHash": "63374a75f79595beef237437b207d5002bdc4b31e1cd1faa6453ed003ee017c2",
+    "checkpointId": "fixture-repair-review",
+    "actionIds": ["clarify-ada-key"],
+    "artifactId": "ada"
   }
 }

@@ -63,6 +63,10 @@ export class MemImportIdentityService {
   constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {}
 
   async submitWorkerIdentity(options: WorkerAuthority & { packet: unknown }): Promise<{ path: string; contentHash: string }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.submitWorkerIdentityLocked(options));
+  }
+
+  private async submitWorkerIdentityLocked(options: WorkerAuthority & { packet: unknown }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "identity:submit", role: "reconciler" });
     const packet = await this.validatePacket(assignment.outputRoot, assignment.runId, assignment.allowedProposalHashes, options.packet);
     const contentHash = canonicalHash(packet);

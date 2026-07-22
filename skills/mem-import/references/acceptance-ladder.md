@@ -4,7 +4,7 @@ Use these focused probes for a new installation or whenever the effective adapte
 
 Tracked semantic inputs live under `fixtures/mem-import/acceptance/v1/`. A deterministic materializer creates one fresh disposable run per probe, seeds only that probe's prerequisites, issues one live assignment, and resolves runtime IDs, hashes, grants, and read controls. Fixture files never contain runtime authority.
 
-The launcher owns acceptance. Do not launch an acceptance coordinator. Do not disclose the requested corpus input or destination to a probe child.
+The launcher owns acceptance. Do not launch an acceptance coordinator. Do not disclose the requested corpus input or destination to a probe child. The repository's concrete assignment-bound implementation is documented in [the Pi SDK adapter](adapters/pi-sdk.md); host-native Herdr launches may use [the Pi/Herdr adapter](adapters/pi-herdr-subagents.md) when its lifecycle telemetry is available.
 
 ## Fast path: accepted profile
 
@@ -97,7 +97,7 @@ Run these independently before using the corresponding profile in a maintained c
 
 **Accept when:** one scoped repair effect creates the expected compact receipt. The launcher releases the lease after child termination; lease setup and cleanup are not child semantic calls.
 
-Until tracked reconciler/repairer fixtures are available for the current fixture version, receipts must mark those roles uncovered rather than infer coverage from core probes.
+The version-1 tracked fixture includes both conditional probes. Receipts still mark them uncovered unless they were explicitly run for the exact role profile.
 
 ## What remains deterministic
 

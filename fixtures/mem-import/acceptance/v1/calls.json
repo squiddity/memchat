@@ -4,8 +4,10 @@
     "normalize": "mem_import_normalize",
     "extractor": "mem_extraction_submit",
     "proposer": "mem_proposal_submit",
+    "reconciler": "mem_identity_submit",
     "merger": "mem_merge_commit",
-    "reviewer": "mem_review_submit"
+    "reviewer": "mem_review_submit",
+    "repairer": "mem_merge_apply_repair_batch"
   },
   "singleCall": true
 }

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "id": "fixture-identity",
+  "decisions": [
+    {
+      "id": "fixture-ada-match",
+      "provisionalId": "ada-observation",
+      "disposition": "match",
+      "canonicalId": "ada",
+      "alternatives": [
+        {
+          "canonicalId": "ada",
+          "summary": "The canonical fixture guard already represents this observation."
+        }
+      ],
+      "rationale": "The proposal observation and canonical artifact identify the same guard of the glass tower."
+    }
+  ],
+  "rationale": "Match the recurring fixture observation to the existing canonical guard."
+}

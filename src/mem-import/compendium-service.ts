@@ -108,6 +108,10 @@ export class MemImportCompendiumService {
   }
 
   async normalize(options: { compendiumRoot: string; outputRoot: string; runId: string; coordinatorGrant: string; input: string }): Promise<{ manifest: SourceManifest; sourceHash: string; duplicateOfRunId?: string }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.normalizeLocked(options));
+  }
+
+  private async normalizeLocked(options: { compendiumRoot: string; outputRoot: string; runId: string; coordinatorGrant: string; input: string }): Promise<{ manifest: SourceManifest; sourceHash: string; duplicateOfRunId?: string }> {
     const compendiumRoot = resolve(options.compendiumRoot);
     const record = await this.require(compendiumRoot);
     const run = record.runs.find((item) => item.runId === options.runId && item.runRoot === resolve(options.outputRoot));

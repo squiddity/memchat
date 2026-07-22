@@ -1,7 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, utimes } from "node:fs/promises";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { normalizeSources } from "../world-import/normalize.js";
 import { readSlice } from "../world-import/spans.js";
 import {
@@ -311,6 +314,87 @@ function unitLockPath(outputRoot: string, unitId: string): string {
   return `${orchestrationDir(outputRoot)}/locks/extraction-${createHash("sha256").update(unitId).digest("hex")}`;
 }
 
+const RUN_MUTATION_LOCK_HEARTBEAT_MS = 30_000;
+const RUN_MUTATION_LOCK_STALE_MS = 5 * 60_000;
+const RUN_MUTATION_LOCK_WAIT_MS = 15 * 60_000;
+const runMutationContext = new AsyncLocalStorage<Set<string>>();
+
+function runMutationLockPath(outputRoot: string): string {
+  return `${orchestrationDir(outputRoot)}/locks/run-mutation`;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function liveRunMutationOwner(lockPath: string): Promise<boolean> {
+  try {
+    const owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf-8")) as { pid?: unknown; hostname?: unknown };
+    return owner.hostname === hostname() && typeof owner.pid === "number" && Number.isInteger(owner.pid) && owner.pid > 0 && processIsAlive(owner.pid);
+  } catch {
+    return false;
+  }
+}
+
+async function acquireRunMutationLock(outputRoot: string): Promise<{ nonce: string; release: () => Promise<void> }> {
+  const locksRoot = `${orchestrationDir(outputRoot)}/locks`;
+  const lockPath = runMutationLockPath(outputRoot);
+  await mkdir(locksRoot, { recursive: true, mode: 0o700 });
+  const nonce = randomBytes(12).toString("hex");
+  const started = Date.now();
+  for (;;) {
+    try {
+      await mkdir(lockPath, { recursive: false, mode: 0o700 });
+      const ownerPath = `${lockPath}/owner.json`;
+      await writeJson(ownerPath, { version: 1, nonce, pid: process.pid, hostname: hostname(), acquiredAt: new Date().toISOString() });
+      const heartbeat = setInterval(() => {
+        const now = new Date();
+        void utimes(lockPath, now, now).catch(() => undefined);
+      }, RUN_MUTATION_LOCK_HEARTBEAT_MS);
+      heartbeat.unref();
+      return {
+        nonce,
+        release: async () => {
+          clearInterval(heartbeat);
+          try {
+            const owner = JSON.parse(await readFile(ownerPath, "utf-8")) as { nonce?: unknown };
+            if (owner.nonce === nonce) await rm(lockPath, { recursive: true, force: true });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        },
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let age: number;
+      try {
+        age = Date.now() - (await stat(lockPath)).mtimeMs;
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw statError;
+      }
+      const ownerLive = age > RUN_MUTATION_LOCK_STALE_MS && await liveRunMutationOwner(lockPath);
+      if (age > RUN_MUTATION_LOCK_STALE_MS && !ownerLive) {
+        const stalePath = `${lockPath}.stale-${nonce}`;
+        try {
+          await rename(lockPath, stalePath);
+          await rm(stalePath, { recursive: true, force: true });
+          continue;
+        } catch (staleError) {
+          if (!["ENOENT", "EEXIST"].includes(String((staleError as NodeJS.ErrnoException).code))) throw staleError;
+        }
+      }
+      if (Date.now() - started >= RUN_MUTATION_LOCK_WAIT_MS && !ownerLive) throw new Error("Timed out waiting for the mem-import run mutation critical section");
+      await delay(10);
+    }
+  }
+}
+
 function canonicalOutputRoot(outputRoot: string): string {
   if (!outputRoot.trim()) throw new Error("outputRoot must be non-empty");
   return resolve(outputRoot);
@@ -532,7 +616,25 @@ function canonicalQuoteRange(blocks: Array<{ text: string }>): string {
 export class MemImportService {
   constructor(private readonly now: Clock = () => new Date()) {}
 
+  async withRunMutation<T>(outputRootInput: string, action: () => Promise<T>): Promise<T> {
+    const outputRoot = canonicalOutputRoot(outputRootInput);
+    const active = runMutationContext.getStore();
+    if (active?.has(outputRoot)) return action();
+    const lock = await acquireRunMutationLock(outputRoot);
+    const next = new Set(active ?? []);
+    next.add(outputRoot);
+    try {
+      return await runMutationContext.run(next, action);
+    } finally {
+      await lock.release();
+    }
+  }
+
   async begin(outputRootInput: string, audit?: { parent?: MemImportActorAudit }, scope?: { compendiumRoot?: string }): Promise<BeginRunResult> {
+    return this.withRunMutation(outputRootInput, () => this.beginLocked(outputRootInput, audit, scope));
+  }
+
+  private async beginLocked(outputRootInput: string, audit?: { parent?: MemImportActorAudit }, scope?: { compendiumRoot?: string }): Promise<BeginRunResult> {
     const outputRoot = canonicalOutputRoot(outputRootInput);
     const existing = existsSync(runPath(outputRoot)) ? await readRun(outputRoot) : undefined;
     if (existing) throw new Error(`A mem-import run already exists for outputRoot (${existing.runId}); use its coordinator grant or choose a fresh outputRoot`);
@@ -572,6 +674,10 @@ export class MemImportService {
   }
 
   async markRunTerminal(run: MemImportRunRecord, status: MemImportTerminalStatus, reason?: string): Promise<MemImportRunRecord> {
+    return this.withRunMutation(run.outputRoot, () => this.markRunTerminalLocked(run, status, reason));
+  }
+
+  private async markRunTerminalLocked(run: MemImportRunRecord, status: MemImportTerminalStatus, reason?: string): Promise<MemImportRunRecord> {
     const current = await readRun(run.outputRoot);
     assertRunScope(current, run.outputRoot, run.runId);
     assertRunMutable(current);
@@ -582,6 +688,10 @@ export class MemImportService {
   }
 
   async normalize(options: { outputRoot: string; runId: string; coordinatorGrant: string; input: string }): Promise<SourceManifest> {
+    return this.withRunMutation(options.outputRoot, () => this.normalizeLocked(options));
+  }
+
+  private async normalizeLocked(options: { outputRoot: string; runId: string; coordinatorGrant: string; input: string }): Promise<SourceManifest> {
     const run = await this.authorizeCoordinatorMutation(options);
     requireNonEmpty(options.input, "input");
     const manifest = await normalizeSources({ input: resolve(options.input), outputRoot: run.outputRoot });
@@ -659,6 +769,20 @@ export class MemImportService {
     /** Prior task this fresh task retries after revocation/expiry. */
     retriesTaskId?: string;
     /** Credential-free, model-supplied identity and adapter/profile audit metadata. */
+    audit?: MemImportAssignmentAudit;
+  }): Promise<ExtractorAssignmentResult> {
+    return this.withRunMutation(options.outputRoot, () => this.assignExtractorLocked(options));
+  }
+
+  private async assignExtractorLocked(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    unitIds: string[];
+    expiresAt?: string;
+    supersedesTaskIds?: string[];
+    retriesTaskId?: string;
     audit?: MemImportAssignmentAudit;
   }): Promise<ExtractorAssignmentResult> {
     const run = await this.authorizeCoordinatorMutation(options);
@@ -744,6 +868,23 @@ export class MemImportService {
   }
 
   async assignWorker(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    role: Exclude<AssignmentRole, "extractor">;
+    expiresAt?: string;
+    unitIds?: string[];
+    candidateIds?: string[];
+    proposalHashes?: string[];
+    checkpointIds?: string[];
+    actionIds?: string[];
+    audit?: MemImportAssignmentAudit;
+  }): Promise<WorkerAssignmentResult> {
+    return this.withRunMutation(options.outputRoot, () => this.assignWorkerLocked(options));
+  }
+
+  private async assignWorkerLocked(options: {
     outputRoot: string;
     runId: string;
     coordinatorGrant: string;
@@ -891,6 +1032,28 @@ export class MemImportService {
     actionIds: string[];
     tools: string[];
   }> {
+    return this.withRunMutation(options.outputRoot, () => this.assignmentBriefLocked(options));
+  }
+
+  private async assignmentBriefLocked(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    grant: string;
+  }): Promise<{
+    outputRoot: string;
+    runId: string;
+    taskId: string;
+    grant: string;
+    role: AssignmentRole;
+    units: Array<{ unitId: string; sourceId: string }>;
+    candidateIds: string[];
+    proposalHashes: string[];
+    checkpointIds: string[];
+    actionIds: string[];
+    tools: string[];
+  }> {
     const run = await this.authorizeCoordinatorMutation(options);
     const assignment = await readAssignment(run.outputRoot, options.taskId);
     if (assignment.runId !== run.runId || assignment.outputRoot !== run.outputRoot) throw new Error("Assignment brief does not belong to this run");
@@ -934,6 +1097,24 @@ export class MemImportService {
     requestedThinking?: string;
     observedThinking?: string;
   }): Promise<MemImportDispatchRecord> {
+    return this.withRunMutation(options.outputRoot, () => this.recordWorkerDispatchLocked(options));
+  }
+
+  private async recordWorkerDispatchLocked(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    taskId: string;
+    facility: DispatchFacility;
+    hostTaskId: string;
+    requestedTools: string[];
+    observedTools: string[];
+    outcome: DispatchOutcome;
+    requestedModel?: string;
+    observedModel?: string;
+    requestedThinking?: string;
+    observedThinking?: string;
+  }): Promise<MemImportDispatchRecord> {
     const run = await this.authorizeCoordinatorMutation(options);
     const assignment = await readAssignment(run.outputRoot, options.taskId);
     if (assignment.runId !== run.runId) throw new Error("Dispatch assignment does not belong to this run");
@@ -958,6 +1139,13 @@ export class MemImportService {
   }
 
   async recordWorkerEffect(assignment: MemImportAssignmentRecord, effect: { kind: string; path: string; contentHash: string }): Promise<void> {
+    return this.withRunMutation(assignment.outputRoot, () => this.recordWorkerEffectLocked(assignment, effect));
+  }
+
+  private async recordWorkerEffectLocked(assignment: MemImportAssignmentRecord, effect: { kind: string; path: string; contentHash: string }): Promise<void> {
+    const run = await readRun(assignment.outputRoot);
+    assertRunScope(run, assignment.outputRoot, assignment.runId);
+    assertRunMutable(run);
     requireNonEmpty(effect.kind, "effect.kind");
     requireNonEmpty(effect.path, "effect.path");
     if (!/^[a-f0-9]{64}$/.test(effect.contentHash)) throw new Error("effect.contentHash must be a SHA-256 hex string");
@@ -1046,6 +1234,10 @@ export class MemImportService {
   }
 
   async revokeAssignment(options: { outputRoot: string; runId: string; coordinatorGrant: string; taskId: string }): Promise<{ taskId: string; revokedAt: string }> {
+    return this.withRunMutation(options.outputRoot, () => this.revokeAssignmentLocked(options));
+  }
+
+  private async revokeAssignmentLocked(options: { outputRoot: string; runId: string; coordinatorGrant: string; taskId: string }): Promise<{ taskId: string; revokedAt: string }> {
     const run = await this.authorizeCoordinatorMutation(options);
     assertTaskId(options.taskId);
     const initial = await readAssignment(run.outputRoot, options.taskId);
@@ -1056,6 +1248,17 @@ export class MemImportService {
       await writeJson(assignmentPath(run.outputRoot, assignment.taskId), { ...assignment, revokedAt, lifecycleOutcome: "revoked" } satisfies MemImportAssignmentRecord);
       return { taskId: assignment.taskId, revokedAt };
     });
+  }
+
+  async authorizeWorkerCleanup(options: { outputRoot: string; runId: string; taskId: string; grant: string; role?: AssignmentRole }): Promise<MemImportAssignmentRecord> {
+    const outputRoot = canonicalOutputRoot(options.outputRoot);
+    assertTaskId(options.taskId);
+    const [run, assignment] = await Promise.all([readRun(outputRoot), readAssignment(outputRoot, options.taskId)]);
+    assertRunScope(run, outputRoot, options.runId);
+    if (assignment.outputRoot !== outputRoot || assignment.runId !== run.runId) throw new Error("Assignment scope does not match the active run");
+    if (options.role && assignment.role !== options.role) throw new Error(`Assignment role is not ${options.role}`);
+    if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
+    return assignment;
   }
 
   async authorizeWorker(options: {
@@ -1323,6 +1526,10 @@ export class MemImportService {
   }
 
   async submitExtraction(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId: string; stage: unknown }): Promise<{ unitId: string; candidateCount: number; packetHash: string }> {
+    return this.withRunMutation(options.outputRoot, () => this.submitExtractionLocked(options));
+  }
+
+  private async submitExtractionLocked(options: { outputRoot: string; runId: string; taskId: string; grant: string; unitId: string; stage: unknown }): Promise<{ unitId: string; candidateCount: number; packetHash: string }> {
     const outputRoot = canonicalOutputRoot(options.outputRoot);
     return withUnitLocks(outputRoot, [options.unitId], async () => {
       const assignment = await this.authorizeExtractor({ ...options, outputRoot, capability: "extraction:submit", unitId: options.unitId });

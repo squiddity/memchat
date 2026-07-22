@@ -4,10 +4,10 @@ import { isAbsolute, join, normalize, resolve } from "node:path";
 import { MemImportIdentityService, canonicalHash } from "./identity-service.js";
 import { MemImportProposalService } from "./proposal-service.js";
 import { MEM_IMPORT_ROLE_TOOLS, MemImportService, type AssignmentRole } from "./service.js";
-import { MemImportU2Service } from "./u2-service.js";
+import { MemImportU2Service, type ReviewPacket } from "./u2-service.js";
 import type { SourceManifestEntry, StageEnvelope, WorldImportGroup } from "../world-import/types.js";
 
-export type AcceptanceProbe = "normalize" | Extract<AssignmentRole, "extractor" | "proposer" | "merger" | "reviewer">;
+export type AcceptanceProbe = "normalize" | AssignmentRole;
 
 type FixtureManifest = {
   version: 1;
@@ -56,6 +56,25 @@ type ReviewSemantic = {
   rationale: string;
 };
 
+type IdentitySemantic = {
+  version: 1;
+  id: string;
+  decisions: Array<Record<string, unknown>>;
+  rationale: string;
+};
+
+type RepairSemantic = {
+  version: 1;
+  checkpointId: string;
+  actionId: string;
+  finding: ReviewPacket["findings"][number];
+  action: ReviewPacket["requestedActions"][number];
+  artifactId: string;
+  description: string;
+  section: { heading: string; body: string };
+  rationale: string;
+};
+
 type CallsFixture = {
   version: 1;
   targets: Record<AcceptanceProbe, string>;
@@ -81,6 +100,7 @@ export type PreparedAcceptanceProbe = {
     role: Exclude<AcceptanceProbe, "normalize">;
     grant: string;
   };
+  workerLease?: { fence: number };
 };
 
 type LoadedFixture = {
@@ -91,6 +111,8 @@ type LoadedFixture = {
   extraction: ExtractionSemantic;
   proposal: ProposalSemantic;
   review: ReviewSemantic;
+  identity: IdentitySemantic;
+  repair: RepairSemantic;
   calls: CallsFixture;
   expected: Record<AcceptanceProbe, AcceptanceEffectExpectation>;
 };
@@ -149,14 +171,16 @@ export async function loadAcceptanceFixture(fixtureRootInput: string): Promise<L
     const actualHash = sha256(await readFile(assertFixturePath(fixtureRoot, relativePath)));
     if (actualHash !== expectedHash) throw new Error(`Acceptance fixture hash mismatch for ${relativePath}`);
   }
-  const [extraction, proposal, review, calls, expected] = await Promise.all([
+  const [extraction, proposal, review, identity, repair, calls, expected] = await Promise.all([
     readJson<ExtractionSemantic>(join(fixtureRoot, "semantic", "extraction.json")),
     readJson<ProposalSemantic>(join(fixtureRoot, "semantic", "proposal.json")),
     readJson<ReviewSemantic>(join(fixtureRoot, "semantic", "review.json")),
+    readJson<IdentitySemantic>(join(fixtureRoot, "semantic", "identity.json")),
+    readJson<RepairSemantic>(join(fixtureRoot, "semantic", "repair.json")),
     readJson<CallsFixture>(join(fixtureRoot, "calls.json")),
     readJson<Record<AcceptanceProbe, AcceptanceEffectExpectation>>(join(fixtureRoot, "expected-effects.json")),
   ]);
-  const semantic = { extraction, proposal, review, calls, expected };
+  const semantic = { extraction, proposal, review, identity, repair, calls, expected };
   const forbidden = findForbiddenField(semantic, new Set(manifest.forbiddenRuntimeFields));
   if (forbidden) throw new Error(`Acceptance fixture contains forbidden runtime field ${forbidden}`);
   if (calls.version !== 1 || calls.singleCall !== true) throw new Error("Acceptance fixture calls must require one production-tool call");
@@ -169,6 +193,8 @@ export async function loadAcceptanceFixture(fixtureRootInput: string): Promise<L
     extraction,
     proposal,
     review,
+    identity,
+    repair,
     calls,
     expected,
   };
@@ -235,7 +261,7 @@ export async function materializeAcceptanceProbe(options: {
   if (!fixture.manifest.supportedProbes.includes(options.probe)) throw new Error(`Acceptance fixture does not support probe ${options.probe}`);
   const base = options.services?.base ?? new MemImportService();
   const proposals = options.services?.proposals ?? new MemImportProposalService(base);
-  void (options.services?.identities ?? new MemImportIdentityService(base));
+  const identities = options.services?.identities ?? new MemImportIdentityService(base);
   const canonical = options.services?.canonical ?? new MemImportU2Service(base);
   const run = await base.begin(options.outputRoot);
   const common = {
@@ -310,31 +336,120 @@ export async function materializeAcceptanceProbe(options: {
     proposalHashes: [proposal.contentHash],
     readSet: body.artifacts.map((artifact) => ({ artifactId: artifact.id, contentHash: null })),
     changes: body.artifacts.map((artifact) => ({ kind: "accept" as const, proposalHash: proposal.contentHash, artifactId: artifact.id })),
-    rationale: "Seed the tracked canonical fixture for an independent reviewer probe.",
+    rationale: "Seed the tracked canonical fixture for an independent downstream probe.",
   });
-  const assignment = await base.assignWorker({ ...run, taskId: "acceptance-reviewer", role: "reviewer" });
+
+  if (options.probe === "reconciler") {
+    const assignment = await base.assignWorker({ ...run, taskId: "acceptance-reconciler", role: "reconciler", proposalHashes: [proposal.contentHash] });
+    return {
+      ...common,
+      assignmentTools: assignment.tools,
+      assignment: { taskId: assignment.taskId, role: "reconciler", grant: assignment.grant },
+      call: {
+        outputRoot: assignment.outputRoot,
+        runId: assignment.runId,
+        taskId: assignment.taskId,
+        grant: assignment.grant,
+        packet: {
+          version: 1,
+          kind: "mem-import-identity",
+          id: fixture.identity.id,
+          proposalHashes: [proposal.contentHash],
+          baselineRevision: merged.revision,
+          baselineContentHash: merged.contentHash,
+          decisions: structuredClone(fixture.identity.decisions),
+          rationale: fixture.identity.rationale,
+          metadata: { fixtureId: fixture.manifest.fixtureId },
+        },
+      },
+    };
+  }
+
+  if (options.probe === "reviewer") {
+    const assignment = await base.assignWorker({ ...run, taskId: "acceptance-reviewer", role: "reviewer" });
+    return {
+      ...common,
+      assignmentTools: assignment.tools,
+      assignment: { taskId: assignment.taskId, role: "reviewer", grant: assignment.grant },
+      call: {
+        outputRoot: assignment.outputRoot,
+        runId: assignment.runId,
+        taskId: assignment.taskId,
+        grant: assignment.grant,
+        packet: {
+          version: 1,
+          kind: "mem-import-review",
+          checkpointId: fixture.review.checkpointId,
+          reviewedMergeRevision: merged.revision,
+          reviewedMergeHash: merged.contentHash,
+          findings: structuredClone(fixture.review.findings),
+          requestedActions: structuredClone(fixture.review.requestedActions),
+          readSet: (merged.stage.artifacts ?? []).map((artifact) => ({ artifactId: artifact.id, contentHash: canonicalHash(artifact) })),
+          metadata: { fixtureId: fixture.manifest.fixtureId, rationale: fixture.review.rationale },
+        },
+      },
+    };
+  }
+
+  const reviewAssignment = await base.assignWorker({ ...run, taskId: "seed-repair-reviewer", role: "reviewer" });
+  await canonical.submitReview({
+    ...reviewAssignment,
+    packet: {
+      version: 1,
+      kind: "mem-import-review",
+      checkpointId: fixture.repair.checkpointId,
+      reviewedMergeRevision: merged.revision,
+      reviewedMergeHash: merged.contentHash!,
+      findings: [structuredClone(fixture.repair.finding)],
+      requestedActions: [structuredClone(fixture.repair.action)],
+      readSet: (merged.stage.artifacts ?? []).map((artifact) => ({ artifactId: artifact.id, contentHash: canonicalHash(artifact) })),
+      metadata: { fixtureId: fixture.manifest.fixtureId },
+    },
+  });
+  const assignment = await base.assignWorker({ ...run, taskId: "acceptance-repairer", role: "repairer", checkpointIds: [fixture.repair.checkpointId], actionIds: [fixture.repair.actionId] });
+  const lease = await canonical.acquireWorkerLease(assignment);
+  const artifact = (merged.stage.artifacts ?? []).find((item) => item.id === fixture.repair.artifactId);
+  if (!artifact) throw new Error(`Acceptance repair fixture artifact ${fixture.repair.artifactId} is absent from canonical state`);
+  const repairedArtifact = {
+    ...structuredClone(artifact),
+    description: fixture.repair.description,
+    sections: [structuredClone(fixture.repair.section)],
+    provenance: artifact.provenance.map(({ quote: _quote, ...ref }) => ref),
+  };
   return {
     ...common,
     assignmentTools: assignment.tools,
-    assignment: { taskId: assignment.taskId, role: "reviewer", grant: assignment.grant },
+    assignment: { taskId: assignment.taskId, role: "repairer", grant: assignment.grant },
+    workerLease: { fence: lease.fence },
     call: {
       outputRoot: assignment.outputRoot,
       runId: assignment.runId,
       taskId: assignment.taskId,
       grant: assignment.grant,
-      packet: {
-        version: 1,
-        kind: "mem-import-review",
-        checkpointId: fixture.review.checkpointId,
-        reviewedMergeRevision: merged.revision,
-        reviewedMergeHash: merged.contentHash,
-        findings: structuredClone(fixture.review.findings),
-        requestedActions: structuredClone(fixture.review.requestedActions),
-        readSet: (merged.stage.artifacts ?? []).map((artifact) => ({ artifactId: artifact.id, contentHash: canonicalHash(artifact) })),
-        metadata: { fixtureId: fixture.manifest.fixtureId, rationale: fixture.review.rationale },
+      fence: lease.fence,
+      expectedRevision: merged.revision,
+      expectedContentHash: merged.contentHash,
+      checkpointId: fixture.repair.checkpointId,
+      actionIds: [fixture.repair.actionId],
+      batch: {
+        proposalHashes: [proposal.contentHash],
+        readSet: [{ artifactId: artifact.id, contentHash: canonicalHash(artifact) }],
+        operations: [{ kind: "upsert", artifact: repairedArtifact }],
+        rationale: fixture.repair.rationale,
       },
     },
   };
+}
+
+export async function releaseAcceptanceProbeLease(prepared: PreparedAcceptanceProbe, canonical = new MemImportU2Service()): Promise<void> {
+  if (!prepared.workerLease || !prepared.assignment) return;
+  await canonical.releaseWorkerLease({
+    outputRoot: prepared.outputRoot,
+    runId: prepared.runId,
+    taskId: prepared.assignment.taskId,
+    grant: prepared.assignment.grant,
+    fence: prepared.workerLease.fence,
+  });
 }
 
 export function expectedRoleTools(probe: Exclude<AcceptanceProbe, "normalize">): string[] {

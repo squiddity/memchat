@@ -49,26 +49,26 @@ Acceptance will evaluate tool transport, schema routing, authorization, persiste
 | Effect discovery | Complete | `7175d9f` adds bounded `mem_import_effect_inventory`, normalizing extraction and ordinary worker effect records without exposing grants or artifact paths. |
 | Launch and receipt contract | Complete for library/adapter integration | `7175d9f` adds assignment-derived one-call launch requests, exact observed-tool and durable-dispatch validation, profile fingerprinting, XDG receipt paths, and credential-free partial/accepted receipts. |
 | Active skill guidance | Complete for core probes | `19f4f99` removes the acceptance coordinator/full-pipeline instructions and documents independent production-tool probes plus separate Alice evaluation. |
-| Verification | Passing | `npm run build`, `npm run test:mem-import` (**34/34**), and `git diff --check` passed; the worktree was clean after `19f4f99`. |
+| Verification | Passing | `npm run build`, `npm run test:mem-import` (**46/46**), and `git diff --check` passed on 2026-07-22. |
+| Conditional role fixtures | Complete | Tracked reconciler and repairer semantics, independent materialization, one-call execution, exact semantic effect hashes, altered-effect rejection, and receipt coverage are implemented. |
+| Concurrent terminal safety | Complete | A shared cross-process run-mutation critical section serializes assignments, submissions, reviews, leases, canonical writes, failure, and successful finalization; heartbeat, live-owner protection, crashed-owner recovery, and cleanup-safe lease release are covered. |
+| Concrete host adapter | Complete | The assignment-bound Pi SDK adapter uses in-memory child sessions, exact active tools, native session identity, actual model/thinking observation, tool-call argument hashing, and production effect validation. |
+| Focused model acceptance | Accepted | `openai-codex/gpt-5.4` with `low` thinking passed normalize, extractor, proposer, reconciler, merger, reviewer, and repairer probes under fingerprint `c976cc1103e7315548ebbd4f53a5f89917f15859d096bf2eb0f79ea8e7cb2600`. |
 
 ### Remaining work
 
-1. Add tracked reconciler and repairer fixture data, materialization, one-call execution, and receipt coverage. Until then those conditional roles remain explicitly uncovered rather than inferred.
-2. Add a shared per-run mutation critical section so `mem_import_fail` or successful finalization cannot race an already-authorized assignment, submission, review, lease, or canonical write. Current terminal guards close sequential post-terminal mutation but do not yet eliminate every cross-process TOCTOU window.
-3. Wire the assignment-derived launch contract into each concrete host adapter that will run acceptance. The core service validates exact observed tools, one target call, authoritative dispatch correlation, and one durable effect; adapter-native dispatch still supplies the actual host lifecycle evidence.
-4. Run a fresh focused model-backed profile acceptance after the relevant adapter wiring is available. Do not rerun the old coordinator-driven ladder.
-5. Run the three-chapter Alice semantic/efficiency evaluation separately after focused acceptance; it is not a profile acceptance gate.
+1. Run the three-chapter Alice semantic/efficiency evaluation separately. It is not a profile acceptance gate and should measure identity consolidation, narrative surfaces, transaction count, duration, and token use.
 
 ### Implementation-unit status
 
-- **U0:** complete for the core tracked fixture and materializer; conditional role fixtures remain.
-- **U1:** sequential terminal guards complete; concurrent mutation serialization remains.
+- **U0:** complete for all tracked core and conditional role fixtures and independent materialization.
+- **U1:** complete for sequential guards and cross-process mutation serialization.
 - **U2:** complete, including semantic no-op rejection and weighted-limit alignment.
 - **U3:** complete with bounded coordinator effect inventory.
-- **U4:** launch contract and validation complete; concrete host-adapter enforcement remains.
-- **U5:** normalize/extractor/proposer/merger/reviewer complete; reconciler/repairer pending.
-- **U6:** complete for skill, acceptance reference, helper-tool, workflow, and Pi/Herdr adapter guidance.
-- **U7:** existing deterministic integration/pressure suites remain green; Alice is documented as separate evaluation, but the next semantic run remains pending.
+- **U4:** complete for the assignment-bound Pi SDK host adapter, exact observed profile validation, and lifecycle evidence.
+- **U5:** complete for normalize, extractor, proposer, reconciler, merger, reviewer, and repairer probes.
+- **U6:** complete for skill, acceptance reference, helper-tool, workflow, Pi/Herdr guidance, and Pi SDK adapter guidance.
+- **U7:** deterministic integration/pressure suites and focused model-backed acceptance are green; the separate Alice semantic evaluation remains pending.
 
 ---
 
@@ -310,6 +310,8 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 
 ### U0. Add tracked semantic fixtures and materializer
 
+**Status:** Complete on 2026-07-22 for all seven role probes.
+
 - Add `fixtures/mem-import/acceptance/v1/` with tiny source and stage-boundary packets.
 - Define fixture schema, placeholders, hashes, and expected effects.
 - Add deterministic materialization into fresh temporary runs.
@@ -318,6 +320,8 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 **Done signal:** Every role probe can be prepared independently from tracked data, and repeated materialization produces equivalent semantic state.
 
 ### U1. Enforce terminal monotonicity
+
+**Status:** Complete on 2026-07-22, including cross-process serialization and post-terminal/revoked/expired lease cleanup.
 
 - Centralize terminal-state reads and authorization rejection.
 - Guard assignments, submissions, reviews, leases, merges, repairs, failure/finalization transitions, and semantic retries.
@@ -343,6 +347,8 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 
 ### U4. Add assignment-bound host dispatch
 
+**Status:** Complete on 2026-07-22 for the Pi SDK assignment-bound adapter.
+
 - Introduce or adapt a launcher surface that consumes a live assignment rather than arbitrary child tools.
 - Derive bootstrap and allowlist from durable assignment state.
 - Record authoritative host lifecycle evidence.
@@ -351,6 +357,8 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 **Done signal:** An acceptance or corpus coordinator cannot make an unassigned helper child count as semantic dispatch, and observed tools must equal the assignment profile.
 
 ### U5. Implement independent production-tool probes
+
+**Status:** Complete on 2026-07-22 for core and conditional roles; live seven-role acceptance passed.
 
 - Implement core normalize, allowlist, extractor, proposer, merger, and reviewer probes.
 - Implement conditional reconciler and repairer probes.

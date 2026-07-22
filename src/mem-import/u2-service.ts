@@ -345,38 +345,67 @@ export class MemImportU2Service {
   }
 
   async acquireCoordinatorLease(options: CoordinatorAuthority & { taskId: string }): Promise<MergeLeaseResult> {
+    return this.base.withRunMutation(options.outputRoot, () => this.acquireCoordinatorLeaseLocked(options));
+  }
+
+  private async acquireCoordinatorLeaseLocked(options: CoordinatorAuthority & { taskId: string }): Promise<MergeLeaseResult> {
     const run = await this.base.authorizeCoordinatorMutation(options);
     assertId(options.taskId, "taskId");
     return this.acquireLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId });
   }
 
   async acquireWorkerLease(options: WorkerAuthority): Promise<MergeLeaseResult> {
+    return this.base.withRunMutation(options.outputRoot, () => this.acquireWorkerLeaseLocked(options));
+  }
+
+  private async acquireWorkerLeaseLocked(options: WorkerAuthority): Promise<MergeLeaseResult> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:lease" });
     if (assignment.role !== "merger" && assignment.role !== "repairer") throw new Error("Only merger or repairer assignments may acquire the global merge lease");
     return this.acquireLease(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role });
   }
 
   async heartbeatCoordinatorLease(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<MergeLeaseResult> {
+    return this.base.withRunMutation(options.outputRoot, () => this.heartbeatCoordinatorLeaseLocked(options));
+  }
+
+  private async heartbeatCoordinatorLeaseLocked(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<MergeLeaseResult> {
     const run = await this.base.authorizeCoordinatorMutation(options);
     return this.heartbeatLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
   }
 
   async heartbeatWorkerLease(options: WorkerAuthority & { fence: number }): Promise<MergeLeaseResult> {
+    return this.base.withRunMutation(options.outputRoot, () => this.heartbeatWorkerLeaseLocked(options));
+  }
+
+  private async heartbeatWorkerLeaseLocked(options: WorkerAuthority & { fence: number }): Promise<MergeLeaseResult> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:lease" });
     return this.heartbeatLease(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role }, options.fence);
   }
 
   async releaseCoordinatorLease(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<void> {
+    return this.base.withRunMutation(options.outputRoot, () => this.releaseCoordinatorLeaseLocked(options));
+  }
+
+  private async releaseCoordinatorLeaseLocked(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<void> {
     const run = await this.base.authorizeCoordinator(options);
     await this.releaseLease(this.canonicalRoot(run), run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
   }
 
   async releaseWorkerLease(options: WorkerAuthority & { fence: number }): Promise<void> {
-    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:lease" });
+    return this.base.withRunMutation(options.outputRoot, () => this.releaseWorkerLeaseLocked(options));
+  }
+
+  private async releaseWorkerLeaseLocked(options: WorkerAuthority & { fence: number }): Promise<void> {
+    const assignment = await this.base.authorizeWorkerCleanup(options);
+    if (assignment.role !== "merger" && assignment.role !== "repairer") throw new Error("Only merger or repairer assignments may release the global merge lease");
     await this.releaseLease(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, { kind: "worker", taskId: assignment.taskId, role: assignment.role }, options.fence);
   }
 
   async writeCoordinatorMerge(options: CoordinatorAuthority & { taskId: string; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
+    return this.base.withRunMutation(options.outputRoot, () => this.writeCoordinatorMergeLocked(options));
+  }
+
+  private async writeCoordinatorMergeLocked(options: CoordinatorAuthority & { taskId: string; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
     const run = await this.base.authorizeCoordinatorMutation(options);
     const { outputRoot: _outputRoot, runId: _runId, coordinatorGrant: _coordinatorGrant, ...mutation } = options;
     return this.writeMerge({ outputRoot: this.canonicalRoot(run), sourceRoot: run.outputRoot, runId: run.runId, actor: { kind: "coordinator", taskId: options.taskId }, ...mutation });
@@ -392,6 +421,10 @@ export class MemImportU2Service {
 
   /** Apply a small proposal-backed artifact delta; normal mergers cannot use repair scope here. */
   async applyWorkerBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch }): Promise<MergeState> {
+    return this.base.withRunMutation(options.outputRoot, () => this.applyWorkerBatchLocked(options));
+  }
+
+  private async applyWorkerBatchLocked(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
     return this.applyAuthorizedWorkerBatch(assignment, options, MAX_SYNTHESIZED_CHANGES);
   }
@@ -429,6 +462,17 @@ export class MemImportU2Service {
   /** Model-facing merger path. One bounded call resolves proposal references,
    * carries candidate accounting, and owns lease/CAS lifecycle internally. */
   async commitWorkerBatch(options: WorkerAuthority & {
+    proposalHashes: string[];
+    identityProposalHashes?: string[];
+    readSet: Array<{ artifactId: string; contentHash?: string | null }>;
+    changes: MergeCommitChange[];
+    conflictOperations?: ConflictOperation[];
+    rationale: string;
+  }): Promise<MergeState> {
+    return this.base.withRunMutation(options.outputRoot, () => this.commitWorkerBatchLocked(options));
+  }
+
+  private async commitWorkerBatchLocked(options: WorkerAuthority & {
     proposalHashes: string[];
     identityProposalHashes?: string[];
     readSet: Array<{ artifactId: string; contentHash?: string | null }>;
@@ -491,6 +535,10 @@ export class MemImportU2Service {
 
   /** Apply a repairer-only bounded transaction. Its checkpoint/action scope is authorization-enforced and retained in the receipt. */
   async applyWorkerRepairBatch(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; checkpointId: string; actionIds: string[]; batch: MergeBatch }): Promise<MergeState> {
+    return this.base.withRunMutation(options.outputRoot, () => this.applyWorkerRepairBatchLocked(options));
+  }
+
+  private async applyWorkerRepairBatchLocked(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; checkpointId: string; actionIds: string[]; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "repairer", checkpointId: options.checkpointId, actionIds: options.actionIds });
     if (!Array.isArray(options.batch.operations) || options.batch.operations.length === 0 || options.batch.operations.length > MAX_SYNTHESIZED_CHANGES) throw new Error(`Repair batch operations must contain one to ${MAX_SYNTHESIZED_CHANGES} synthesized changes`);
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
@@ -526,6 +574,10 @@ export class MemImportU2Service {
   }
 
   async submitReview(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.submitReviewLocked(options));
+  }
+
+  private async submitReviewLocked(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "review:submit", role: "reviewer" });
     const packet = this.validateReviewPacket(options.packet);
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
@@ -553,6 +605,10 @@ export class MemImportU2Service {
 
   /** Persist a terminal coordinator failure when required delegation/capability gates cannot be met. */
   async fail(options: CoordinatorAuthority & { reasonCode: string; message: string }): Promise<{ auditPath: string }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.failLocked(options));
+  }
+
+  private async failLocked(options: CoordinatorAuthority & { reasonCode: string; message: string }): Promise<{ auditPath: string }> {
     const run = await this.base.authorizeCoordinatorMutation(options);
     requireNonEmpty(options.reasonCode, "reasonCode");
     requireNonEmpty(options.message, "message");
@@ -585,6 +641,10 @@ export class MemImportU2Service {
   }
 
   async finalize(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<{ finalized: boolean; auditPath: string; checksPath: string; errors: number; warnings: number }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.finalizeLocked(options));
+  }
+
+  private async finalizeLocked(options: CoordinatorAuthority & { taskId: string; fence: number }): Promise<{ finalized: boolean; auditPath: string; checksPath: string; errors: number; warnings: number }> {
     const run = await this.base.authorizeCoordinatorMutation(options);
     const projectionRoot = this.canonicalRoot(run);
     await this.requireLease(projectionRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);

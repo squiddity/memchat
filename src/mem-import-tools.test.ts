@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -952,6 +952,123 @@ test("mem-import explicit failure is terminal for every semantic mutation surfac
   assert.equal((await readdir(join(output, "stages", "orchestration", "assignments"))).length, assignmentCount);
   assert.equal(existsSync(join(output, "stages", "merge", "transactions")), false);
   assert.equal(existsSync(join(output, "stages", "reviews")), false);
+});
+
+test("mem-import terminal transitions serialize against already-started semantic mutations", async () => {
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const { output, run, units } = await setup(service);
+  const unit = units[0]!;
+  const extractor = await service.assignExtractor({ ...run, taskId: "serialized-extractor", unitIds: [unit.unitId] });
+  const merger = await service.assignWorker({ ...run, taskId: "serialized-merger", role: "merger" });
+  const workerLease = await u2.acquireWorkerLease(merger);
+  let entered!: () => void;
+  let release!: () => void;
+  const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+  const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+  const submission = service.withRunMutation(output, async () => {
+    entered();
+    await releasePromise;
+    return service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  });
+  await enteredPromise;
+  let failureSettled = false;
+  const failure = u2.fail({ ...run, reasonCode: "serialized-failure", message: "Wait for the in-flight extraction mutation." })
+    .finally(() => { failureSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(failureSettled, false, "terminal transition must wait for the active run mutation");
+  release();
+  const submitted = await submission;
+  assert.equal(submitted.candidateCount, 1);
+  await failure;
+  const runRecord = JSON.parse(await readFile(join(output, "stages", "orchestration", "run.json"), "utf-8")) as { terminal?: { status?: string } };
+  assert.equal(runRecord.terminal?.status, "failed");
+  await u2.releaseWorkerLease({ ...merger, fence: workerLease.fence });
+  await assert.rejects(service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) }), /run is terminal/);
+  await assert.rejects(service.assignWorker({ ...run, taskId: "serialized-after-failure", role: "reviewer" }), /run is terminal/);
+});
+
+test("mem-import terminal transition wins before queued semantic mutations", async () => {
+  const service = new MemImportService();
+  const { output, run } = await setup(service);
+  let entered!: () => void;
+  let release!: () => void;
+  const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+  const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+  const terminal = service.withRunMutation(output, async () => {
+    const authorized = await service.authorizeCoordinatorMutation(run);
+    entered();
+    await releasePromise;
+    await service.markRunTerminal(authorized, "failed", "serialized terminal transition");
+  });
+  await enteredPromise;
+  const queued = service.assignWorker({ ...run, taskId: "queued-reviewer", role: "reviewer" });
+  release();
+  await terminal;
+  await assert.rejects(queued, /run is terminal/);
+  assert.equal(existsSync(join(output, "stages", "orchestration", "assignments", "queued-reviewer.json")), false);
+});
+
+test("mem-import run mutation lock excludes another process and recovers a crashed stale owner", async () => {
+  const service = new MemImportService();
+  const { output } = await setup(service);
+  const lockPath = join(output, "stages", "orchestration", "locks", "run-mutation");
+  const marker = join(output, "cross-process-marker.txt");
+  let entered!: () => void;
+  let release!: () => void;
+  const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+  const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+  const held = service.withRunMutation(output, async () => {
+    entered();
+    await releasePromise;
+  });
+  await enteredPromise;
+  const old = new Date(Date.now() - 10 * 60_000);
+  await utimes(lockPath, old, old);
+  const script = `import { writeFile } from 'node:fs/promises'; import { MemImportService } from './src/mem-import/service.ts'; await new MemImportService().withRunMutation(${JSON.stringify(output)}, async () => writeFile(${JSON.stringify(marker)}, 'child'));`;
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  let childExited = false;
+  const childDone = new Promise<void>((resolve, reject) => {
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      childExited = true;
+      if (code === 0) resolve();
+      else reject(new Error(`cross-process lock child exited ${String(code)}: ${stderr}`));
+    });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(childExited, false, "a live owner must not be stolen even when the lock mtime looks stale");
+  assert.equal(existsSync(marker), false);
+  release();
+  await held;
+  await childDone;
+  assert.equal(await readFile(marker, "utf8"), "child");
+
+  await mkdir(lockPath, { recursive: true });
+  await writeFile(join(lockPath, "owner.json"), JSON.stringify({ version: 1, nonce: "crashed", pid: 999_999_999, hostname: "crashed-host" }), "utf8");
+  await utimes(lockPath, old, old);
+  let recovered = false;
+  await service.withRunMutation(output, async () => { recovered = true; });
+  assert.equal(recovered, true);
+});
+
+test("mem-import worker lease cleanup survives revocation and expiry", async () => {
+  let current = new Date("2026-07-16T00:00:00.000Z");
+  const service = new MemImportService(() => current);
+  const u2 = new MemImportU2Service(service, () => current);
+  const { output, run } = await setup(service);
+  const revoked = await service.assignWorker({ ...run, taskId: "revoked-lease-owner", role: "merger" });
+  const revokedLease = await u2.acquireWorkerLease(revoked);
+  await service.revokeAssignment({ ...run, taskId: revoked.taskId });
+  await u2.releaseWorkerLease({ ...revoked, fence: revokedLease.fence });
+
+  const expiring = await service.assignWorker({ ...run, taskId: "expired-lease-owner", role: "merger", expiresAt: "2026-07-16T00:01:00.000Z" });
+  const expiredLease = await u2.acquireWorkerLease(expiring);
+  current = new Date("2026-07-16T00:02:00.000Z");
+  await u2.releaseWorkerLease({ ...expiring, fence: expiredLease.fence });
+  assert.equal(existsSync(join(output, "stages", "orchestration", "locks", "merge-writer", "lease.json")), false);
 });
 
 test("mem-import U2 rejects concurrent and stale fenced merge writers", async () => {

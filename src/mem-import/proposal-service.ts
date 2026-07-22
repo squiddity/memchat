@@ -56,6 +56,10 @@ export class MemImportProposalService {
   constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {}
 
   async submitWorkerProposal(options: WorkerAuthority & { packet: unknown }): Promise<{ path: string; contentHash: string }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.submitWorkerProposalLocked(options));
+  }
+
+  private async submitWorkerProposalLocked(options: WorkerAuthority & { packet: unknown }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "proposal:submit", role: "proposer" });
     const packet = await this.validatePacket(assignment.outputRoot, assignment.allowedUnitIds, assignment.allowedCandidateIds, options.packet);
     const contentHash = hash(packet);
@@ -70,6 +74,16 @@ export class MemImportProposalService {
   /** Model-facing proposer path: accept semantic output and derive protocol fields,
    * extraction hashes, packet identity, and exact candidate scope deterministically. */
   async submitWorkerProposalBody(options: WorkerAuthority & {
+    artifacts: unknown[];
+    candidateDispositions: unknown[];
+    rationale: string;
+    diagnostics?: ShardProposalPacket["diagnostics"];
+    metadata?: Record<string, unknown>;
+  }): Promise<{ path: string; contentHash: string }> {
+    return this.base.withRunMutation(options.outputRoot, () => this.submitWorkerProposalBodyLocked(options));
+  }
+
+  private async submitWorkerProposalBodyLocked(options: WorkerAuthority & {
     artifacts: unknown[];
     candidateDispositions: unknown[];
     rationale: string;

@@ -155,7 +155,7 @@ This is a hard gate: do not run another acceptance ladder or fresh corpus import
 
 The implementation authority for these runtime safeguards and the replacement of the coordinator-driven acceptance ladder with fixture-backed, one-production-tool-call role probes is [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md). This efficiency plan retains the corpus performance and quality objectives; it does not require acceptance to execute an entire semantic pipeline.
 
-**Progress:** commits `7068fee`, `e139c84`, `7175d9f`, and `19f4f99` implement sequential terminal guards, no-op rejection, tracked core-role fixtures, independent normalize/extractor/proposer/merger/reviewer materialization, bounded effect discovery, assignment-derived launch/receipt validation, and simplified active guidance. The linked plan tracks the remaining conditional reconciler/repairer probes, cross-process terminal-transition serialization, concrete host-adapter wiring, and fresh model-backed focused acceptance.
+**Progress:** commits `7068fee`, `e139c84`, `7175d9f`, and `19f4f99` implemented sequential terminal guards, no-op rejection, tracked core-role fixtures, independent core-role materialization, bounded effect discovery, assignment-derived launch/receipt validation, and simplified active guidance. The 2026-07-22 implementation completes the remaining U0 gate: tracked reconciler/repairer fixtures and semantic-hash validation, cross-process run-mutation serialization with heartbeat and stale-owner recovery, cleanup-safe lease release, a concrete assignment-bound Pi SDK adapter, and focused seven-role model-backed acceptance. Profile `openai-codex/gpt-5.4` at `low` thinking passed all seven probes under fingerprint `c976cc1103e7315548ebbd4f53a5f89917f15859d096bf2eb0f79ea8e7cb2600`; `npm run build`, `npm run test:mem-import` (46/46), and `git diff --check` passed.
 
 ---
 
@@ -329,6 +329,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U0. Block unsafe acceptance and corpus launch
 
+- **Status:** Complete on 2026-07-22 for the implemented assignment-bound Pi SDK profile and all seven semantic roles.
 - **Goal:** Close the runtime and host-dispatch defects found in preflight run `mir-fcb88e8ad52bf9e80da21243` before another model-backed run.
 - **Implementation authority:** [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
 - **Work:** Implement its terminal-state guards, no-op rejection, consistent weighted limits, compact effect inventory, assignment-bound dispatch, tracked fixture materializer, and independent one-production-tool-call role probes.
@@ -386,12 +387,24 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U8. Run controlled Alice A/B evaluation
 
+- **Status:** Pending. This is now the next evaluation milestone after implementing U4–U7.
 - **Goal:** Verify efficiency and quality after U1–U7.
 - **Controls:** Same EPUB, skill revision, coordinator/worker models, thinking settings, acceptance profile, launcher behavior, and reviewer rubric.
 - **Compare:** Current finalized baseline, compact-response mem-import, and a newly instrumented legacy run where practical.
 - **Done signal:** Report exact token, duration, retry, transaction, artifact-identity, provenance, narrative-surface, and reviewer metrics.
 
 ---
+
+## Next Steps After the Completed Safety Gate
+
+1. **U4 — phase-bounded coordination:** implement fresh extraction, proposal/reconciliation, merge, and review/finalization coordinator invocations with typed durable handoffs.
+2. **U5 — identity-aware planning:** add model-owned cross-unit clustering/reconciliation before canonical merge and evaluate duplicate central-entity families.
+3. **U6 — demand-driven reads:** stop default source/chapter rereads and record bounded per-role read counts.
+4. **U7 — usage telemetry:** persist sanitized per-role/model/session token and cost totals, including explicit unavailable fields.
+5. **Three-chapter Alice evaluation:** run the now-unblocked semantic/efficiency corpus to measure coordinator behavior, identity consolidation, narrative surfaces, transaction count, duration, and usage.
+6. **U8 — controlled full Alice A/B:** after U4–U7, compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
+
+Do not rerun the retired coordinator-driven acceptance ladder. Re-run focused probes only when the exact adapter/profile, fixture/tool schema, or source revision fingerprint changes.
 
 ## Verification Contract
 

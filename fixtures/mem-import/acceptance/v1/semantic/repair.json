@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "checkpointId": "fixture-repair-review",
+  "actionId": "clarify-ada-key",
+  "finding": {
+    "id": "fixture-repair-finding",
+    "severity": "repair",
+    "summary": "Clarify that Ada keeps the silver key while guarding the tower.",
+    "requestedActionIds": ["clarify-ada-key"]
+  },
+  "action": {
+    "id": "clarify-ada-key",
+    "type": "clarify-artifact",
+    "severity": "repair",
+    "summary": "Clarify Ada's key-keeping responsibility.",
+    "rationale": "The source explicitly states that Ada holds the silver key."
+  },
+  "artifactId": "ada",
+  "description": "Ada guards the glass tower and is responsible for keeping its silver key.",
+  "section": {
+    "heading": "Role",
+    "body": "Ada guards the glass tower and keeps its silver key secure."
+  },
+  "rationale": "Apply only the review-selected clarification to Ada's canonical artifact."
+}

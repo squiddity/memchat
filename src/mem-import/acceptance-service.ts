@@ -22,6 +22,10 @@ export type HostProbeEvidence = {
   observedTools: string[];
   toolCalls: string[];
   outcome: "completed" | "failed" | "cancelled";
+  observedModel?: string;
+  observedThinking?: string;
+  toolCallArgumentHashes?: string[];
+  diagnostic?: string;
 };
 
 export type AcceptanceProbeReceipt = {
@@ -96,8 +100,9 @@ export class MemImportAcceptanceService {
   constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {}
 
   async validateProbe(prepared: PreparedAcceptanceProbe, evidence: HostProbeEvidence): Promise<AcceptanceProbeReceipt> {
-    if (evidence.outcome !== "completed") throw new Error(`Acceptance probe ended ${evidence.outcome}`);
     if (evidence.toolCalls.length !== 1 || evidence.toolCalls[0] !== prepared.targetTool) throw new Error(`Acceptance probe must call ${prepared.targetTool} exactly once`);
+    if (evidence.toolCallArgumentHashes && (evidence.toolCallArgumentHashes.length !== 1 || evidence.toolCallArgumentHashes[0] !== canonicalHash(prepared.call))) throw new Error("Acceptance probe tool arguments do not exactly match the fixture-backed call body");
+    if (evidence.outcome !== "completed") throw new Error(`Acceptance probe ended ${evidence.outcome}${evidence.diagnostic ? `: ${evidence.diagnostic}` : ""}`);
     if (!sameTools(evidence.requestedTools, prepared.assignmentTools) || !sameTools(evidence.observedTools, prepared.assignmentTools)) throw new Error("Acceptance probe host tools do not exactly match the prepared assignment");
     const common = {
       probe: prepared.probe,
@@ -140,6 +145,8 @@ export class MemImportAcceptanceService {
     if (!dispatch || dispatch.facility !== "ordinary-subagent" || dispatch.outcome !== "completed" || !dispatch.exactToolMatch || dispatch.hostTaskId !== evidence.hostTaskId) throw new Error("Acceptance probe durable dispatch does not match authoritative host evidence");
     const expectedKind = prepared.expected.kind;
     if (typeof expectedKind !== "string" || effects[0]!.kind !== expectedKind) throw new Error(`Acceptance probe effect kind ${effects[0]!.kind} does not match expected ${String(expectedKind)}`);
+    const expectedContentHash = prepared.expected.contentHash;
+    if (expectedContentHash !== undefined && (typeof expectedContentHash !== "string" || effects[0]!.contentHash !== expectedContentHash)) throw new Error(`Acceptance probe effect hash ${effects[0]!.contentHash} does not match the tracked fixture expectation`);
     return { ...common, taskId: assignment.taskId, hostTaskId: evidence.hostTaskId, effect: effects[0] };
   }
 
@@ -150,6 +157,10 @@ export class MemImportAcceptanceService {
     evidence: HostProbeEvidence;
     requiredProbes?: AcceptanceProbe[];
   }): Promise<{ path: string; receipt: AcceptanceReceipt }> {
+    if (options.prepared.probe !== "normalize") {
+      if (options.evidence.observedModel !== options.profile.model) throw new Error(`Acceptance host observed model ${options.evidence.observedModel ?? "unknown"}, expected ${options.profile.model}`);
+      if (options.evidence.observedThinking !== options.profile.thinking) throw new Error(`Acceptance host observed thinking ${options.evidence.observedThinking ?? "unknown"}, expected ${options.profile.thinking}`);
+    }
     const probe = await this.validateProbe(options.prepared, options.evidence);
     const fingerprint = acceptanceFingerprint(options.profile, options.prepared.fixtureHash);
     const stateRoot = resolve(options.stateRoot ?? defaultAcceptanceStateRoot());
