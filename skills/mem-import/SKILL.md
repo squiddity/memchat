@@ -23,7 +23,7 @@ Inspect the complete manifest. This step is complete when every intended source 
 
 ## 3. Enforce worker assignments
 
-Assignment results contain the complete worker bootstrap and exact semantic `tools` array. The coordinator passes both verbatim to `subagent`, requests the accepted model/thinking setting, and inherits the coordinator's explicit extension runtime. The host may add only documented lifecycle controls. Before recording dispatch, require host-observed active tools to equal `assignment.tools` plus those controls, with exact deny telemetry; record only the semantic subset in `observedTools`. Never synthesize `observedTools` from the assignment or worker prose. A current acceptance receipt never replaces per-run assignment, host-profile, dispatch, lifecycle, and durable-effect checks.
+Assignment results contain the complete worker bootstrap and exact semantic `tools` array. The coordinator passes both verbatim to the selected facility and requests the chosen model/thinking setting. Confirm that the facility accepted the narrow tool profile; when it exposes active/denied telemetry, require an exact match apart from documented lifecycle controls. Record only evidence actually observed—never invent host telemetry from the assignment or worker prose. A cached facility recipe never replaces per-run assignment, dispatch, lifecycle, and durable-effect checks.
 
 After launching a worker, **end the current turn and remain idle**. Worker completion is push-delivered and starts a new coordinator turn automatically. Never launch a child whose task is to wait, sleep, say “done,” monitor another child, or keep the coordinator alive. Never poll status/effect tools merely to detect completion, and do not schedule a timer for ordinary child waiting. A scheduled wake-up is appropriate only for a genuine external deadline that cannot produce a native completion event. Wait/helper children invalidate the corpus run and can create a self-waking launch loop.
 
@@ -46,8 +46,8 @@ After each child terminates, record its exact completed dispatch receipt and ins
 Success requires all of the following:
 
 - every intended unit has an accepted extraction packet;
-- the coordinator's initial or resumed launch has host-attested `verified`/`exact` profile evidence under explicit extension mode;
-- every used semantic effect has a completed host-observed exact-profile subagent receipt;
+- the coordinator was launched through the selected facility with the intended model, tools, and usable lifecycle identity;
+- every used semantic effect has a completed assignment-bound receipt matching the worker's exact requested tool profile and the strongest lifecycle/tool evidence the facility exposes;
 - no unassigned or unrestricted helper child participated in the run;
 - every extraction candidate has a canonical disposition;
 - the canonical revision/hash and transaction history reconstruct successfully;

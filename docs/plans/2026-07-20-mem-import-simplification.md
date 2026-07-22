@@ -1,6 +1,6 @@
 # Mem-import simplification plan
 
-> **Status: implemented design input, no longer an acceptance authority.** The golden-path role/tool simplification remains relevant. Installation acceptance is governed by [the focused acceptance plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md); Alice and full-import efficiency evaluation are governed by [the efficiency/parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md). The Alice completion signal below is evaluation coverage, not installation acceptance.
+> **Status: implemented design input, no longer an acceptance authority.** The golden-path role/tool simplification remains relevant. Normal installation acceptance is the brief facility check in `skills/mem-import/references/acceptance.md`; the [July 21 focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) now documents optional maintainer conformance and runtime safety. Alice and full-import efficiency evaluation are governed by [the efficiency/parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
 
 ## Goal
 

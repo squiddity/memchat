@@ -22,6 +22,7 @@ status: archived
 
 ## Current authority
 
-- Installation acceptance: [focused acceptance simplification plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
+- Normal installation acceptance: [brief facility acceptance](../../skills/mem-import/references/acceptance.md).
+- Optional maintainer conformance/runtime safety: [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
 - Real-import efficiency and evaluation: [efficiency-parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
 - Current authority mapping: [weekly consolidation](2026-07-22-mem-import-weekly-consolidation.md).

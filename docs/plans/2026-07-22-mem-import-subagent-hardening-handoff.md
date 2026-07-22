@@ -50,15 +50,6 @@ The second incident reinforced an already-decided boundary: acceptance must not 
 
 ## Correct disposition
 
-Do not retry either coordinator-driven design. The existing command is focused acceptance for the **Pi SDK adapter only**:
+Do not retry either coordinator-driven design and do not build a programmatic acceptance adapter for each extension. Normal preflight selects an available facility, reuses a matching recipe or runs one brief disposable launch, and tests only the capabilities the planned import needs. `pi-herdr-subagents` is one version-controlled example recipe, not a required backend.
 
-```bash
-npm run acceptance:mem-import -- \
-  --model <provider/model-id> \
-  --thinking high \
-  --all-roles
-```
-
-It independently materializes each tracked fixture, permits one specified production-tool call, validates SDK host/durable evidence, and stops. Its receipt does not accept `pi-herdr-subagents`. That adapter still requires an equivalent focused host adapter with exact extension/profile/resume telemetry; until it exists, stop rather than substituting an SDK receipt or a model coordinator.
-
-Host-profile and resume conformance are disposable checks, never semantic stage orchestration. Alice and complete import runs are separate evaluation work.
+The existing `npm run conformance:mem-import` command is an optional Pi SDK maintainer suite for fixture-backed production-tool/schema conformance. It is not normal facility acceptance. Alice and complete import runs are separate evaluation work.

@@ -1,6 +1,6 @@
-# Adapter: Pi SDK worker-transport probes
+# Optional maintainer conformance: Pi SDK
 
-Use this adapter for focused assignment-bound acceptance when the effective production adapter creates authenticated Pi SDK child sessions directly. Its receipt applies only to the exact `pi-sdk-assignment-bound` fingerprint; it does not accept a different installed subagent adapter.
+This repository adapter runs fixture-backed production-tool conformance through authenticated in-memory Pi SDK sessions. It is useful when changing tool schemas, authorization, fixtures, or acceptance-service code. It is **not** normal mem-import preflight and does not certify another installed subagent facility.
 
 ## Contract
 
@@ -14,31 +14,31 @@ Use this adapter for focused assignment-bound acceptance when the effective prod
 - derives target call count and failure state from Pi tool lifecycle events;
 - returns native lifecycle evidence to the focused acceptance runner.
 
-The runner records the dispatch, validates the durable effect inventory, releases a repairer lease in `finally`, and persists only a sanitized acceptance receipt.
+The runner records the dispatch, validates the durable effect inventory, releases a repairer lease in `finally`, and persists only a sanitized conformance receipt.
 
-## Command
+## Optional maintainer command
 
-Run core probes:
+Run core conformance probes:
 
 ```bash
-npm run acceptance:mem-import -- \
+npm run conformance:mem-import -- \
   --model <provider/model-id> \
   --thinking high
 ```
 
-Include conditional reconciler and repairer probes before using that exact profile for those roles:
+Include conditional reconciler and repairer probes when validating all fixture/tool routes:
 
 ```bash
-npm run acceptance:mem-import -- \
+npm run conformance:mem-import -- \
   --model <provider/model-id> \
   --thinking high \
   --all-roles
 ```
 
-Optional `--state-root` and `--disposable-root` arguments select local acceptance state and disposable probe roots. Runtime authority remains confined to in-memory child prompts and disposable run ledgers; it is never copied into acceptance receipts or tracked fixtures.
+Optional `--state-root` and `--disposable-root` arguments select local conformance state and disposable probe roots. Runtime authority remains confined to in-memory child prompts and disposable run ledgers; it is never copied into conformance receipts or tracked fixtures.
 
 ## Boundaries
 
-This adapter proves the exact SDK profile recorded in its receipt. A `pi-herdr-subagents` installation needs equivalent host-profile evidence from that adapter; do not combine unrelated adapter evidence into one accepted fingerprint.
+This suite proves only its SDK transport and tracked production-tool routes. Do not require a comparable programmatic adapter for every subagent extension and do not combine its receipt with brief facility acceptance.
 
-The adapter does not run a coordinator, make semantic decisions, chain roles, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed probes restart from a fresh disposable root.
+The adapter does not run a coordinator, make semantic decisions, chain roles, retry within a child, broaden assignment tools, or treat worker prose as evidence. Failed conformance probes restart from a fresh disposable root.

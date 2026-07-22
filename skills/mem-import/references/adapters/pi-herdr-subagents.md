@@ -42,12 +42,19 @@ For every live assignment, the coordinator:
 
 The widget's **available** list is the active surface; its separate **denied** list is deny policy, not the set removed by `--tools`. A large available list is failure even if many names appear under denied. The host completion profile, not the widget or coordinator prose alone, is dispatch evidence.
 
-## Installation acceptance
+## Version-controlled facility recipe
 
-Run the focused harness from [installation acceptance probes](../acceptance.md) before launching the requested corpus coordinator. Adapter conformance uses disposable sessions to verify explicit extension entries, coordinator and worker catalogs, exact active/denied tools, lifecycle identity, and resume preservation. Semantic probes remain independent and make one specified production-tool call each.
+This is a known recipe, not a required mem-import backend or programmatic adapter:
 
-Never ask a corpus coordinator to run acceptance. Do not chain acceptance probes, continue a probe into the corpus, finalize a probe run, or use an import as acceptance evidence.
+- facility/tool: installed `subagent`;
+- coordinator: `autoExit: false`, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, trusted mem-import extension entry;
+- workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries;
+- lifecycle additions: `caller_ping` and `subagent_done`;
+- completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison;
+- recovery: `subagent_interrupt` and profile-preserving `subagent_resume` when needed.
 
-Proceed only when the exact adapter/profile receipt is current and every used role is covered. During the real import, continue to require exact host evidence for every dispatch; cached acceptance does not authorize a broader launch.
+For a missing or stale local recipe, use [brief acceptance](../acceptance.md): launch one disposable coordinator-profile child, confirm the expected catalog and completion evidence, and test one tiny nested child only if recursion has not already been observed for the installed version. Test resume only when the planned import depends on it. Do not run semantic roles or the fixture-backed multi-role conformance suite.
+
+Cache the sanitized working parameters locally. During the real import, still require each assignment's narrow tool profile and durable dispatch/effect evidence.
 
 Model-visible allowlisting and explicit extension mode are not an operating-system sandbox. Report only controls actually observed.

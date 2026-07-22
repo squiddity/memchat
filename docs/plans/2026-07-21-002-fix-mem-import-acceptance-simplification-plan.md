@@ -11,7 +11,7 @@ related_plan: docs/plans/2026-07-21-001-fix-mem-import-efficiency-parity-plan.md
 
 # Mem-import Acceptance Simplification and Runtime Safety - Plan
 
-> **Canonical acceptance decision record.** Installation acceptance is harness-owned, independently materialized, and limited to one specified production-tool call per semantic probe. No requested corpus coordinator runs probes or continues from a probe into an import. Host catalog/resume conformance is disposable and separate from semantic stage progression.
+> **Superseded as normal import preflight.** The runtime-safety fixes and fixture-backed one-call probes remain valuable, but the seven-role runner is now optional maintainer conformance for production tools/schemas. Normal mem-import acceptance is the brief, extension-agnostic facility check in `skills/mem-import/references/acceptance.md`; it does not require a programmatic adapter or exhaustive role coverage.
 
 ## Goal Capsule
 
@@ -359,7 +359,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 
 ### U5. Implement independent production-tool probes
 
-**Status:** Complete on 2026-07-22 for core and conditional roles; live seven-role acceptance passed.
+**Status:** Complete on 2026-07-22 for core and conditional roles; the historical live seven-role run is retained as maintainer conformance evidence.
 
 - Implement core normalize, extractor, proposer, merger, and reviewer probes. Verify allowlists as host evidence on every semantic probe rather than as a standalone probe.
 - Implement conditional reconciler and repairer probes.

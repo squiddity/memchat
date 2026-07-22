@@ -9,7 +9,7 @@ function argument(name: string): string | undefined {
 }
 
 const model = argument("--model");
-if (!model) throw new Error("Usage: npm run acceptance:mem-import -- --model <provider/model-id> [--thinking high] [--all-roles] [--state-root path] [--disposable-root path]");
+if (!model) throw new Error("Usage: npm run conformance:mem-import -- --model <provider/model-id> [--thinking high] [--all-roles] [--state-root path] [--disposable-root path]");
 const thinking = argument("--thinking") ?? "high";
 const allRoles = process.argv.includes("--all-roles");
 const requiredProbes = [...(allRoles ? ALL_ACCEPTANCE_PROBES : CORE_ACCEPTANCE_PROBES)];

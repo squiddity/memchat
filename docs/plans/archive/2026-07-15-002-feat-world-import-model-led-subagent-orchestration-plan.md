@@ -8,7 +8,7 @@ status: in progress; U0/U1/U1a implemented; U2b has bounded reads/proposals/tran
 
 # feat: Introduce mem-import model-led subagent orchestration alongside legacy world-import
 
-> **Archived full record.** Its typed-tool, compendium, and migration decisions remain useful, but its executable gates and next steps are historical. Installation acceptance is delegated to [the July 21 focused acceptance plan](../2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md). Real-import efficiency and evaluation are delegated to [the July 21 efficiency-parity plan](../2026-07-21-001-fix-mem-import-efficiency-parity-plan.md). See the [weekly consolidation](../2026-07-22-mem-import-weekly-consolidation.md) for the current authority map.
+> **Archived full record.** Its typed-tool, compendium, and migration decisions remain useful, but its executable gates and next steps are historical. Normal installation acceptance is the [brief facility check](../../../skills/mem-import/references/acceptance.md); the [July 21 focused-probe plan](../2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) is optional maintainer conformance/runtime-safety history. Real-import efficiency and evaluation are delegated to [the July 21 efficiency-parity plan](../2026-07-21-001-fix-mem-import-efficiency-parity-plan.md). See the [weekly consolidation](../2026-07-22-mem-import-weekly-consolidation.md) for the current authority map.
 
 ## Progress Update — 2026-07-16
 

@@ -12,6 +12,6 @@ Accept this facility only when it provides:
 - worker profiles whose model-visible tools equal `assignment.tools`;
 - host child/session IDs, terminal outcomes, interruption, and resume or fresh-retry behavior at both levels.
 
-Run the [subagent installation gate](../subagent-capabilities.md) and focused [acceptance probes](../acceptance.md). If either level is unavailable or broader than policy permits, stop before import. Do not pin or install a replacement dependency, create a CLI host, switch to inline execution, or develop an adapter during the run.
+Run the [facility capability check](../subagent-capabilities.md) and [brief acceptance probe](../acceptance.md), then cache the working invocation as a local recipe. Do not run exhaustive role probes. If either required level is unavailable or broader than policy permits, stop before import. Do not pin or install a replacement dependency, create a CLI host, switch to inline execution, or develop an adapter during the run.
 
 A raw assignment grant may need to travel in the worker bootstrap because a generic tool API has no transcript-secret channel. Keep it out of durable artifacts and receipts; treat this as an application authorization boundary, not a credential vault.

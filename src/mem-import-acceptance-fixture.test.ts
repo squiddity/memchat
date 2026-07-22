@@ -30,27 +30,30 @@ const exactHostEvidence = {
   auxiliaryLaunchCount: 0,
 } as const;
 
-test("active guidance keeps focused acceptance outside corpus coordination", async () => {
-  const [skill, parentPreflight, acceptance, capabilities, adapter] = await Promise.all([
+test("active guidance uses brief extension-agnostic facility acceptance", async () => {
+  const [skill, parentPreflight, acceptance, recipes, capabilities, adapter] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/parent-preflight.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/acceptance.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/facility-recipes.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/adapters/pi-herdr-subagents.md"), "utf8"),
   ]);
   assert.match(skill, /Parent agent:[\s\S]*parent preflight and coordinator launch/);
   assert.match(skill, /Corpus coordinator:[\s\S]*Do not run acceptance/);
   assert.match(skill, /end the current turn and remain idle/i);
-  assert.match(skill, /Never synthesize `observedTools`/);
-  assert.match(parentPreflight, /harness—not a model coordinator—materializes independent fixtures/);
-  assert.match(parentPreflight, /After acceptance, launch a fresh bounded coordinator/);
-  assert.match(acceptance, /corpus coordinator never runs acceptance/);
-  assert.match(acceptance, /call the named production tool exactly once/);
-  assert.match(acceptance, /never normalizes for a later model/);
-  assert.match(acceptance, /Do not use installation acceptance for:[\s\S]*free-running or long-lived acceptance coordinator/);
-  assert.match(capabilities, /Do not launch the requested corpus coordinator to run conformance/);
-  assert.match(adapter, /Run the focused harness[\s\S]*before launching the requested corpus coordinator/);
-  assert.match(adapter, /Never ask a corpus coordinator to run acceptance/);
+  assert.match(skill, /never invent host telemetry/);
+  assert.match(parentPreflight, /Choose one facility/);
+  assert.match(parentPreflight, /short disposable probe/);
+  assert.match(parentPreflight, /Do not run role-by-role conformance/);
+  assert.match(acceptance, /does not require a named extension, programmatic adapter, exhaustive role certification/);
+  assert.match(acceptance, /test it once:[\s\S]*one tiny nested child/);
+  assert.match(acceptance, /Stop as soon as the facility has demonstrated the capabilities/);
+  assert.match(acceptance, /optional maintainer conformance suite/);
+  assert.match(recipes, /\.memchat\/mem-import\/facility-recipes/);
+  assert.match(capabilities, /Prefer facilities with host-observed[\s\S]*not universal prerequisites/);
+  assert.match(adapter, /known recipe, not a required mem-import backend or programmatic adapter/);
+  assert.match(adapter, /Do not run semantic roles or the fixture-backed multi-role conformance suite/);
 });
 
 async function tempOutput(label: string): Promise<string> {

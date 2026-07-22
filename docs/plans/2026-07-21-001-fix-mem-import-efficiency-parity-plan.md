@@ -11,7 +11,7 @@ acceptance_plan: docs/plans/2026-07-21-002-fix-mem-import-acceptance-simplificat
 
 # Mem-import Efficiency and Legacy Parity - Plan
 
-> **Authority boundary:** This plan governs real-import orchestration, compactness, semantic quality, usage telemetry, and Alice evaluation. It does not govern installation acceptance. All acceptance language delegates to [the focused acceptance plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md), whose probes are harness-owned, independent, and limited to one specified production-tool call each.
+> **Authority boundary:** This plan governs real-import orchestration, compactness, semantic quality, usage telemetry, and Alice evaluation. It does not govern installation acceptance. Normal preflight uses the brief extension-agnostic facility check in `skills/mem-import/references/acceptance.md`; the [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) retains optional maintainer conformance and runtime-safety history.
 
 ## Goal Capsule
 
@@ -157,7 +157,7 @@ This is a hard gate: do not run another acceptance ladder or fresh corpus import
 
 The implementation authority for these runtime safeguards and the replacement of the coordinator-driven acceptance ladder with fixture-backed, one-production-tool-call role probes is [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md). This efficiency plan retains the corpus performance and quality objectives; it does not require acceptance to execute an entire semantic pipeline.
 
-**Progress:** commits `7068fee`, `e139c84`, `7175d9f`, and `19f4f99` implemented sequential terminal guards, no-op rejection, tracked core-role fixtures, independent core-role materialization, bounded effect discovery, assignment-derived launch/receipt validation, and simplified active guidance. The 2026-07-22 implementation completes the remaining U0 gate: tracked reconciler/repairer fixtures and semantic-hash validation, cross-process run-mutation serialization with heartbeat and stale-owner recovery, cleanup-safe lease release, a concrete assignment-bound Pi SDK adapter, and focused seven-role model-backed acceptance. Profile `openai-codex/gpt-5.4` at `low` thinking passed all seven probes under fingerprint `c976cc1103e7315548ebbd4f53a5f89917f15859d096bf2eb0f79ea8e7cb2600`; `npm run build`, `npm run test:mem-import` (46/46), and `git diff --check` passed.
+**Progress:** commits `7068fee`, `e139c84`, `7175d9f`, and `19f4f99` implemented sequential terminal guards, no-op rejection, tracked core-role fixtures, independent core-role materialization, bounded effect discovery, assignment-derived launch/receipt validation, and simplified active guidance. The 2026-07-22 implementation completes the remaining U0 gate: tracked reconciler/repairer fixtures and semantic-hash validation, cross-process run-mutation serialization with heartbeat and stale-owner recovery, cleanup-safe lease release, a concrete assignment-bound Pi SDK adapter, and focused seven-role model-backed maintainer conformance. Profile `openai-codex/gpt-5.4` at `low` thinking passed all seven probes under fingerprint `c976cc1103e7315548ebbd4f53a5f89917f15859d096bf2eb0f79ea8e7cb2600`; `npm run build`, `npm run test:mem-import` (46/46), and `git diff --check` passed.
 
 ---
 
@@ -331,12 +331,12 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U0. Block unsafe acceptance and corpus launch
 
-- **Status:** Complete on 2026-07-22 for the implemented assignment-bound Pi SDK profile and all seven semantic roles.
+- **Status:** Runtime-safety work complete; the seven-role Pi SDK run is retained as optional maintainer conformance, not required import preflight.
 - **Goal:** Close the runtime and host-dispatch defects found in preflight run `mir-fcb88e8ad52bf9e80da21243` before another model-backed run.
 - **Implementation authority:** [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
 - **Work:** Implement its terminal-state guards, no-op rejection, consistent weighted limits, compact effect inventory, assignment-bound dispatch, tracked fixture materializer, and independent one-production-tool-call role probes.
-- **Done signal:** The focused profile probes pass with authoritative dispatch/effect evidence; failed or finalized runs cannot mutate; no-op transactions create no revisions; no free-running acceptance coordinator or full semantic acceptance pipeline is required.
-- **Blocks:** Any new acceptance receipt, the three-chapter Alice semantic evaluation, and U8 controlled A/B evaluation.
+- **Done signal:** Failed or finalized runs cannot mutate, no-op transactions create no revisions, real workers remain assignment-bound, and brief facility acceptance requires no semantic pipeline. Maintainers may run focused profile probes after tool/schema changes.
+- **Blocks:** Real evaluation only when runtime-safety tests fail; optional conformance receipts do not gate ordinary imports.
 
 ### U1. Contract merge and repair responses
 
@@ -406,7 +406,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 5. **Three-chapter Alice evaluation:** run the now-unblocked semantic/efficiency corpus to measure coordinator behavior, identity consolidation, narrative surfaces, transaction count, duration, and usage.
 6. **U8 — controlled full Alice A/B:** after U4–U7, compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
 
-Do not rerun the retired coordinator-driven acceptance ladder. Re-run focused probes only when the exact adapter/profile, fixture/tool schema, or source revision fingerprint changes.
+Do not rerun the retired coordinator-driven acceptance ladder. Run the focused multi-role suite only for maintainer conformance after relevant production-tool, fixture, authorization, or adapter changes; ordinary imports use a brief facility recipe/probe.
 
 ## Verification Contract
 

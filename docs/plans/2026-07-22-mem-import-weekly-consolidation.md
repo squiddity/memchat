@@ -8,17 +8,17 @@ This index resolves overlap among the July 20–22 mem-import plans. It is the c
 
 ### 1. Installation acceptance
 
-**Authority:** [Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance.md`.
+**Authority:** `skills/mem-import/references/acceptance.md` and `skills/mem-import/references/facility-recipes.md`.
 
-Acceptance asks whether an exact adapter/profile can expose and invoke the production tools needed by an import. The harness independently materializes each tiny tracked fixture and permits one specified production-tool call. Host catalog, allowlist, lifecycle, extension, and resume evidence must be exact.
+The parent chooses an available subagent facility and asks only whether it has a good chance of supporting the planned import. It reuses a matching local/known recipe or runs one brief disposable launch, with at most one nested child and one harmless tool call when needed. Evidence is capability-oriented and may vary by extension.
 
-Acceptance never uses a free-running corpus coordinator, chains semantic stages, finalizes a probe run, imports Alice, or measures semantic quality.
+Acceptance never requires a custom programmatic adapter, exhaustive role probes, a semantic pipeline, finalization, Alice, or quality measurement. The July 21 fixture-backed runner remains optional maintainer conformance.
 
 ### 2. Real import runtime
 
 **Authority:** `skills/mem-import/SKILL.md`, its role/workflow references, and the still-relevant golden-path portions of [Mem-import Simplification](2026-07-20-mem-import-simplification.md).
 
-After acceptance, the parent launches one corpus coordinator. Real workers remain assignment-bound, host-observed, and ledger-driven. Cached acceptance never replaces per-dispatch authorization or exact-profile evidence.
+After brief acceptance, the parent launches one corpus coordinator. Real workers remain assignment-bound and ledger-driven, using the strongest lifecycle/tool evidence the selected facility exposes. A cached recipe never replaces per-dispatch authorization or exact requested tool profiles.
 
 ### 3. Integration, quality, and efficiency evaluation
 
@@ -42,32 +42,32 @@ When discussing work, include the plan name rather than saying only “U4.”
 
 Completed:
 
-- tracked acceptance fixture pack and independent materializer;
-- focused acceptance runner and Pi SDK adapter;
-- exact call-count, argument, model/thinking, tool-profile, durable-effect, and sanitized-receipt validation;
+- extension-agnostic brief acceptance and local/known facility recipe guidance;
+- optional tracked fixture pack, focused conformance runner, and Pi SDK maintainer adapter;
+- conformance validation for call count, arguments, model/thinking, tool profile, durable effects, and sanitized receipts;
 - terminal-state guards, no-op rejection, weighted limits, and bounded effect inventory;
 - host-attested `pi-herdr-subagents` launch profiles, exact active/denied telemetry, and profile-preserving resume;
-- active guidance separating focused acceptance from corpus execution.
+- active guidance separating brief facility acceptance, optional maintainer conformance, and corpus execution.
 
 Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not acceptance evidence. See the [superseded hardening handoff](2026-07-22-mem-import-subagent-hardening-handoff.md).
 
 ## Remaining roadmap
 
-1. Add or finish an adapter-specific focused acceptance host for any production adapter not represented by the Pi SDK fingerprint; do not model-coordinate it.
-2. Keep acceptance receipts fingerprinted by adapter/runtime, extensions, model/thinking, tool schema, fixture, and source revision.
-3. Implement efficiency-plan U4–U7 for real imports: phase-bounded coordinators, identity-aware planning, demand-driven reads, and usage telemetry.
-4. Run Alice evaluation only when explicitly requested after those runtime changes.
-5. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
+1. Let real imports accumulate small sanitized facility recipes; version-control only broadly useful examples.
+2. Implement efficiency-plan U4–U7 for real imports: phase-bounded coordinators, identity-aware planning, demand-driven reads, and usage telemetry.
+3. Run Alice evaluation only when explicitly requested after those runtime changes.
+4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
 
 ## Documentation authority map
 
 - `skills/mem-import/SKILL.md`: short role branch and corpus coordinator behavior.
 - `skills/mem-import/references/parent-preflight.md`: parent-only acceptance check and coordinator launch.
-- `skills/mem-import/references/acceptance.md`: harness contract and exclusions.
-- `skills/mem-import/references/subagent-capabilities.md`: host profile and resume requirements.
+- `skills/mem-import/references/acceptance.md`: brief capability probe and exclusions.
+- `skills/mem-import/references/facility-recipes.md`: local cache and known recipe contract.
+- `skills/mem-import/references/subagent-capabilities.md`: minimum facility capabilities.
 - `skills/mem-import/references/adapters/*.md`: adapter mechanics only.
 - `skills/mem-import/references/workflow.md`: real corpus coordinator decisions only.
-- `docs/plans/2026-07-21-002-*`: acceptance decision history.
+- `docs/plans/2026-07-21-002-*`: optional multi-role conformance and runtime-safety decision history.
 - `docs/plans/2026-07-21-001-*`: real-import optimization/evaluation roadmap.
 
 Do not duplicate the acceptance sequence in top-level docs or role files; link to the authority instead.
