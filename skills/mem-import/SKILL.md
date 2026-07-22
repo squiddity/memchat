@@ -41,6 +41,8 @@ Inspect the complete manifest. This step is complete when every intended source 
 
 Assignment results contain the complete worker bootstrap and exact semantic `tools` array. The coordinator passes both verbatim to `subagent`, requests the accepted model/thinking setting, and inherits the coordinator's explicit extension runtime. The host may add only documented lifecycle controls. Before recording dispatch, require host-observed active tools to equal `assignment.tools` plus those controls, with exact deny telemetry; record only the semantic subset in `observedTools`. Never synthesize `observedTools` from the assignment or worker prose. A current acceptance receipt never replaces per-run assignment, host-profile, dispatch, lifecycle, and durable-effect checks.
 
+After launching a worker, **end the current turn and remain idle**. Worker completion is push-delivered and starts a new coordinator turn automatically. Never launch a child whose task is to wait, sleep, say “done,” monitor another child, or keep the coordinator alive. Never poll status/effect tools merely to detect completion, and do not schedule a timer for ordinary child waiting. A scheduled wake-up is appropriate only for a genuine external deadline that cannot produce a native completion event. Wait/helper children invalidate acceptance and can create a self-waking launch loop.
+
 When the facility cannot enforce `assignment.tools`, call `mem_import_fail` and stop. Read the detected subagent adapter reference only when invocation details are needed.
 
 ## 5. Run the golden path

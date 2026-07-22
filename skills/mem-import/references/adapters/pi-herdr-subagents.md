@@ -34,7 +34,8 @@ For every live assignment, the coordinator:
 - omits `extensionMode` and `extensions` so the coordinator's explicit runtime is inherited;
 - sets explicit model, thinking, repository `cwd`, and fresh/lineage context;
 - launches no unassigned helper child;
-- waits for host completion evidence and requires `profileStatus: verified` plus `toolProfile.status: exact`;
+- ends its turn after launch and waits at rest for push-delivered host completion evidence; it never polls, schedules an ordinary wait, or launches a wait/no-op/monitor child;
+- requires `profileStatus: verified` plus `toolProfile.status: exact`;
 - verifies actual tools equal `assignment.tools` plus only `caller_ping` and `subagent_done`, with exact deny telemetry and no active denied tool;
 - uses the returned host child/session ID for `mem_import_record_dispatch`, recording the host-observed semantic subset rather than copying expected tools;
 - inspects the durable effect before dependent work.

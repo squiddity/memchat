@@ -42,6 +42,7 @@ test("active acceptance guidance requires explicit host-attested launch and resu
     assert.match(text, /toolProfile\.status: [`]?exact/);
     assert.match(text, /subagent_resume/);
   }
+  assert.match(skill, /end the current turn and remain idle/i);
   assert.match(skill, /Never synthesize `observedTools`/);
   assert.match(ladder, /no unassigned, unrestricted, or documentation\/helper child/);
   assert.match(adapter, /A large available list is failure/);

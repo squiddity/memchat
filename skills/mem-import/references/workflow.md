@@ -39,7 +39,7 @@ For every semantic worker:
 
 1. Issue a role assignment.
 2. Pass the returned bootstrap and semantic `tools` array verbatim to the coordinator's `subagent` facility; inherit explicit extension mode and launch no helper child.
-3. Wait for the native terminal result and require host-attested `profileStatus: verified` plus `toolProfile.status: exact`.
+3. End the coordinator turn immediately and wait at rest for the native terminal result. Completion is push-delivered; do not poll, schedule a wake-up, or launch a wait/no-op/monitor child. Require host-attested `profileStatus: verified` plus `toolProfile.status: exact` when the completion starts the next turn.
 4. Verify host-observed active tools equal the semantic allowlist plus documented lifecycle controls, deny telemetry matches, and no denied tool is active. For resumed work, require the same profile after `subagent_resume`.
 5. Record requested and host-observed semantic tools, model, thinking, host child ID, and outcome with `mem_import_record_dispatch`. Never derive observed values from the assignment or worker prose.
 6. Inspect the persisted effect through `mem_import_effect_inventory` before dependent dispatches; the effect or model-authored dispatch record cannot replace host telemetry.

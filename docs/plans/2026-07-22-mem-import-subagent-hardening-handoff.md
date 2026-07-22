@@ -82,15 +82,16 @@ Latest memchat validation:
 2. **Inspect both diffs**
    - Confirm no prompts, grants, coordinator authority, credentials, or sensitive task text enter the new subagent sidecars/telemetry.
    - Confirm explicit-mode examples use the actual mem-import extension path/name rather than generic “memory import” wording where appropriate.
-3. **Live conformance**
-   - Reload/install the modified `pi-herdr-subagents` extension before testing.
-   - Launch an explicit-mode coordinator and worker, terminate/resume through `subagent_resume`, and verify completion reports verified/exact both times.
-   - Confirm the expanded worker widget shows only assignment tools plus lifecycle controls.
-4. **Commit/push memchat**
-   - Commit the validated memchat docs/code after final diff review.
+3. **Live conformance retry**
+   - The first explicit-mode DeepSeek Pro/high coordinator run was interrupted and rejected after it created a self-waking loop of unassigned Pro no-op children (`please-wait`, `w3`–`w12`). It also duplicated proposer/merger work and lost the reviewer to a provider stream failure.
+   - All runaway panes were closed. No output from that run is acceptance evidence.
+   - Guidance now requires the coordinator to end its turn and wait at rest for push-delivered completion; wait/no-op/monitor children, polling, and ordinary scheduled waits are forbidden.
+   - Retry only from a freshly loaded parent runtime and verify the coordinator actually remains idle between worker launches.
+4. **Latest follow-up validation**
+   - `git diff --check`, `npm run build`, and all 47 `test:mem-import` tests pass after the wait-at-rest guidance change.
 
 ## Task tracker
 
 - #8 Harden subagent runtime: completed locally and validated.
 - #9 Tighten mem-import acceptance: completed locally and validated.
-- #10 Validate both repositories: in progress; automated checks pass, live conformance remains.
+- #10 Validate both repositories: in progress; automated checks pass, first live conformance was rejected, clean retry remains.
