@@ -6,11 +6,11 @@ Turn one assigned extraction shard into immutable provisional artifacts with com
 
 ## Profile
 
-Launch a subagent with the assignment bootstrap and exactly `assignment.tools`. A unit-scoped assignment includes every candidate in those units; a subset uses qualified `unitId:candidateId` values and partitions its scope exactly once without omissions.
+Launch a subagent with the assignment bootstrap and exactly `assignment.tools`. Production assignments bind exactly one immutable `planHash` and `clusterId`; the service derives the cross-unit `units` and qualified `unitId:candidateId` scope from that artifact. Do not broaden, regroup, or transcribe a different scope. Legacy unplanned fixture assignments may still carry direct unit/candidate scope.
 
 ## Steps
 
-1. Read the assigned extraction inventory and candidate pages. Re-read source spans for material claims.
+1. Read only the assigned extraction inventory and candidate pages. A recurring entity cluster may span units; synthesize it as one model-owned identity-aware shard. Re-read source spans for material claims.
 2. Synthesize complete typed artifacts. Copy source/unit/anchor fields from evidence; the service supplies quote text.
 3. Give every assigned candidate exactly one disposition:
    - `represented` or `merged` names a proposed `artifactId`;
@@ -20,7 +20,7 @@ Launch a subagent with the assignment bootstrap and exactly `assignment.tools`. 
 
 The submit is transactional: validation failure writes no proposal. Correct the exact reported field once; on malformed/truncated transport or repeated failure, stop and report it rather than repeatedly rebuilding an oversized body. The coordinator revokes the assignment and retries a smaller shard with a fresh task ID.
 
-The tool derives packet identity and extraction hashes and rejects incomplete accounting.
+The tool derives packet identity, plan hash, cluster ID, extraction hashes, and exact candidate accounting. The immutable proposal is therefore attributable to exactly one planned cluster.
 
 ## Done
 

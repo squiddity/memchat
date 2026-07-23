@@ -142,10 +142,16 @@ export type MemImportAssignmentRecord = {
   role: AssignmentRole;
   outputRoot: string;
   allowedUnitIds: string[];
+  /** Planned semantic work is bound to one immutable cluster-plan unit. */
+  planHash?: string;
+  clusterId?: string;
+  reconciliationSetId?: string;
   /** Proposal grants can additionally restrict candidate IDs within their allowed units. */
   allowedCandidateIds?: string[];
-  /** Reconciliation grants can name exact immutable shard-proposal hashes. */
+  /** Reconciliation and merger grants name exact immutable shard-proposal hashes. */
   allowedProposalHashes?: string[];
+  /** Planned merger grants also name exact immutable identity-packet hashes. */
+  allowedIdentityProposalHashes?: string[];
   /** Repair grants name the checkpoint actions they may implement; other roles leave these empty. */
   allowedCheckpointIds?: string[];
   allowedActionIds?: string[];
@@ -195,6 +201,10 @@ export type WorkerAssignmentResult = {
   unitIds: string[];
   candidateIds: string[];
   proposalHashes: string[];
+  identityProposalHashes: string[];
+  planHash?: string;
+  clusterId?: string;
+  reconciliationSetId?: string;
   checkpointIds: string[];
   actionIds: string[];
   /** Exact model-visible tools the host must allow for this worker. */
@@ -509,8 +519,12 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || !["extractor", "proposer", "reconciler", "merger", "reviewer", "repairer"].includes(String(value.role))
     || typeof value.outputRoot !== "string"
     || !Array.isArray(value.allowedUnitIds) || !value.allowedUnitIds.every((item) => typeof item === "string")
+    || (value.planHash !== undefined && (typeof value.planHash !== "string" || !/^[a-f0-9]{64}$/.test(value.planHash)))
+    || (value.clusterId !== undefined && typeof value.clusterId !== "string")
+    || (value.reconciliationSetId !== undefined && typeof value.reconciliationSetId !== "string")
     || (value.allowedCandidateIds !== undefined && (!Array.isArray(value.allowedCandidateIds) || !value.allowedCandidateIds.every((item) => typeof item === "string")))
     || (value.allowedProposalHashes !== undefined && (!Array.isArray(value.allowedProposalHashes) || !value.allowedProposalHashes.every((item) => typeof item === "string")))
+    || (value.allowedIdentityProposalHashes !== undefined && (!Array.isArray(value.allowedIdentityProposalHashes) || !value.allowedIdentityProposalHashes.every((item) => typeof item === "string")))
     || (value.allowedCheckpointIds !== undefined && (!Array.isArray(value.allowedCheckpointIds) || !value.allowedCheckpointIds.every((item) => typeof item === "string")))
     || (value.allowedActionIds !== undefined && (!Array.isArray(value.allowedActionIds) || !value.allowedActionIds.every((item) => typeof item === "string")))
     || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => MEM_IMPORT_CAPABILITIES.includes(item as MemImportCapability))
@@ -877,6 +891,10 @@ export class MemImportService {
     unitIds?: string[];
     candidateIds?: string[];
     proposalHashes?: string[];
+    planHash?: string;
+    clusterId?: string;
+    reconciliationSetId?: string;
+    retriesTaskId?: string;
     checkpointIds?: string[];
     actionIds?: string[];
     audit?: MemImportAssignmentAudit;
@@ -894,6 +912,10 @@ export class MemImportService {
     unitIds?: string[];
     candidateIds?: string[];
     proposalHashes?: string[];
+    planHash?: string;
+    clusterId?: string;
+    reconciliationSetId?: string;
+    retriesTaskId?: string;
     checkpointIds?: string[];
     actionIds?: string[];
     audit?: MemImportAssignmentAudit;
@@ -904,12 +926,41 @@ export class MemImportService {
     assertTaskId(options.taskId);
     if (!["proposer", "reconciler", "merger", "reviewer", "repairer"].includes(options.role)) throw new Error("role must be proposer, reconciler, merger, reviewer, or repairer");
     if (existsSync(assignmentPath(run.outputRoot, options.taskId))) throw new Error(`Assignment ${options.taskId} already exists; use a fresh taskId`);
-    const unitIds = [...new Set(options.unitIds ?? [])];
+
+    let unitIds = [...new Set(options.unitIds ?? [])];
     let candidateIds = [...new Set(options.candidateIds ?? [])];
-    const proposalHashes = [...new Set(options.proposalHashes ?? [])];
+    let proposalHashes = [...new Set(options.proposalHashes ?? [])];
+    let identityProposalHashes: string[] = [];
+    let planHash: string | undefined;
+    let clusterId: string | undefined;
+    let reconciliationSetId: string | undefined;
+    const { MemImportClusterPlanService } = await import("./cluster-plan-service.js");
+    const plans = new MemImportClusterPlanService(this, this.now);
+    const activePlan = await plans.readActivePlan(run.outputRoot, run.runId);
+    if (activePlan && ["proposer", "reconciler", "merger"].includes(options.role)) {
+      if (options.planHash !== activePlan.planHash) throw new Error(`${options.role} assignments for a planned run require the active planHash`);
+      planHash = activePlan.planHash;
+      if (options.role === "proposer") {
+        if (!options.clusterId || options.reconciliationSetId || options.unitIds?.length || options.candidateIds?.length || options.proposalHashes?.length) throw new Error("Planned proposer assignments require exactly one clusterId and derive unit/candidate scope from the cluster plan");
+        clusterId = options.clusterId;
+        ({ unitIds, candidateIds } = await plans.proposalBinding(run.outputRoot, run.runId, planHash, clusterId));
+      } else if (options.role === "reconciler") {
+        if (!options.reconciliationSetId || options.clusterId || options.unitIds?.length || options.candidateIds?.length || options.proposalHashes?.length) throw new Error("Planned reconciler assignments require exactly one reconciliationSetId and derive proposal scope from the cluster plan");
+        reconciliationSetId = options.reconciliationSetId;
+        proposalHashes = (await plans.reconciliationBinding(run.outputRoot, run.runId, planHash, reconciliationSetId)).proposalHashes;
+      } else {
+        if (options.clusterId || options.reconciliationSetId || options.unitIds?.length || options.candidateIds?.length || options.proposalHashes?.length) throw new Error("Planned merger assignments derive proposal and identity scope from the ready cluster plan");
+        const ready = await plans.requireReady(run.outputRoot, run.runId, planHash);
+        proposalHashes = ready.proposalHashes;
+        identityProposalHashes = ready.identityProposalHashes;
+      }
+    } else if (options.planHash || options.clusterId || options.reconciliationSetId || options.retriesTaskId) {
+      throw new Error("Cluster-plan assignment fields require an active plan and a proposer, reconciler, or merger role");
+    }
+
     const checkpointIds = [...new Set(options.checkpointIds ?? [])];
     const actionIds = [...new Set(options.actionIds ?? [])];
-    if (unitIds.length > 100 || candidateIds.length > 100 || proposalHashes.length > 100) throw new Error("Worker assignment unit, candidate, and proposal scopes are limited to 100 items each");
+    if (unitIds.length > 100 || candidateIds.length > 100 || proposalHashes.length > 100 || identityProposalHashes.length > 100) throw new Error("Worker assignment unit, candidate, proposal, and identity scopes are limited to 100 items each");
     unitIds.forEach(assertTaskId);
     candidateIds.forEach((candidateId) => {
       requireNonEmpty(candidateId, "candidateId");
@@ -920,9 +971,9 @@ export class MemImportService {
     });
     checkpointIds.forEach(assertTaskId);
     actionIds.forEach(assertTaskId);
-    if (options.role === "proposer" && unitIds.length === 0) throw new Error("Proposer assignments require explicit unitIds");
+    if (options.role === "proposer" && unitIds.length === 0) throw new Error("Proposer assignments require explicit unitIds or a planned cluster");
     for (const unitId of unitIds) if (!manifest.units.some((unit) => unit.unitId === unitId)) throw new Error(`Worker assignment references missing normalized unit ${unitId}`);
-    if (options.role === "proposer" && candidateIds.length) {
+    if (options.role === "proposer" && candidateIds.length && !planHash) {
       const stages = new Map<string, StageEnvelope>();
       for (const unitId of unitIds) {
         const path = extractionStagePath(run.outputRoot, unitId);
@@ -945,15 +996,26 @@ export class MemImportService {
       }))];
     }
     if (options.role !== "proposer" && (unitIds.length > 0 || candidateIds.length > 0)) throw new Error("Only proposer assignments may carry unit/candidate scope");
-    if (options.role === "reconciler" && proposalHashes.length === 0) throw new Error("Reconciler assignments require explicit proposalHashes");
+    if (options.role === "reconciler" && proposalHashes.length === 0) throw new Error("Reconciler assignments require explicit proposalHashes or a planned reconciliation set");
     if (!["reconciler", "merger"].includes(options.role) && proposalHashes.length > 0) throw new Error("Only reconciler or merger assignments may carry proposalHashes");
-    if (options.role === "repairer" && (checkpointIds.length === 0 || actionIds.length === 0)) {
-      throw new Error("Repairer assignments require explicit checkpointIds and actionIds");
-    }
-    if (options.role !== "repairer" && (checkpointIds.length > 0 || actionIds.length > 0)) {
-      throw new Error("Only repairer assignments may carry checkpoint/action scope");
-    }
+    if (options.role === "repairer" && (checkpointIds.length === 0 || actionIds.length === 0)) throw new Error("Repairer assignments require explicit checkpointIds and actionIds");
+    if (options.role !== "repairer" && (checkpointIds.length > 0 || actionIds.length > 0)) throw new Error("Only repairer assignments may carry checkpoint/action scope");
+
     const issuedAt = this.now();
+    if (planHash && (clusterId || reconciliationSetId)) {
+      const prior = (await readAssignments(run.outputRoot)).filter((item) => item.runId === run.runId && item.planHash === planHash && item.clusterId === clusterId && item.reconciliationSetId === reconciliationSetId);
+      for (const item of prior) {
+        const effectsDirectory = `${orchestrationDir(run.outputRoot)}/effects/${item.taskId}`;
+        const hasEffect = existsSync(effectsDirectory) && (await readdir(effectsDirectory)).some((name) => name.endsWith(".json"));
+        if (hasEffect) throw new Error(`Planned scope already has an effective assignment (${item.taskId})`);
+        if (isLiveAssignment(item, issuedAt)) throw new Error(`Planned scope already has a live assignment (${item.taskId}); revoke it or record a failed dispatch before retrying`);
+      }
+      if (prior.length > 0 && !options.retriesTaskId) throw new Error("A fresh retry of a prior planned scope requires retriesTaskId");
+      if (options.retriesTaskId) {
+        assertTaskId(options.retriesTaskId);
+        if (!prior.some((item) => item.taskId === options.retriesTaskId)) throw new Error("retriesTaskId must name a prior assignment for the same planned scope");
+      }
+    }
     const expiresAt = options.expiresAt ? asIsoDate(options.expiresAt, "expiresAt") : new Date(issuedAt.getTime() + 60 * 60 * 1000);
     if (expiresAt.getTime() <= issuedAt.getTime()) throw new Error("expiresAt must be in the future");
     const capabilities: Record<Exclude<AssignmentRole, "extractor">, MemImportCapability[]> = {
@@ -972,8 +1034,12 @@ export class MemImportService {
       role: options.role,
       outputRoot: run.outputRoot,
       allowedUnitIds: unitIds,
+      ...(planHash ? { planHash } : {}),
+      ...(clusterId ? { clusterId } : {}),
+      ...(reconciliationSetId ? { reconciliationSetId } : {}),
       ...(candidateIds.length ? { allowedCandidateIds: candidateIds } : {}),
       ...(proposalHashes.length ? { allowedProposalHashes: proposalHashes } : {}),
+      ...(identityProposalHashes.length ? { allowedIdentityProposalHashes: identityProposalHashes } : {}),
       ...(checkpointIds.length ? { allowedCheckpointIds: checkpointIds } : {}),
       ...(actionIds.length ? { allowedActionIds: actionIds } : {}),
       capabilities: capabilities[options.role],
@@ -981,6 +1047,7 @@ export class MemImportService {
       issuedAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
       lifecycleOutcome: "assigned",
+      ...(options.retriesTaskId ? { retriesTaskId: options.retriesTaskId } : {}),
       ...(sanitizeAudit(options.audit) ? { audit: sanitizeAudit(options.audit) } : {}),
     };
     await writeJson(assignmentPath(run.outputRoot, assignment.taskId), assignment);
@@ -999,6 +1066,10 @@ export class MemImportService {
       }),
       candidateIds,
       proposalHashes,
+      identityProposalHashes,
+      ...(planHash ? { planHash } : {}),
+      ...(clusterId ? { clusterId } : {}),
+      ...(reconciliationSetId ? { reconciliationSetId } : {}),
       checkpointIds,
       actionIds,
       tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
@@ -1028,6 +1099,10 @@ export class MemImportService {
     units: Array<{ unitId: string; sourceId: string }>;
     candidateIds: string[];
     proposalHashes: string[];
+    identityProposalHashes?: string[];
+    planHash?: string;
+    clusterId?: string;
+    reconciliationSetId?: string;
     checkpointIds: string[];
     actionIds: string[];
     tools: string[];
@@ -1050,6 +1125,10 @@ export class MemImportService {
     units: Array<{ unitId: string; sourceId: string }>;
     candidateIds: string[];
     proposalHashes: string[];
+    identityProposalHashes?: string[];
+    planHash?: string;
+    clusterId?: string;
+    reconciliationSetId?: string;
     checkpointIds: string[];
     actionIds: string[];
     tools: string[];
@@ -1076,6 +1155,10 @@ export class MemImportService {
       units,
       candidateIds: assignment.allowedCandidateIds ?? [],
       proposalHashes: assignment.allowedProposalHashes ?? [],
+      ...(assignment.allowedIdentityProposalHashes?.length ? { identityProposalHashes: assignment.allowedIdentityProposalHashes } : {}),
+      ...(assignment.planHash ? { planHash: assignment.planHash } : {}),
+      ...(assignment.clusterId ? { clusterId: assignment.clusterId } : {}),
+      ...(assignment.reconciliationSetId ? { reconciliationSetId: assignment.reconciliationSetId } : {}),
       checkpointIds: assignment.allowedCheckpointIds ?? [],
       actionIds: assignment.allowedActionIds ?? [],
       tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
@@ -1135,6 +1218,14 @@ export class MemImportService {
       recordedAt: this.now().toISOString(),
     };
     await writeJson(dispatchPath(run.outputRoot, assignment.taskId), record);
+    if (record.outcome !== "completed") {
+      const effectsDirectory = `${orchestrationDir(run.outputRoot)}/effects/${assignment.taskId}`;
+      const hasEffect = existsSync(effectsDirectory) && (await readdir(effectsDirectory)).some((name) => name.endsWith(".json"));
+      if (!hasEffect) {
+        const revokedAt = this.now().toISOString();
+        await writeJson(assignmentPath(run.outputRoot, assignment.taskId), { ...assignment, revokedAt, lifecycleOutcome: "revoked" } satisfies MemImportAssignmentRecord);
+      }
+    }
     return record;
   }
 
@@ -1535,6 +1626,8 @@ export class MemImportService {
       const assignment = await this.authorizeExtractor({ ...options, outputRoot, capability: "extraction:submit", unitId: options.unitId });
       const stage = await this.assertExtractionStage(outputRoot, options.unitId, options.stage);
       const packetHash = createHash("sha256").update(JSON.stringify(stage)).digest("hex");
+      const plansDirectory = `${outputRoot}/stages/runs/${assignment.runId}/cluster-plans`;
+      if (existsSync(plansDirectory) && (await readdir(plansDirectory)).some((name) => name.endsWith(".json"))) throw new Error("Extraction packets are immutable after a cluster plan is accepted");
       const submittedAt = this.now().toISOString();
       await writeExtractionStage(outputRoot, stage);
       await writeJson(extractionInventoryPath(outputRoot, options.unitId), this.extractionInventoryEntry(stage, packetHash));

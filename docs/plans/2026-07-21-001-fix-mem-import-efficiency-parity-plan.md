@@ -361,6 +361,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U4. Add phase-bounded coordinator launch contract
 
+- **Status:** Complete on 2026-07-22 with four fresh artifact-led coordinator phases, parent-retained transient authority, typed durable startup/exit gates, current-phase-only recovery, and compact proposal/terminal handoff status.
 - **Goal:** Stop carrying extraction/proposal lifecycle prose into merge/finalization.
 - **Files:** `skills/mem-import/SKILL.md`, `skills/mem-import/references/workflow.md`, subagent adapter guidance and integration tests.
 - **Work:** Define sanitized structured phase handoffs and fresh coordinator invocations sharing only durable run identity/authority.
@@ -368,6 +369,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U5. Add identity-aware proposal planning
 
+- **Status:** Complete on 2026-07-22 with immutable extraction-snapshot-bound cluster-plan artifacts, flattened stale-safe candidate inventory, model-owned identity/coherent clusters, plan-derived proposer/reconciler/merger scopes, explicit canonical dependencies, and ledger-enforced merge readiness.
 - **Goal:** Consolidate recurring entities before canonical artifact creation.
 - **Files:** coordinator/proposer/reconciler role guidance; optional bounded cluster-plan service/tool; evaluation fixtures.
 - **Work:** Present compact cross-unit candidate title/group inventory, persist model-owned cluster decisions, and reconcile globally before merge.
@@ -399,12 +401,11 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ## Next Steps After the Completed Safety Gate
 
-1. **U4 — phase-bounded coordination:** implement fresh extraction, proposal/reconciliation, merge, and review/finalization coordinator invocations with typed durable handoffs.
-2. **U5 — identity-aware planning:** add model-owned cross-unit clustering/reconciliation before canonical merge and evaluate duplicate central-entity families.
-3. **U6 — demand-driven reads:** stop default source/chapter rereads and record bounded per-role read counts.
-4. **U7 — usage telemetry:** persist sanitized per-role/model/session token and cost totals, including explicit unavailable fields.
-5. **Three-chapter Alice evaluation:** run the now-unblocked semantic/efficiency corpus to measure coordinator behavior, identity consolidation, narrative surfaces, transaction count, duration, and usage.
-6. **U8 — controlled full Alice A/B:** after U4–U7, compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
+1. **Tiny artifact-led import:** validate the completed U4/U5 phase handoffs, cluster-plan reconstruction, exact worker scopes, reconciliation dependencies, and merge readiness in a small live corpus.
+2. **U6 — demand-driven reads:** stop default source/chapter rereads and record bounded per-role read counts.
+3. **U7 — usage telemetry:** persist sanitized per-role/model/session token and cost totals, including explicit unavailable fields.
+4. **Three-chapter Alice evaluation:** after U6–U7, measure coordinator behavior, identity consolidation, narrative surfaces, transaction count, duration, and usage.
+5. **U8 — controlled full Alice A/B:** after U4–U7, compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
 
 Do not rerun the retired coordinator-driven acceptance ladder. Run the focused multi-role suite only for maintainer conformance after relevant production-tool, fixture, authorization, or adapter changes; ordinary imports use a brief facility recipe/probe.
 

@@ -27,6 +27,9 @@ export type IdentityProposalPacket = {
   proposalHashes: string[];
   baselineRevision: number;
   baselineContentHash: string | null;
+  planHash?: string;
+  reconciliationSetId?: string;
+  canonicalDependencies?: Array<{ artifactId: string; contentHash: string | null }>;
   decisions: IdentityDecision[];
   diagnostics?: Array<{ level: "info" | "warning" | "error"; message: string; path?: string }>;
   rationale: string;
@@ -68,9 +71,16 @@ export class MemImportIdentityService {
 
   private async submitWorkerIdentityLocked(options: WorkerAuthority & { packet: unknown }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "identity:submit", role: "reconciler" });
-    const packet = await this.validatePacket(assignment.outputRoot, assignment.runId, assignment.allowedProposalHashes, options.packet);
+    const packet = await this.validatePacket(assignment, options.packet);
     const contentHash = canonicalHash(packet);
     const path = identityPath(assignment.outputRoot, assignment.runId, packet.id, contentHash);
+    if (assignment.planHash && assignment.reconciliationSetId) {
+      const existing = await this.findPlannedIdentity(assignment.outputRoot, assignment.runId, assignment.planHash, assignment.reconciliationSetId);
+      if (existing) {
+        if (existing.contentHash === contentHash) return { path: existing.path, contentHash };
+        throw new Error(`Reconciliation set ${assignment.reconciliationSetId} already has an immutable identity packet`);
+      }
+    }
     if (existsSync(path)) return { path: this.relative(assignment.outputRoot, path), contentHash };
     await mkdir(identityDir(assignment.outputRoot, assignment.runId), { recursive: true, mode: 0o700 });
     const stored: StoredIdentityProposal = { ...packet, runId: assignment.runId, taskId: assignment.taskId, contentHash, submittedAt: this.now().toISOString() };
@@ -89,7 +99,8 @@ export class MemImportIdentityService {
     const rows: Array<{ file: string; packet: StoredIdentityProposal }> = [];
     for (const file of (existsSync(directory) ? await readdir(directory) : []).filter((name) => name.endsWith(".json") && name > after).sort()) {
       const packet = JSON.parse(await readFile(join(directory, file), "utf-8")) as StoredIdentityProposal;
-      rows.push({ file, packet });
+      const unrestricted = !assignment.planHash && !assignment.allowedIdentityProposalHashes?.length;
+      if (unrestricted || assignment.allowedIdentityProposalHashes?.includes(packet.contentHash)) rows.push({ file, packet });
     }
     const page = rows.slice(0, maxItems);
     const truncated = rows.length > page.length;
@@ -101,9 +112,10 @@ export class MemImportIdentityService {
     };
   }
 
-  async readWorkerIdentity(options: WorkerAuthority & { identityProposalHash: string; continuationCursor?: string; maxDecisions?: number }): Promise<{ identityProposalHash: string; id: string; proposalHashes: string[]; baselineRevision: number; baselineContentHash: string | null; decisions: IdentityDecision[]; rationale: string; truncated: boolean; continuationCursor?: string }> {
+  async readWorkerIdentity(options: WorkerAuthority & { identityProposalHash: string; continuationCursor?: string; maxDecisions?: number }): Promise<{ identityProposalHash: string; id: string; proposalHashes: string[]; baselineRevision: number; baselineContentHash: string | null; planHash?: string; reconciliationSetId?: string; canonicalDependencies?: Array<{ artifactId: string; contentHash: string | null }>; decisions: IdentityDecision[]; rationale: string; truncated: boolean; continuationCursor?: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read" });
     if (!["merger", "repairer"].includes(assignment.role)) throw new Error("Identity packet reads require a merger or repairer assignment");
+    if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && !assignment.allowedIdentityProposalHashes?.includes(options.identityProposalHash)) throw new Error("Identity proposal hash is outside this assignment");
     const packet = await this.readIdentityProposal(assignment.outputRoot, assignment.runId, options.identityProposalHash);
     const maxDecisions = options.maxDecisions ?? 25;
     if (!Number.isInteger(maxDecisions) || maxDecisions < 1 || maxDecisions > 100) throw new Error("maxDecisions must be an integer between 1 and 100");
@@ -112,7 +124,7 @@ export class MemImportIdentityService {
     const decisions = packet.decisions.slice(offset, offset + maxDecisions);
     const next = offset + decisions.length;
     const truncated = next < packet.decisions.length;
-    return { identityProposalHash: packet.contentHash, id: packet.id, proposalHashes: packet.proposalHashes, baselineRevision: packet.baselineRevision, baselineContentHash: packet.baselineContentHash, decisions, rationale: packet.rationale, truncated, ...(truncated ? { continuationCursor: Buffer.from(String(next), "utf-8").toString("base64url") } : {}) };
+    return { identityProposalHash: packet.contentHash, id: packet.id, proposalHashes: packet.proposalHashes, baselineRevision: packet.baselineRevision, baselineContentHash: packet.baselineContentHash, ...(packet.planHash ? { planHash: packet.planHash } : {}), ...(packet.reconciliationSetId ? { reconciliationSetId: packet.reconciliationSetId } : {}), ...(packet.canonicalDependencies !== undefined ? { canonicalDependencies: packet.canonicalDependencies } : {}), decisions, rationale: packet.rationale, truncated, ...(truncated ? { continuationCursor: Buffer.from(String(next), "utf-8").toString("base64url") } : {}) };
   }
 
   async readIdentityProposal(outputRoot: string, runId: string, contentHash: string): Promise<StoredIdentityProposal> {
@@ -126,9 +138,17 @@ export class MemImportIdentityService {
     return packet;
   }
 
-  private async validatePacket(outputRoot: string, runId: string, allowedProposalHashes: string[] | undefined, value: unknown): Promise<IdentityProposalPacket> {
+  private async validatePacket(assignment: Awaited<ReturnType<MemImportService["authorizeWorker"]>>, value: unknown): Promise<IdentityProposalPacket> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Identity proposal packet must be an object");
-    const packet = structuredClone(value) as IdentityProposalPacket;
+    let packet = structuredClone(value) as IdentityProposalPacket;
+    if (assignment.planHash && assignment.reconciliationSetId) {
+      const { MemImportClusterPlanService } = await import("./cluster-plan-service.js");
+      const binding = await new MemImportClusterPlanService(this.base, this.now).reconciliationBinding(assignment.outputRoot, assignment.runId, assignment.planHash, assignment.reconciliationSetId);
+      packet = { ...packet, proposalHashes: binding.proposalHashes, baselineRevision: binding.baselineRevision, baselineContentHash: binding.baselineContentHash, planHash: assignment.planHash, reconciliationSetId: assignment.reconciliationSetId, ...(binding.canonicalDependencies !== undefined ? { canonicalDependencies: binding.canonicalDependencies } : {}) };
+    } else if (packet.planHash !== undefined || packet.reconciliationSetId !== undefined || packet.canonicalDependencies !== undefined) throw new Error("Unplanned identity packets must not claim a cluster-plan binding");
+    const outputRoot = assignment.outputRoot;
+    const runId = assignment.runId;
+    const allowedProposalHashes = assignment.allowedProposalHashes;
     if (packet.version !== 1 || packet.kind !== "mem-import-identity") throw new Error("Identity proposal packet must be version-1 mem-import-identity");
     assertMemImportId(packet.id, "packet.id");
     if (!Array.isArray(packet.proposalHashes) || packet.proposalHashes.length === 0 || packet.proposalHashes.length > 100 || packet.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Identity proposal packet requires one to one hundred proposal hashes");
@@ -136,6 +156,8 @@ export class MemImportIdentityService {
     if (allowedProposalHashes?.length && packet.proposalHashes.some((item) => !allowedProposalHashes.includes(item))) throw new Error("An identity proposal hash is outside this reconciliation assignment");
     await Promise.all(packet.proposalHashes.map((proposalHash) => this.assertProposalExists(outputRoot, runId, proposalHash)));
     if (!Number.isInteger(packet.baselineRevision) || packet.baselineRevision < 0 || (packet.baselineContentHash !== null && !/^[a-f0-9]{64}$/.test(packet.baselineContentHash))) throw new Error("Identity proposal baseline revision/hash is invalid");
+    if (packet.planHash !== undefined && (!/^[a-f0-9]{64}$/.test(packet.planHash) || typeof packet.reconciliationSetId !== "string")) throw new Error("Identity proposal cluster-plan binding is invalid");
+    if (packet.canonicalDependencies !== undefined && (!Array.isArray(packet.canonicalDependencies) || packet.canonicalDependencies.length > 100 || packet.canonicalDependencies.some((item) => !item || typeof item.artifactId !== "string" || (item.contentHash !== null && !/^[a-f0-9]{64}$/.test(item.contentHash))))) throw new Error("Identity proposal canonical dependencies are invalid");
     if (!Array.isArray(packet.decisions) || packet.decisions.length === 0 || packet.decisions.length > 100) throw new Error("Identity proposal packet requires one to one hundred decisions");
     if (typeof packet.rationale !== "string" || !packet.rationale.trim()) throw new Error("Identity proposal packet rationale must be non-empty");
     const decisionIds = new Set<string>();
@@ -157,6 +179,19 @@ export class MemImportIdentityService {
       if (typeof decision.rationale !== "string" || !decision.rationale.trim()) throw new Error("Identity decision rationale must be non-empty");
     }
     return packet;
+  }
+
+  private async findPlannedIdentity(outputRoot: string, runId: string, planHash: string, reconciliationSetId: string): Promise<{ path: string; contentHash: string } | undefined> {
+    const directory = identityDir(outputRoot, runId);
+    if (!existsSync(directory)) return undefined;
+    let found: { path: string; contentHash: string } | undefined;
+    for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
+      const packet = JSON.parse(await readFile(join(directory, file), "utf-8")) as StoredIdentityProposal;
+      if (packet.planHash !== planHash || packet.reconciliationSetId !== reconciliationSetId) continue;
+      if (found && found.contentHash !== packet.contentHash) throw new Error(`Reconciliation set ${reconciliationSetId} has more than one effective identity packet`);
+      found = { path: this.relative(outputRoot, join(directory, file)), contentHash: packet.contentHash };
+    }
+    return found;
   }
 
   private async assertProposalExists(outputRoot: string, runId: string, contentHash: string): Promise<void> {

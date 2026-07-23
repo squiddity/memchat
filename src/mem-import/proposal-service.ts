@@ -18,6 +18,8 @@ export type ShardProposalPacket = {
   version: 1;
   kind: "mem-import-proposal";
   id: string;
+  planHash?: string;
+  clusterId?: string;
   inputs: ProposalInput[];
   artifacts: unknown[];
   candidateDispositions?: unknown[];
@@ -61,9 +63,16 @@ export class MemImportProposalService {
 
   private async submitWorkerProposalLocked(options: WorkerAuthority & { packet: unknown }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "proposal:submit", role: "proposer" });
-    const packet = await this.validatePacket(assignment.outputRoot, assignment.allowedUnitIds, assignment.allowedCandidateIds, options.packet);
+    const packet = await this.validatePacket(assignment.outputRoot, assignment.allowedUnitIds, assignment.allowedCandidateIds, options.packet, assignment.planHash, assignment.clusterId);
     const contentHash = hash(packet);
     const path = proposalPath(assignment.outputRoot, assignment.runId, packet.id, contentHash);
+    if (assignment.planHash && assignment.clusterId) {
+      const existing = await this.findPlannedProposal(assignment.outputRoot, assignment.runId, assignment.planHash, assignment.clusterId);
+      if (existing) {
+        if (existing.contentHash === contentHash) return { path: existing.path, contentHash };
+        throw new Error(`Cluster ${assignment.clusterId} already has an immutable proposal`);
+      }
+    }
     if (existsSync(path)) return { path: this.relative(assignment.outputRoot, path), contentHash };
     const stored: StoredProposal = { ...packet, runId: assignment.runId, taskId: assignment.taskId, contentHash, submittedAt: this.now().toISOString() };
     await writeJson(path, stored);
@@ -129,6 +138,8 @@ export class MemImportProposalService {
         version: 1,
         kind: "mem-import-proposal",
         id: assignment.taskId,
+        ...(assignment.planHash ? { planHash: assignment.planHash } : {}),
+        ...(assignment.clusterId ? { clusterId: assignment.clusterId } : {}),
         inputs,
         artifacts: options.artifacts,
         candidateDispositions: options.candidateDispositions,
@@ -188,11 +199,14 @@ export class MemImportProposalService {
     return packet;
   }
 
-  private async validatePacket(outputRoot: string, allowedUnitIds: string[], allowedCandidateIds: string[] | undefined, value: unknown): Promise<ShardProposalPacket> {
+  private async validatePacket(outputRoot: string, allowedUnitIds: string[], allowedCandidateIds: string[] | undefined, value: unknown, planHash?: string, clusterId?: string): Promise<ShardProposalPacket> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Proposal packet must be an object");
     const packet = structuredClone(value) as ShardProposalPacket;
     if (packet.version !== 1 || packet.kind !== "mem-import-proposal") throw new Error("Proposal packet must be version-1 mem-import-proposal");
     assertId(packet.id, "packet.id");
+    if (planHash) {
+      if (packet.planHash !== planHash || packet.clusterId !== clusterId) throw new Error("Proposal packet planHash/clusterId must match its planned assignment");
+    } else if (packet.planHash !== undefined || packet.clusterId !== undefined) throw new Error("Unplanned proposal packets must not claim a cluster-plan binding");
     if (!Array.isArray(packet.inputs) || packet.inputs.length === 0) throw new Error("Proposal packet requires at least one input extraction packet");
     if (!Array.isArray(packet.artifacts)) throw new Error("Proposal packet artifacts must be an array");
     if (typeof packet.rationale !== "string" || !packet.rationale.trim()) throw new Error("Proposal packet rationale must be non-empty");
@@ -243,6 +257,19 @@ export class MemImportProposalService {
         ref.quote = quote;
       }
     }
+  }
+
+  private async findPlannedProposal(outputRoot: string, runId: string, planHash: string, clusterId: string): Promise<{ path: string; contentHash: string } | undefined> {
+    const directory = join(outputRoot, "stages", "runs", runId, "proposals");
+    if (!existsSync(directory)) return undefined;
+    let found: { path: string; contentHash: string } | undefined;
+    for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
+      const packet = JSON.parse(await readFile(join(directory, file), "utf-8")) as StoredProposal;
+      if (packet.planHash !== planHash || packet.clusterId !== clusterId) continue;
+      if (found && found.contentHash !== packet.contentHash) throw new Error(`Cluster ${clusterId} has more than one effective proposal`);
+      found = { path: this.relative(outputRoot, join(directory, file)), contentHash: packet.contentHash };
+    }
+    return found;
   }
 
   private relative(outputRoot: string, path: string): string {

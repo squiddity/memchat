@@ -59,7 +59,9 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(workflow, /uniqueProposedCandidateCount === candidateCount/);
   assert.match(workflow, /duplicateProposalDispositionCount === 0/);
   assert.match(workflow, /terminalStatus: "finalized"/);
-  assert.match(workflow, /Do not add or persist cluster planning/);
+  assert.match(workflow, /mem_import_cluster_plan_submit/);
+  assert.match(workflow, /readyForMerge: true/);
+  assert.match(helperTools, /model-authored exact candidate partition/);
   assert.match(helperTools, /compact cross-phase ledger handoff/);
   assert.match(helperTools, /no status depends on an earlier service instance or coordinator conversation/);
   assert.match(parentPreflight, /Choose one facility/);

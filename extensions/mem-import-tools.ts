@@ -6,12 +6,14 @@ import { MemImportU2Service } from "../src/mem-import/u2-service.js";
 import { MemImportProposalService } from "../src/mem-import/proposal-service.js";
 import { MemImportCompendiumService } from "../src/mem-import/compendium-service.js";
 import { MemImportIdentityService } from "../src/mem-import/identity-service.js";
+import { MemImportClusterPlanService } from "../src/mem-import/cluster-plan-service.js";
 
 const service = new MemImportService();
 const u2 = new MemImportU2Service(service);
 const proposals = new MemImportProposalService(service);
 const compendia = new MemImportCompendiumService(service);
 const identities = new MemImportIdentityService(service);
+const clusterPlans = new MemImportClusterPlanService(service);
 
 function result(value: unknown) {
   return {
@@ -197,13 +199,36 @@ const mergeCommitChangeSchema = Type.Union([
   }, { additionalProperties: false }),
 ]);
 
+const canonicalDependencySchema = Type.Object({
+  artifactId: Type.String({ minLength: 1, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }),
+  contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
+}, { additionalProperties: false, description: "Explicit bounded canonical observation. Unrelated canonical revisions remain valid while this artifact hash is unchanged." });
+
+const clusterPlanSchema = Type.Object({
+  id: Type.String({ minLength: 1, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }),
+  clusters: Type.Array(Type.Object({
+    id: Type.String({ minLength: 1, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }),
+    label: Type.String({ minLength: 1, description: "Concise human-readable identity or coherent-shard label." }),
+    kind: Type.Union([Type.Literal("identity"), Type.Literal("coherent")], { description: "Model-authored cluster intent; deterministic code never infers this value." }),
+    candidateIds: Type.Array(Type.String({ minLength: 3, description: "Exact qualified unitId:candidateId from mem_import_candidate_inventory." }), { minItems: 1, maxItems: 100 }),
+    rationale: Type.String({ minLength: 1 }),
+  }, { additionalProperties: false }), { maxItems: 100 }),
+  reconciliationSets: Type.Optional(Type.Array(Type.Object({
+    id: Type.String({ minLength: 1, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }),
+    clusterIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 }),
+    canonicalDependencies: Type.Optional(Type.Array(canonicalDependencySchema, { maxItems: 100 })),
+    rationale: Type.String({ minLength: 1 }),
+  }, { additionalProperties: false }), { maxItems: 100 })),
+  rationale: Type.String({ minLength: 1, description: "Concise model-authored explanation of the identity-aware partition; never hidden reasoning." }),
+}, { additionalProperties: false, description: "Model-authored exact partition of the complete extraction snapshot. Deterministic code validates references and accounting but never chooses identity." });
+
 const identityPacketSchema = Type.Object({
   version: Type.Literal(1),
   kind: Type.Literal("mem-import-identity"),
   id: Type.String({ minLength: 1 }),
-  proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 }),
-  baselineRevision: Type.Integer({ minimum: 0 }),
-  baselineContentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
+  proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100, description: "Legacy unplanned packet binding. Planned assignments derive this from completed cluster proposals." })),
+  baselineRevision: Type.Optional(Type.Integer({ minimum: 0, description: "Legacy unplanned baseline. Planned assignments derive this from the cluster plan." })),
+  baselineContentHash: Type.Optional(Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()])),
   decisions: Type.Array(Type.Union([
     Type.Object({ id: Type.String({ minLength: 1 }), provisionalId: Type.String({ minLength: 1 }), disposition: Type.Literal("match"), canonicalId: Type.String({ minLength: 1 }), alternatives: Type.Optional(Type.Array(Type.Object({ canonicalId: Type.String({ minLength: 1 }), artifactHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), summary: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }), { maxItems: 25 })), evidenceRefs: Type.Optional(Type.Array(Type.Unknown())), rationale: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
     Type.Object({ id: Type.String({ minLength: 1 }), provisionalId: Type.String({ minLength: 1 }), disposition: Type.Literal("create"), canonicalId: Type.String({ minLength: 1 }), evidenceRefs: Type.Optional(Type.Array(Type.Unknown())), rationale: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
@@ -349,6 +374,42 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_import_candidate_inventory",
+    label: "Inspect Cluster Candidate Inventory",
+    description: "Page the complete extraction snapshot as flattened manifest-order unit/candidate/group/title rows. Every page carries the same snapshot hash; stale cursors fail closed.",
+    parameters: Type.Object({ ...coordinatorSchema, continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await clusterPlans.candidateInventory(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_cluster_plan_submit",
+    label: "Submit Cluster Plan",
+    description: "Persist one immutable model-authored candidate partition bound to the complete extraction snapshot and canonical baseline. Submission is idempotent only for byte-equivalent semantic content.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      snapshotHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+      baselineRevision: Type.Integer({ minimum: 0 }),
+      baselineContentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]),
+      plan: clusterPlanSchema,
+    }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await clusterPlans.submit(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_cluster_plan_status",
+    label: "Read Cluster Plan Status",
+    description: "Read bounded ledger-derived pending/proposed cluster and required/completed reconciliation-set status, including readyForMerge. Stale status cursors fail closed.",
+    parameters: Type.Object({ ...coordinatorSchema, continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await clusterPlans.status(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_import_record_dispatch",
     label: "Record Worker Dispatch",
     description: "Persist host-issued ordinary-subagent dispatch/lifecycle evidence for one assigned semantic worker. Finalization rejects effects lacking a completed exact-allowlist ordinary-subagent receipt.",
@@ -475,11 +536,11 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_import_assign_worker",
     label: "Assign Mem Import Worker",
-    description: "Issue a role-scoped semantic worker assignment. The result is the complete child bootstrap and includes the exact host-enforced tools array. For a retry, revoke the prior non-extractor assignment and use a fresh taskId; retriesTaskId and supersedesTaskIds are extractor-only fields.",
+    description: "Issue a role-scoped semantic worker assignment. Planned proposers name exactly one planHash/clusterId, planned reconcilers name one planHash/reconciliationSetId, and planned mergers name only planHash; all worker scopes are derived from the immutable artifact. A failed/revoked no-effect planned assignment may be retried with a fresh taskId and retriesTaskId.",
     parameters: Type.Union([
-      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("proposer"), unitIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 }), candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1, description: "Optional candidate subset. Omit to assign every candidate in unitIds. Local IDs are auto-qualified only when unique; use unitId:candidateId when repeated across units." }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
-      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reconciler"), proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 }), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
-      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("merger"), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
+      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("proposer"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), clusterId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), unitIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 })), candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1, description: "Legacy unplanned fixture scope only. Planned scope is derived from clusterId." }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
+      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reconciler"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), reconciliationSetId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
+      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("merger"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reviewer"), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("repairer"), checkpointIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), actionIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
     ]),
@@ -491,7 +552,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_identity_submit",
     label: "Submit Identity Reconciliation",
-    description: "Persist an immutable bounded match/create/ambiguous reconciliation proposal from a scoped reconciler assignment. It cannot mutate canonical state.",
+    description: "Persist an immutable bounded match/create/ambiguous reconciliation proposal. Planned assignments derive proposal hashes, plan/set binding, baseline, and bounded canonical dependencies from the immutable cluster plan; the worker supplies semantic decisions only.",
     parameters: Type.Object({ ...workerSchema, packet: identityPacketSchema }),
     async execute(_id, params) {
       try { return result(await identities.submitWorkerIdentity(params)); } catch (error) { return failure(error); }

@@ -33,15 +33,17 @@ Revoke and retry weak, clipped, interrupted, or missing assignments with fresh t
 
 - Call `mem_import_status`; require complete extraction coverage.
 - Call `mem_import_work_status`; require `terminalStatus: "active"` and assess `candidateCount`, `uniqueProposedCandidateCount`, `unproposedCandidateCount`, `duplicateProposalDispositionCount`, and `identityPacketCount`.
-- Page `mem_import_extraction_candidates` and `mem_import_effect_inventory` only as needed to reconstruct unproposed scope and existing immutable effects.
+- Page the flattened manifest-order `mem_import_candidate_inventory` through one stable snapshot hash. Inspect all candidate ID/group/title rows across unit boundaries before choosing identity-aware shards.
+- Call `mem_import_cluster_plan_status`. If no plan exists, submit exactly one complete model-authored partition with `mem_import_cluster_plan_submit`, using the inventory snapshot and canonical baseline controls. If a plan exists, resume it; never replace it.
+- Page `mem_import_effect_inventory` only as needed to reconstruct immutable effects and failed/revoked no-effect retries.
 
-Assign coherent proposal shards by candidate volume and artifact complexity, not unit count. Every assigned candidate receives exactly one proposal disposition. Use reconciliation only for a real cross-proposal or existing-canon identity question such as repeated entities, aliases, editions, retcons, or material ambiguity. Reconcilers read immutable proposals directly; extraction packets are supporting evidence, not substitutes for proposals. **Do not add or persist cluster planning in this phase contract.**
+Put recurring observations of a supported identity into a labeled `identity` cluster; use labeled `coherent` clusters for scene, chapter, fact, or style shards where shared identity is not asserted. Give every cluster a concise rationale. Keep uncertain identities separate and name their clusters in at most one reconciliation set. Deterministic validation checks only exact candidate partitioning, references, hashes, and bounds—it never chooses identity. Assign each proposer by exactly one `planHash` and `clusterId`; the service derives its unit/candidate scope. After those cluster proposals persist, assign each required reconciler by `planHash` and `reconciliationSetId`; the service derives the completed proposal hashes and baseline/dependency evidence. Every assigned candidate receives exactly one proposal disposition. Reconcilers read immutable proposals directly; extraction packets are supporting evidence, not substitutes for proposals.
 
 **Exit outputs**
 
 - Re-read `mem_import_work_status`; require `uniqueProposedCandidateCount === candidateCount`, `unproposedCandidateCount === 0`, and `duplicateProposalDispositionCount === 0`.
-- Assess `identityPacketCount` and bounded identity effects against the reconciliation work actually selected; zero is valid when no identity question required reconciliation.
-- Page `mem_import_effect_inventory`; require every used proposal or identity hash to have its completed exact-profile dispatch receipt.
+- Re-read `mem_import_cluster_plan_status`; require zero pending clusters, every required reconciliation set completed, and `readyForMerge: true`.
+- Page `mem_import_effect_inventory`; require every plan-bound proposal or identity hash to have its completed exact-profile dispatch receipt.
 
 A duplicate proposal disposition is a ledger error. Revoke/retry or fail explicitly; do not choose one from prose and do not begin merge.
 
@@ -49,11 +51,12 @@ A duplicate proposal disposition is a ledger error. Revoke/retry or fail explici
 
 **Startup inputs**
 
-- Call `mem_import_work_status`; require active terminal status, complete non-duplicated proposal coverage, at least one immutable proposal when candidates exist, and the expected durable identity packet count.
-- Call `mem_import_merge_state` for compact canonical controls. Use bounded proposal, identity, canonical inventory, and explicit artifact reads for content; never request or reconstruct a complete snapshot.
+- Call `mem_import_work_status`; require active terminal status and complete non-duplicated proposal coverage.
+- Independently call `mem_import_cluster_plan_status`; require the expected plan hash and `readyForMerge: true`. Merger assignment and every planned merge write revalidate this ledger gate.
+- Call `mem_import_merge_state` for compact canonical controls. Use only the proposal and identity hashes derived into the merger assignment, plus bounded proposal, identity, canonical inventory, and explicit artifact reads for content; never request or reconstruct a complete snapshot.
 - Page `mem_import_effect_inventory` to recover immutable proposal/identity hashes and completed dispatch evidence.
 
-Dispatch one merger. Prefer `accept` changes that copy proposal artifacts exactly, group compatible proposals into weighted transactions, and use explicit `upsert` only for intentional synthesis. Copy `artifactContentHash` into read sets; use `null` only after observing an absent target.
+Dispatch one merger. Prefer `accept` changes that copy proposal artifacts exactly, group compatible proposals into weighted transactions, and use explicit `upsert` only for intentional synthesis. Copy `artifactContentHash` into read sets; use `null` only after observing an absent target. A batch consuming any proposal from a reconciliation set must include that set's identity packet unless an earlier accepted transaction already consumed it.
 
 `mem_merge_commit` owns lease, fence, current-revision CAS, candidate-accounting carry-forward, and release. Never broaden `assignment.tools`, guess fences, or revoke a lease-owning worker before cleanup completes. On stale evidence, re-read only the affected canonical neighborhood.
 
@@ -91,7 +94,7 @@ Review one explicit lens at a time. Select any repair actions; a repairer receiv
 
 A failed, cancelled, missing, mismatched, broadened, or inaccurately recorded receipt invalidates the dispatch; retry fresh or stop. Treat a terminal host result as final even if its prose claims otherwise.
 
-For a non-extractor retry, revoke the old assignment and issue a fresh task ID without `retriesTaskId` or `supersedesTaskIds`; those lineage fields belong only to extractor assignment calls.
+For an unplanned non-extractor retry, revoke the old assignment and issue a fresh task ID. For a plan-bound proposer or reconciler, a fresh retry may name `retriesTaskId` only after the prior assignment is revoked, expired, or has a recorded failed/cancelled dispatch and no semantic effect. An effective cluster/set cannot be assigned again. `supersedesTaskIds` remains extractor-only.
 
 ## Scale and recovery
 

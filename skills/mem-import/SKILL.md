@@ -33,8 +33,8 @@ Read the selected facility's adapter reference only for invocation details. A re
 Read [coordinator decisions](references/workflow.md), then perform one phase:
 
 1. **Extraction:** assess run/manifest status, normalize if needed, dispatch [extractors](references/extractor-role.md), and exit only after the extraction ledger is complete.
-2. **Proposal/reconciliation:** assess completed extraction and proposal coverage, dispatch [proposers](references/proposal-role.md), and use [reconcilers](references/reconciler-role.md) only for actual cross-proposal or existing-canon identity questions. Exit with complete, non-duplicated proposal disposition coverage.
-3. **Merge:** assess immutable proposals and identity packets, dispatch one [merger](references/merger-role.md), and exit only after proposal consumption and canonical candidate accounting are complete with no blocking conflict.
+2. **Proposal/reconciliation:** assess the complete flattened candidate inventory, persist one model-authored identity-aware cluster plan, dispatch artifact-scoped [proposers](references/proposal-role.md) and required [reconcilers](references/reconciler-role.md), and exit only when plan status is ready for merge with complete, non-duplicated proposal disposition coverage.
+3. **Merge:** independently require ready cluster-plan status, dispatch one plan-scoped [merger](references/merger-role.md), and exit only after proposal consumption and canonical candidate accounting are complete with no blocking conflict.
 4. **Review/finalization:** assess current canonical controls, dispatch a [reviewer](references/reviewer-role.md), select any scoped [repair](references/repairer-role.md), require a current post-repair review, run checks, and finalize.
 
 After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet.
@@ -47,7 +47,9 @@ Success requires all of the following:
 - every intended unit has an accepted extraction packet;
 - every used semantic effect has a completed assignment-bound receipt matching the worker's exact requested tool profile and the strongest lifecycle/tool evidence the facility exposes;
 - no unassigned or unrestricted helper child participated in the run;
+- one immutable cluster plan exactly partitions the complete extraction snapshot; every cluster has one effective proposal and every required reconciliation set has one identity packet;
 - every extraction candidate has exactly one proposal-stage disposition and a canonical disposition;
+- planned merge assignment and writes independently passed ledger-derived plan readiness and hash-scope checks;
 - the canonical revision/hash and transaction history reconstruct successfully;
 - no blocking identity conflict remains;
 - a current review covers the final canonical revision;

@@ -19,6 +19,7 @@ import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.j
 import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
 import { MemImportService, type AssignmentRole, type MemImportAssignmentRecord, type MemImportCapability, type MemImportTerminalStatus } from "./service.js";
 import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
+import { MemImportClusterPlanService } from "./cluster-plan-service.js";
 
 const LEASE_HEARTBEAT_MS = 60_000;
 const LEASE_EXPIRY_MS = 5 * 60_000;
@@ -241,9 +242,11 @@ function leaseOwnerEquals(left: MergeActor, right: MergeActor): boolean {
 
 export class MemImportU2Service {
   private readonly identities: MemImportIdentityService;
+  private readonly plans: MemImportClusterPlanService;
 
   constructor(private readonly base = new MemImportService(), private readonly now: () => Date = () => new Date()) {
     this.identities = new MemImportIdentityService(base, now);
+    this.plans = new MemImportClusterPlanService(base, now);
   }
 
   async mergeState(options: CoordinatorAuthority): Promise<MergeState> {
@@ -458,6 +461,12 @@ export class MemImportU2Service {
   ): Promise<MergeState> {
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
+    if (assignment.allowedProposalHashes?.length && options.batch.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge batch proposal hash is outside this assignment");
+    if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && options.batch.identityProposalHashes?.some((identityHash) => !(assignment.allowedIdentityProposalHashes ?? []).includes(identityHash))) throw new Error("Merge batch identity proposal hash is outside this assignment");
+    if (assignment.planHash) {
+      await this.plans.requireReady(assignment.outputRoot, assignment.runId, assignment.planHash);
+      await this.plans.assertMergeIdentityCoverage(assignment.outputRoot, assignment.runId, assignment.planHash, options.batch.proposalHashes, options.batch.identityProposalHashes);
+    }
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch, maxOperations);
     const before = await this.readMergeState(canonicalRoot);
     this.assertReadSet(before.stage, batch.readSet);
@@ -505,6 +514,11 @@ export class MemImportU2Service {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
     if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > MAX_MERGE_PROPOSALS) throw new Error(`Merge commit proposalHashes must contain one to ${MAX_MERGE_PROPOSALS} hashes`);
     if (assignment.allowedProposalHashes?.length && options.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge commit proposal hash is outside this merger assignment");
+    if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && options.identityProposalHashes?.some((identityHash) => !(assignment.allowedIdentityProposalHashes ?? []).includes(identityHash))) throw new Error("Merge commit identity proposal hash is outside this merger assignment");
+    if (assignment.planHash) {
+      await this.plans.requireReady(assignment.outputRoot, assignment.runId, assignment.planHash);
+      await this.plans.assertMergeIdentityCoverage(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes, options.identityProposalHashes);
+    }
     if (!Array.isArray(options.changes) || options.changes.length === 0 || options.changes.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge commit changes must contain one to ${MAX_TOTAL_MERGE_CHANGES} entries`);
     const acceptCount = options.changes.filter((change) => change.kind === "accept").length;
     const synthesizedCount = options.changes.length - acceptCount;
@@ -966,7 +980,12 @@ export class MemImportU2Service {
     const existing = new Set((stage.artifacts ?? []).map((artifact) => artifact.id));
     const decisions = new Map<string, IdentityDecision>();
     for (const packet of packets) {
-      if (packet.baselineRevision !== (stage.revision ?? 0) || packet.baselineContentHash !== (stage.contentHash ?? null)) {
+      if (packet.canonicalDependencies !== undefined) {
+        const canonicalArtifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, hash(artifact)]));
+        for (const dependency of packet.canonicalDependencies) {
+          if ((canonicalArtifacts.get(dependency.artifactId) ?? null) !== dependency.contentHash) throw new Error(`Identity proposal ${packet.contentHash} has a stale canonical dependency for ${dependency.artifactId}`);
+        }
+      } else if (packet.baselineRevision !== (stage.revision ?? 0) || packet.baselineContentHash !== (stage.contentHash ?? null)) {
         throw new Error(`Identity proposal ${packet.contentHash} has a stale canonical baseline`);
       }
       for (const decision of packet.decisions) {

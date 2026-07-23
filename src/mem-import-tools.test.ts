@@ -10,6 +10,7 @@ import { MemImportU2Service, toMergeMutationReceipt } from "./mem-import/u2-serv
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
 import { MemImportIdentityService, canonicalHash } from "./mem-import/identity-service.js";
+import { MemImportClusterPlanService } from "./mem-import/cluster-plan-service.js";
 import { buildCoveragePlan } from "./world-import/helper-tools.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
@@ -1522,4 +1523,131 @@ test("a child process independently rejects a forged cross-process extractor gra
   });
   assert.equal(forged.status, 1);
   assert.match(forged.stderr, /Invalid assignment grant/);
+});
+
+test("identity-aware cluster plans bind cross-unit work, retries, reconciliation, and merge readiness", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const plans = new MemImportClusterPlanService(service);
+  const proposals = new MemImportProposalService(service);
+  const identities = new MemImportIdentityService(service);
+  const u2 = new MemImportU2Service(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "plan-extract", unitIds: units.map((unit) => unit.unitId) });
+  for (const unit of units) {
+    const stage = validStage(unit);
+    stage.candidates![0]!.title = "Ada";
+    await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage });
+  }
+
+  // Seed an existing canonical identity so the plan can declare a bounded dependency.
+  const canonicalAda = {
+    id: "ada", group: "people" as const, title: "Ada", description: "Ada is already canonical.",
+    sections: [{ heading: "Summary", body: "Ada guards the glass tower." }],
+    provenance: [{ sourceId: units[0]!.sourceId, unitId: units[0]!.unitId, startAnchor: units[0]!.anchors[0]!, endAnchor: units[0]!.anchors[0]! }],
+  };
+  const seedLease = await u2.acquireCoordinatorLease({ ...run, taskId: "plan-seed" });
+  const seeded = await u2.writeCoordinatorMerge({ ...run, taskId: "plan-seed", fence: seedLease.fence, expectedRevision: 0, expectedContentHash: null, stage: { version: 1, kind: "merge", artifacts: [canonicalAda], candidateDispositions: [], diagnostics: [] }, rationale: "Seed an existing Ada identity for planned reconciliation." });
+  await u2.releaseCoordinatorLease({ ...run, taskId: "plan-seed", fence: seedLease.fence });
+
+  const firstInventory = await plans.candidateInventory({ ...run, maxItems: 1 });
+  assert.equal(firstInventory.totalCandidates, 2);
+  assert.equal(firstInventory.candidates.length, 1);
+  assert.equal(firstInventory.truncated, true);
+  assert.ok(firstInventory.continuationCursor);
+  const secondInventory = await plans.candidateInventory({ ...run, maxItems: 1, continuationCursor: firstInventory.continuationCursor });
+  assert.deepEqual([...firstInventory.candidates, ...secondInventory.candidates].map((item) => `${item.unitId}:${item.candidateId}`), units.map((unit) => `${unit.unitId}:local-candidate`));
+
+  const changed = validStage(units[1]!);
+  changed.candidates![0]!.title = "Ada, recurring guard";
+  await service.submitExtraction({ ...extractor, unitId: units[1]!.unitId, stage: changed });
+  await assert.rejects(plans.candidateInventory({ ...run, maxItems: 1, continuationCursor: firstInventory.continuationCursor }), /stale or invalid/);
+  const inventory = await plans.candidateInventory({ ...run, maxItems: 100 });
+  const candidateIds = inventory.candidates.map((item) => `${item.unitId}:${item.candidateId}`);
+  const dependencyHash = canonicalHash(seeded.stage.artifacts![0]);
+  const planBody = {
+    id: "ada-cross-unit-plan",
+    clusters: [{ id: "ada-recurring", label: "Ada", kind: "identity" as const, candidateIds, rationale: "Both source units describe the recurring Ada identity." }],
+    reconciliationSets: [{ id: "ada-existing", clusterIds: ["ada-recurring"], canonicalDependencies: [{ artifactId: "ada", contentHash: dependencyHash }], rationale: "Compare the recurring observations with canonical Ada." }],
+    rationale: "Keep the central recurring entity together before canonical merge.",
+  };
+  await assert.rejects(plans.submit({ ...run, snapshotHash: firstInventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: planBody }), /snapshot is stale/);
+  await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: 0, baselineContentHash: null, plan: planBody }), /canonical baseline is stale/);
+  await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: { ...planBody, clusters: [{ id: "missing", label: "Incomplete Ada", kind: "coherent", candidateIds: [candidateIds[0]!], rationale: "Incomplete." }] } }), /missing/);
+  await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: { ...planBody, clusters: [{ id: "duplicate", label: "Duplicate Ada", kind: "identity", candidateIds: [candidateIds[0]!, candidateIds[0]!], rationale: "This intentionally duplicates one candidate." }] } }), /appears more than once/);
+  const submittedPlan = await plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: planBody });
+  assert.equal(submittedPlan.idempotent, false);
+  await assert.rejects(service.submitExtraction({ ...extractor, unitId: units[0]!.unitId, stage: validStage(units[0]!) }), /immutable after a cluster plan/);
+  assert.equal((await plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: planBody })).idempotent, true);
+  await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: { ...planBody, rationale: "A different immutable plan." } }), /already exists/);
+
+  await assert.rejects(service.assignWorker({ ...run, taskId: "early-reconcile", role: "reconciler", planHash: submittedPlan.planHash, reconciliationSetId: "ada-existing" }), /not assignable/);
+  const failedProposer = await service.assignWorker({ ...run, taskId: "plan-proposer-failed", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" });
+  assert.deepEqual(failedProposer.candidateIds, candidateIds);
+  assert.deepEqual(failedProposer.unitIds, units.map((unit) => unit.unitId));
+  await assert.rejects(service.assignWorker({ ...run, taskId: "plan-proposer-overlap", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" }), /live assignment/);
+  await service.recordWorkerDispatch({ ...run, taskId: failedProposer.taskId, facility: "ordinary-subagent", hostTaskId: "failed-plan-proposer", requestedTools: failedProposer.tools, observedTools: failedProposer.tools, outcome: "failed" });
+  await assert.rejects(service.assignWorker({ ...run, taskId: "plan-proposer-unlinked-retry", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" }), /requires retriesTaskId/);
+  const proposer = await service.assignWorker({ ...run, taskId: "plan-proposer-retry", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring", retriesTaskId: failedProposer.taskId });
+  const proposedAda = {
+    id: "ada", group: "people" as const, title: "Ada", description: "Ada recurs across both source units.",
+    sections: [{ heading: "Summary", body: "Ada is the recurring guard observed across the corpus." }],
+    provenance: units.map((unit) => ({ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! })),
+  };
+  const proposal = await proposals.submitWorkerProposalBody({
+    ...proposer,
+    artifacts: [proposedAda],
+    candidateDispositions: units.map((unit) => ({ unitId: unit.unitId, candidateId: "local-candidate", disposition: "merged", artifactId: "ada" })),
+    rationale: "Synthesize the model-owned cross-unit Ada identity cluster.",
+  });
+  const storedProposal = JSON.parse(await readFile(join(output, proposal.path), "utf-8")) as { planHash: string; clusterId: string };
+  assert.equal(storedProposal.planHash, submittedPlan.planHash);
+  assert.equal(storedProposal.clusterId, "ada-recurring");
+  await assert.rejects(service.assignWorker({ ...run, taskId: "plan-proposer-second", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" }), /effective assignment/);
+
+  const beforeIdentity = await plans.status({ ...run, maxItems: 1 });
+  assert.equal(beforeIdentity.proposedClusterCount, 1);
+  assert.equal(beforeIdentity.completedReconciliationSetCount, 0);
+  assert.equal(beforeIdentity.readyForMerge, false);
+  assert.equal(beforeIdentity.returnedItems, 1);
+  assert.equal(beforeIdentity.truncated, true);
+  assert.ok(serializedModelToolResultSize(beforeIdentity) < 10_000);
+  await assert.rejects(service.assignWorker({ ...run, taskId: "plan-merger-too-early", role: "merger", planHash: submittedPlan.planHash }), /not ready for merge/);
+
+  const reconciler = await service.assignWorker({ ...run, taskId: "plan-reconciler", role: "reconciler", planHash: submittedPlan.planHash, reconciliationSetId: "ada-existing" });
+  assert.deepEqual(reconciler.proposalHashes, [proposal.contentHash]);
+  const identity = await identities.submitWorkerIdentity({ ...reconciler, packet: {
+    version: 1, kind: "mem-import-identity", id: "ada-planned-match",
+    decisions: [{ id: "ada-match", provisionalId: "ada", disposition: "match", canonicalId: "ada", rationale: "The cross-unit evidence supports canonical Ada." }],
+    rationale: "Reconcile the planned recurring cluster with existing canon.",
+  } });
+  const storedIdentity = JSON.parse(await readFile(join(output, identity.path), "utf-8")) as { planHash: string; reconciliationSetId: string; proposalHashes: string[]; baselineRevision: number; canonicalDependencies: unknown[] };
+  assert.equal(storedIdentity.planHash, submittedPlan.planHash);
+  assert.equal(storedIdentity.reconciliationSetId, "ada-existing");
+  assert.deepEqual(storedIdentity.proposalHashes, [proposal.contentHash]);
+  assert.equal(storedIdentity.baselineRevision, seeded.revision);
+  assert.equal(storedIdentity.canonicalDependencies.length, 1);
+
+  const ready = await new MemImportClusterPlanService(new MemImportService()).status({ ...run, maxItems: 1 });
+  assert.equal(ready.readyForMerge, true);
+  assert.equal(ready.completedReconciliationSetCount, 1);
+  assert.deepEqual(ready.entries[0], { kind: "cluster", clusterId: "ada-recurring", label: "Ada", clusterKind: "identity", candidateCount: 2, status: "proposed", proposalHash: proposal.contentHash });
+  const readyNext = await new MemImportClusterPlanService(new MemImportService()).status({ ...run, maxItems: 1, continuationCursor: ready.continuationCursor });
+  assert.equal(readyNext.entries[0]!.kind, "reconciliation-set");
+
+  // A canonical revision touching only another artifact does not stale the identity packet's explicit dependency.
+  const unrelated = { ...canonicalAda, id: "bea", title: "Bea", description: "Bea is unrelated to Ada." };
+  const unrelatedLease = await u2.acquireCoordinatorLease({ ...run, taskId: "plan-unrelated" });
+  const unrelatedRevision = await u2.writeCoordinatorMerge({ ...run, taskId: "plan-unrelated", fence: unrelatedLease.fence, expectedRevision: seeded.revision, expectedContentHash: seeded.contentHash, stage: { version: 1, kind: "merge", artifacts: [canonicalAda, unrelated], candidateDispositions: [], diagnostics: [] }, rationale: "Add an unrelated canonical artifact without changing the declared Ada dependency." });
+  await u2.releaseCoordinatorLease({ ...run, taskId: "plan-unrelated", fence: unrelatedLease.fence });
+
+  const merger = await service.assignWorker({ ...run, taskId: "plan-merger", role: "merger", planHash: submittedPlan.planHash });
+  assert.deepEqual(merger.proposalHashes, [proposal.contentHash]);
+  assert.deepEqual(merger.identityProposalHashes, [identity.contentHash]);
+  await assert.rejects(u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: undefined, readSet: [{ artifactId: "ada", contentHash: dependencyHash }], changes: [{ kind: "accept", proposalHash: proposal.contentHash, artifactId: "ada" }], rationale: "Reject planned merge work that omits its required identity packet." }), /requires identity packet/);
+  await assert.rejects(u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: ["f".repeat(64)], readSet: [{ artifactId: "ada", contentHash: dependencyHash }], changes: [{ kind: "accept", proposalHash: proposal.contentHash, artifactId: "ada" }], rationale: "Reject an identity packet outside the planned merger assignment." }), /outside this merger assignment/);
+  const merged = await u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }], changes: [{ kind: "accept", proposalHash: proposal.contentHash, artifactId: "ada" }], rationale: "Accept the ready identity-aware plan after an unrelated canonical revision." });
+  assert.equal(merged.revision, unrelatedRevision.revision + 1);
+
+  await u2.fail({ ...run, reasonCode: "terminal-plan-test", message: "Verify the cluster-plan mutation guard after completing the focused fixture." });
+  await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: planBody }), /run is terminal/);
 });

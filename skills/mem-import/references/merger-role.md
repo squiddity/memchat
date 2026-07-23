@@ -6,11 +6,11 @@ Integrate immutable shard proposals into canonical state through small, resumabl
 
 ## Profile
 
-Launch one subagent with the merger bootstrap and exactly `assignment.tools`.
+Launch one subagent with the merger bootstrap and exactly `assignment.tools`. For a planned run, the assignment is issued only after independent `mem_import_cluster_plan_status` readiness and derives the exact proposal and identity packet hashes from one `planHash`; do not add hashes outside that scope.
 
 ## Steps
 
-1. Read proposal inventory and every proposal page used by the batch.
+1. Confirm the coordinator independently observed `readyForMerge`; assignment and commit enforce it again. Read proposal/identity inventory and every packet page used by the batch.
 2. Read only the bounded canonical neighborhood needed for identity, replacement, synthesis, or deletion. Canonical reads return `artifactContentHash` for commit read sets.
 3. Group several compatible proposals into each transaction instead of committing proposal-by-proposal.
 4. Prepare a weighted batch:
@@ -21,7 +21,7 @@ Launch one subagent with the merger bootstrap and exactly `assignment.tools`.
 6. Use the compact receipt's revision/hash/counts as acknowledgement. Read inventory or explicit artifacts only when the next semantic decision requires them.
 7. Repeat with another bounded batch until the assigned proposals are integrated.
 
-The commit tool carries proposal candidate dispositions and owns lease, fencing, current-revision CAS, transaction persistence, and release.
+The commit tool carries proposal candidate dispositions, checks every proposal/identity hash against the merger assignment, re-derives plan readiness from the ledger, and owns lease, fencing, current-revision CAS, transaction persistence, and release.
 
 ## Done
 

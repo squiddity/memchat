@@ -20,11 +20,11 @@ Extractor reads are assignment-scoped and cursor-paginated. Pass a returned cont
 
 Extraction submission validates assignment identity, unit/source identity, candidate IDs, and local anchors. The service derives exact Unicode quote text from each anchor range and ignores model transcription. A successful submit writes one immutable authorized packet for that unit attempt.
 
-The coordinator can page exact candidate IDs, groups, and titles from one persisted packet with `mem_import_extraction_candidates`. Use this compact inventory to size proposer assignments by candidate volume and construct qualified `unitId:candidateId` subsets without loading semantic payloads.
+After extraction completes, `mem_import_candidate_inventory` flattens every packet into manifest-order `(unitId, candidateId, group, title)` pages under one extraction snapshot hash and canonical baseline. Its cursor fails stale if any packet changes. The proposal/reconciliation coordinator must inspect the complete flattened inventory, then call `mem_import_cluster_plan_submit` once with a model-authored exact candidate partition and any reconciliation sets. Deterministic code validates references, complete accounting, bounds, hashes, and immutable idempotence only; it does not infer identity. `mem_import_cluster_plan_status` pages bounded ledger-derived pending/proposed clusters and required/completed reconciliation sets and computes `readyForMerge`.
 
 ## Proposals
 
-The proposer submit tool accepts typed semantic artifacts, one disposition for every assigned candidate, and a rationale. It derives packet version/kind/ID, current extraction packet hashes, candidate scope, and exact quotes. Missing or duplicate candidate accounting fails before persistence.
+A planned proposer assignment names one plan hash and cluster ID; unit/candidate scope is derived from the immutable artifact, concurrent overlap is rejected, and only a revoked/failed no-effect attempt can receive a fresh retry. The proposer submit tool accepts typed semantic artifacts, one disposition for every assigned candidate, and a rationale. It derives packet version/kind/ID, plan/cluster binding, current extraction packet hashes, candidate scope, and exact quotes. Missing or duplicate candidate accounting fails before persistence.
 
 Proposal inventory/read tools expose immutable proposal hashes and bounded artifact pages to reconcilers, mergers, and repairers. Downstream workers read proposals directly rather than reconstructing them from extraction packets.
 
@@ -44,7 +44,7 @@ Complete-snapshot mutation is not a production model tool for either workers or 
 
 ## Identity, review, and repair
 
-Identity packets preserve model-owned match/create/ambiguous judgments and explicit blocking conflicts. Review packets bind findings and artifact observations to a canonical revision. Repair assignments bind mutations to selected checkpoint/action IDs.
+A planned reconciler assignment names one plan hash and reconciliation-set ID; completed proposal hashes are derived from cluster effects and persisted with the plan/set binding. Identity packets preserve model-owned match/create/ambiguous judgments and explicit blocking conflicts. When a plan declares bounded canonical artifact dependencies, an identity packet remains usable across unrelated canonical revisions while those exact dependency hashes are unchanged; sets without explicit dependencies intentionally retain strict baseline behavior. Planned merger assignment and write both require ledger-derived plan readiness and scope proposal/identity hashes to that assignment. Review packets bind findings and artifact observations to a canonical revision. Repair assignments bind mutations to selected checkpoint/action IDs.
 
 These tools validate scope, references, immutability, and concurrency. They do not decide identity, canon, omission importance, retcons, or semantic quality.
 

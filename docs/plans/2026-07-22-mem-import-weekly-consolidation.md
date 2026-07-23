@@ -47,15 +47,17 @@ Completed:
 - conformance validation for call count, arguments, model/thinking, tool profile, durable effects, and sanitized receipts;
 - terminal-state guards, no-op rejection, weighted limits, and bounded effect inventory;
 - host-attested `pi-herdr-subagents` launch profiles, exact active/denied telemetry, and profile-preserving resume;
-- active guidance separating brief facility acceptance, optional maintainer conformance, and corpus execution.
+- active guidance separating brief facility acceptance, optional maintainer conformance, and corpus execution;
+- artifact-led phase-bounded coordination across four fresh coordinator contexts with typed durable startup/exit gates;
+- immutable extraction-snapshot-bound cluster plans with model-owned cross-unit identity/coherent shards, plan-derived worker scopes, reconciliation dependencies, and merge-readiness enforcement.
 
 Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not acceptance evidence. See the [superseded hardening handoff](2026-07-22-mem-import-subagent-hardening-handoff.md).
 
 ## Remaining roadmap
 
 1. Let real imports accumulate small sanitized facility recipes; version-control only broadly useful examples.
-2. Implement efficiency-plan U4–U7 for real imports: phase-bounded coordinators, identity-aware planning, demand-driven reads, and usage telemetry.
-3. Run Alice evaluation only when explicitly requested after those runtime changes.
+2. Implement efficiency-plan U6–U7 for real imports: demand-driven reads and usage telemetry. U4 phase-bounded coordination and U5 identity-aware planning are complete.
+3. Run a tiny artifact-led import to validate the new phase and cluster-plan contracts, then run Alice evaluation only when explicitly requested after U6–U7.
 4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
 
 ## Documentation authority map
