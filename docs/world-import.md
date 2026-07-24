@@ -381,6 +381,6 @@ Use `--debug --show-tool-updates` for exploratory runs or retries after a no-out
 ### Related
 
 - [`docs/architecture.md`](./architecture.md) — project architecture
-- [`skills/world-import/SKILL.md`](../skills/world-import/SKILL.md) — the skill the CLI loads
-- [`skills/world-import/references/contracts.md`](../skills/world-import/references/contracts.md) — stage envelope contracts
-- [`skills/world-import/references/helper-tools.md`](../skills/world-import/references/helper-tools.md) — helper tool reference
+- [`legacy/skills/world-import/SKILL.md`](../legacy/skills/world-import/SKILL.md) — the legacy skill the CLI loads
+- [`legacy/skills/world-import/references/contracts.md`](../legacy/skills/world-import/references/contracts.md) — stage envelope contracts
+- [`legacy/skills/world-import/references/helper-tools.md`](../legacy/skills/world-import/references/helper-tools.md) — helper tool reference

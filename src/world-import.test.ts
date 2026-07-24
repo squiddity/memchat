@@ -22,10 +22,10 @@ function helper(args: string[], input?: string): { status: number | null; stdout
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-test("local world-import skill is package-loadable independent of runtime cwd", () => {
+test("legacy world-import skill is loadable independent of runtime cwd", () => {
   const skill = worldImportSkill(defaultPackageRoot());
   assert.equal(skill.name, "world-import");
-  assert.equal(resolve(skill.filePath), resolve("skills/world-import/SKILL.md"));
+  assert.equal(resolve(skill.filePath), resolve("legacy/skills/world-import/SKILL.md"));
 });
 
 test("world-import skill keeps process supervision outside the runner model", async () => {

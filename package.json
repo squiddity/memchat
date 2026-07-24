@@ -39,7 +39,7 @@
       "./extensions/mem-import-tools.ts"
     ],
     "skills": [
-      "./skills"
+      "./skills/mem-import"
     ]
   },
   "memchat": {

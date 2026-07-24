@@ -137,11 +137,11 @@ export async function packageAuditMetadata(packageRoot: string): Promise<{ packa
   try {
     const pkg = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf-8")) as { version?: unknown };
     const skillFiles = [
-      join(packageRoot, "skills", "world-import", "SKILL.md"),
-      join(packageRoot, "skills", "world-import", "references", "workflow.md"),
-      join(packageRoot, "skills", "world-import", "references", "contracts.md"),
-      join(packageRoot, "skills", "world-import", "references", "artifact-format.md"),
-      join(packageRoot, "skills", "world-import", "references", "helper-tools.md"),
+      join(packageRoot, "legacy", "skills", "world-import", "SKILL.md"),
+      join(packageRoot, "legacy", "skills", "world-import", "references", "workflow.md"),
+      join(packageRoot, "legacy", "skills", "world-import", "references", "contracts.md"),
+      join(packageRoot, "legacy", "skills", "world-import", "references", "artifact-format.md"),
+      join(packageRoot, "legacy", "skills", "world-import", "references", "helper-tools.md"),
     ];
     const contents = await Promise.all(skillFiles.map((path) => readFile(path, "utf-8")));
     return { ...(typeof pkg.version === "string" ? { packageVersion: pkg.version } : {}), skillHash: sha256(contents.join("\n\u0000\n")) };

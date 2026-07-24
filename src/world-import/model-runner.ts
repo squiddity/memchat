@@ -125,7 +125,7 @@ export function defaultPackageRoot(): string {
 }
 
 export function worldImportSkill(packageRoot = defaultPackageRoot()): Skill {
-  const baseDir = resolve(packageRoot, "skills", "world-import");
+  const baseDir = resolve(packageRoot, "legacy", "skills", "world-import");
   if (!existsSync(resolve(baseDir, "SKILL.md"))) throw new Error(`world-import skill not found at ${resolve(baseDir, "SKILL.md")}`);
   const result = loadSkillsFromDir({ dir: baseDir, source: "memchat" });
   if (result.diagnostics.length > 0) {
