@@ -1,10 +1,10 @@
 # Mem-import assignment-scoped tool closures
 
 **Date:** 2026-07-23  
-**Status:** deferred pending profile-launch stabilization and tiny-import evidence  
+**Status:** resumed after profile-launch stabilization and successful tiny-import acceptance
 **Risk:** critical authorization change; comprehensive deterministic and cross-process tests required
 
-> **Deferral (2026-07-23):** Execute [Mem-import profile launch stabilization](2026-07-23-mem-import-profile-launch-stabilization-plan.md) first. The observed failures were dominated by ambiguous profile selection, fail-open unknown profile keys, late child skill delivery, and premature coordinator completion. After its focused acceptance, explicitly choose whether to resume this cwd-closure design or author a smaller grant-hardening plan. Do not begin the implementation phases below merely because this document remains implementation-ready in detail.
+> **Resumption decision (2026-07-24):** [Mem-import profile launch stabilization](2026-07-23-mem-import-profile-launch-stabilization-plan.md) passed focused acceptance, including exact named worker launches, exact dispatch/effect evidence, repaired recursive descendant tracking, and one fresh four-phase tiny import finalized without ordinary-path resume. Reliability is now sufficient to resume this design. The acceptance did not bind model-visible grants to a host session/cwd, prevent copied-grant use by a correctly named duplicate process, or make dispatch evidence the authorization source. Proceed with the implementation phases below; keep the executors generic and do not conflate the successful tiny import with closure-equivalent authorization.
 
 ## Decision
 
@@ -31,12 +31,14 @@ A generic launcher may still create an irrelevant process. That process has no i
 
 ## Why this is the next step
 
-The named-profile experiment established both sides of the boundary:
+The named-profile experiment and focused acceptance established both sides of the boundary:
 
 - correctly selected profiles enforce their static tool sets;
-- an exact `mem-import-extractor` completed a real one-unit assignment with exact dispatch and durable effect evidence;
-- generic launching can still create an unassigned child, including a correctly selected exact proposer profile;
-- the current worker grant prevents that unassigned child from using mem-import state, but the model must repeatedly carry raw authority fields in every tool call.
+- exact extractor, proposer, merger, reviewer, and repairer profiles completed a fresh tiny import with exact dispatch and durable effect evidence;
+- all four fresh coordinators exited cleanly after the generic descendant registry separated parent-owned registration from child-owned tracking;
+- generic launching can still create an unassigned or duplicate child, including a correctly selected exact profile;
+- the current worker grant prevents an unassigned child without authority from using mem-import state, but any process holding a copied live bootstrap can repeatedly present its raw authority fields;
+- dispatch/effect receipts establish readiness and audit correlation, not session/cwd-bound authorization.
 
 The closure design retains tool-level authorization while removing authority-bearing arguments from model-visible schemas. It also keeps the subagent implementations generic, like the legacy host-driven world-import runner.
 

@@ -1,9 +1,9 @@
 # Mem-import profile launch stabilization
 
 **Date:** 2026-07-23  
-**Status:** stabilization tranche implemented; focused acceptance and cleanup pending
+**Status:** stabilization and focused tiny-import acceptance complete; authorization follow-up selected
 **Scope:** generic `pi-herdr-subagents` launch reliability plus mem-import role prompt/profile stabilization
-**Closure decision:** defer `2026-07-23-mem-import-assignment-scoped-tool-closures-plan.md` until this plan's acceptance evidence is reviewed
+**Closure decision:** resume `2026-07-23-mem-import-assignment-scoped-tool-closures-plan.md`; reliability passed, but grant/cwd/session binding risks remain
 
 ## Decision
 
@@ -39,7 +39,9 @@ Implemented in separate repository commits:
 - `memchat` now owns the role-to-profile map, returns exact assignment/brief profile keys, generates concise role/phase bodies, and removes child `skills: mem-import` invocation.
 - Planned proposal and reconciliation effects require completed exact subagent dispatch evidence before contributing to merge readiness.
 
-Remaining acceptance work includes focused negative launcher tests, an extraction-only live test, the tiny four-phase import, and the post-acceptance authorization decision. The stabilization changes also revealed cleanup work in the generic executor repository: samples and tests still contain `mem-import`-specific names, prompts, or fixtures and should be made generic before the repository is treated as reusable.
+Focused acceptance completed on 2026-07-24. The generic executor fixtures were made application-neutral; focused launcher/lifecycle tests passed; one exact-profile extraction completed with exact dispatch/effect evidence; and a fresh four-phase tiny Glass Tower import finalized without ordinary-path resume. The final run produced 8 candidates, 8 proposals, 8 canonical artifacts/dispositions, one scoped repair, a current revision-2 review, zero blocking conflicts, and deterministic checks with zero errors (nine non-blocking warnings).
+
+The first post-guard extraction exposed one generic lifecycle defect: the host registered a child in the same descendant registry path injected into that child, so `subagent_done` saw the child itself as an active descendant. `pi-herdr-subagents` now separates the parent-owned registration registry from a stable child-owned registry, isolates sibling registries, and reuses the child registry across resume. Unit tests, lint, and a fresh-process recursive lifecycle integration passed after the fix. A completely fresh tiny import then completed all four coordinators cleanly.
 
 Observed behavior:
 
@@ -437,15 +439,19 @@ Stop after the tiny import. Do not run Alice.
 
 ## Part D — Post-acceptance authorization decision
 
-Write a short evidence note after C4. It must distinguish reliability from authorization and answer:
+### Evidence note (2026-07-24)
 
-1. Can a correctly named but duplicate process still reuse a visible grant?
-2. Can a correct profile from an unrelated cwd use copied assignment authority?
-3. Can conflicting singleton effects overwrite or race?
-4. Are raw worker authority fields still considered an unacceptable model-visible boundary?
-5. Do dispatch and effect records establish enough binding for the project's threat model?
+Reliability acceptance passed, but it did not establish closure-equivalent authorization:
 
-Then choose one follow-up explicitly:
+1. **Visible-grant replay remains possible.** A correctly named duplicate process that obtains a live assignment bootstrap can reuse its model-visible grant. Named-profile selection and dispatch evidence do not make the authority process-unique.
+2. **Cwd/session binding remains absent.** A correct profile launched from an unrelated cwd can use copied assignment authority because worker tools authorize explicit `outputRoot`, `runId`, `taskId`, and `grant` fields rather than a canonical assignment workspace.
+3. **Ledger controls limit damage but do not remove duplicate races.** Revocation, overlap checks, immutable effects, locks, fences, and CAS reject many stale/conflicting writes, but a stable assignment-bound singleton effect/process identity is not yet the authorization source.
+4. **Raw model-visible worker authority remains unacceptable for the intended boundary.** The successful tiny import proves operational viability, not that repeatedly exposing grants in worker calls is the desired long-term design.
+5. **Dispatch/effect records are necessary audit and readiness evidence, not sufficient binding.** They prove an exact-profile host completion correlated with a durable effect; they do not prove every authority-bearing tool call came from that attested host session/cwd.
+
+**Selected follow-up: resume the deferred assignment-scoped tool-closures plan.** Keep the executors generic; bind mem-import worker tools through canonical assignment cwd/workspaces, remove raw worker authority from model-visible schemas, retain exact profile/tool telemetry, and add stable binding-aware effect/finalization checks. Do not treat the successful tiny import as replay or duplicate-process containment evidence.
+
+The alternatives below remain recorded for context:
 
 ### Resume the deferred closure plan
 
@@ -489,7 +495,7 @@ Do not create cross-repository commits or vendor one repository into the other.
 ## Done criteria
 
 - [x] Supplied unknown agent keys fail before launch.
-- [ ] Intentional bare launches still work when no parent child policy forbids them.
+- [x] Intentional bare launches still work when no parent child policy forbids them.
 - [x] Parent profile child allowlists are host-resolved, attested, resume-preserved, and enforced.
 - [x] Bundled `reviewer` cannot be launched by a mem-import finalize coordinator.
 - [x] `subagent_done` cannot ordinarily abandon tracked descendants.
@@ -500,12 +506,12 @@ Do not create cross-repository commits or vendor one repository into the other.
 - [x] Workers receive only role-specific static guidance plus bounded assignment context.
 - [x] Proposal/reconciliation/merge readiness requires completed exact dispatch evidence.
 - [x] Generic and mem-import deterministic tests pass.
-- [ ] Generic `pi-herdr-subagents` samples, tests, prompts, and fixtures contain no mem-import-specific application references.
-- [ ] Focused Herdr profile/lifecycle integration tests pass.
-- [ ] One exact-profile extraction-only run passes.
-- [ ] One tiny four-phase import reaches durable finalized status without ordinary-path resume.
-- [ ] No Alice or book-sized import runs.
-- [ ] A post-acceptance note explicitly chooses closure, grant hardening, or accepted residual risk.
+- [x] Generic `pi-herdr-subagents` samples, tests, prompts, and fixtures contain no mem-import-specific application references.
+- [x] Focused Herdr profile/lifecycle integration tests pass.
+- [x] One exact-profile extraction-only run passes.
+- [x] One tiny four-phase import reaches durable finalized status without ordinary-path resume.
+- [x] No Alice or book-sized import runs.
+- [x] A post-acceptance note explicitly chooses closure, grant hardening, or accepted residual risk.
 
 ## Fresh-session handoff
 

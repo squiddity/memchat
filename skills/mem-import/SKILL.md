@@ -16,7 +16,7 @@ If neither role and phase are explicit, stop and clarify rather than mixing pare
 
 ## 2. Honor the phase handoff
 
-The parent supplies only a small launch envelope (`phase`, `outputRoot`, `runId`, requested scope, and extraction input only when needed) plus coordinator authority transiently. Never persist authority or copy it into an assignment, recipe, audit, packet, or completion prose.
+The parent supplies only a small launch envelope (`phase`, `outputRoot`, `runId`, requested scope, and extraction input only when needed) plus coordinator authority transiently. The parent must include `coordinatorGrant` in that first coordinator task before launching; never launch a coordinator with a missing grant and try to add it later. Never persist authority or copy it into an assignment, recipe, audit, packet, or completion prose.
 
 At phase startup, reconstruct inputs by calling the typed status, manifest, controls, inventory, and effect tools named in [coordinator decisions](references/workflow.md). Never use a prior coordinator transcript, summary, or claimed hash as an input. At phase exit, re-read the typed durable outputs for that phase. If interrupted, resume or restart only the current phase; never resume a completed earlier phase or skip a phase whose exit ledger is incomplete.
 

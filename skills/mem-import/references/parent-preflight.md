@@ -20,6 +20,19 @@ After preflight, the parent calls exactly one run-creation tool:
 
 Do not let a coordinator call begin and do not call begin again between phases or after interruption. Keep `outputRoot`, `runId`, and `coordinatorGrant` only in the parent's live context. The grant is transient authority for phase launches; never write it into a facility recipe, prompt template, transcript summary, audit field, or import artifact.
 
+Build each coordinator launch envelope only after the begin result is available, and include the authority in the coordinator's first task from the start—never launch a coordinator first and send `coordinatorGrant` in a later message. The live envelope contains exactly the dynamic handoff fields:
+
+```text
+phase: extraction | proposal-reconciliation | merge | review-finalization
+outputRoot: <begin result>
+runId: <begin result>
+coordinatorGrant: <begin result, transient>
+requested scope: <current parent request>
+input: <only when extraction normalization still needs it>
+```
+
+Use the exact named coordinator profile for the phase (`mem-import-coordinator-extraction`, `mem-import-coordinator-proposal`, `mem-import-coordinator-merge`, or `mem-import-coordinator-finalize`). The launch call's `agent` field selects that profile; `name` is display-only. Do not omit `agent`, substitute a role shorthand, or retry with a bare child.
+
 ## 3. Launch four fresh phase coordinators
 
 Use the selected facility sequentially for exactly these fresh contexts:

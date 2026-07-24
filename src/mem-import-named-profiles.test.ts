@@ -130,6 +130,10 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
       }
       assert.equal(fields.cwd, undefined);
       assert.ok(body.trim().length > 0, "profiles must contain generated phase guidance");
+      assert.match(body, /every worker `subagent` call must set `agent` to the exact `assignment\.profile`/);
+      assert.match(body, /`name` is display-only/);
+      assert.match(body, /do not launch or retry bare/);
+      assert.match(body, /fresh task ID/);
     }
   });
 }

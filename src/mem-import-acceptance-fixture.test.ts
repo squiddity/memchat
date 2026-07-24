@@ -48,11 +48,16 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(skill, /Never use a prior coordinator transcript, summary, or claimed hash as an input/);
   assert.match(skill, /resume or restart only the current phase/);
   assert.match(skill, /Never persist authority/);
+  assert.match(skill, /include `coordinatorGrant` in that first coordinator task before launching/);
   assert.match(skill, /end the turn and remain idle/i);
   assert.match(skill, /Never derive observed evidence from the assignment or worker prose/);
   assert.match(parentPreflight, /calls exactly one run-creation tool/);
   assert.match(parentPreflight, /sequentially for exactly these fresh contexts/);
   assert.match(parentPreflight, /Do not pass earlier coordinator prose, transcripts, copied status results/);
+  assert.match(parentPreflight, /include the authority in the coordinator's first task from the start/);
+  assert.match(parentPreflight, /coordinatorGrant: <begin result, transient>/);
+  assert.match(parentPreflight, /launch call's `agent` field selects that profile/);
+  assert.match(parentPreflight, /Do not omit `agent`/);
   assert.match(parentPreflight, /resume the current phase only/);
   assert.match(workflow, /At startup[\s\S]*typed read tools/);
   assert.match(workflow, /At exit[\s\S]*typed reads again/);
