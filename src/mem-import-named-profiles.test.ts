@@ -138,6 +138,33 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
   });
 }
 
+test("U6 proposer and merger profiles require demand-driven evidence reads", async () => {
+  for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
+    const proposer = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === "proposer")!, adapter), "utf8")).body;
+    assert.match(proposer, /read its exact candidate IDs directly/);
+    assert.match(proposer, /do not call extraction inventory first/);
+    assert.match(proposer, /Candidate title, payload, metadata, and provenance are sufficient/);
+    assert.match(proposer, /never to verify anchors, expand adequate prose, increase confidence/);
+    const merger = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === "merger")!, adapter), "utf8")).body;
+    assert.match(merger, /byte-for-byte accepts require no source\/extraction reread/);
+    assert.match(merger, /Read canonical bodies only for collision, replacement, synthesis, deletion, or stale read sets/);
+    assert.match(merger, /reopen only exact source spans/);
+  }
+});
+
+test("review/finalization profiles wait passively and hold no heartbeat capability", async () => {
+  const profile = MEM_IMPORT_NAMED_PROFILES.find((item) => item.phase === "finalize")!;
+  for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
+    const { fields, body } = parseFlatProfile(await readFile(profilePath(profile, adapter), "utf8"));
+    assert.equal(csv(fields.tools).includes("mem_import_heartbeat_merge_lease"), false);
+    assert.match(body, /launch no reader, documentation, setup, wait, or other helper child/);
+    assert.match(body, /do not acquire the coordinator merge lease before or while a reviewer\/repairer runs/);
+    assert.match(body, /make no status, lease, heartbeat, resume, or other tool call/);
+    assert.match(body, /`subagent_resume` is recovery only after an actual interrupted terminal state/);
+    assert.match(body, /Acquire the coordinator merge lease only after checks report zero errors/);
+  }
+});
+
 test("extension loading is explicit where supported and ambient Herdr loading remains configured", async () => {
   const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as { pi?: { extensions?: string[] } };
   assert.ok(packageJson.pi?.extensions?.includes(MEM_IMPORT_PROFILE_EXTENSION));

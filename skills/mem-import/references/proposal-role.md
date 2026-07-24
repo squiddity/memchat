@@ -10,13 +10,14 @@ Launch a subagent with the assignment bootstrap and exactly `assignment.tools`. 
 
 ## Steps
 
-1. Read only the assigned extraction inventory and candidate pages. A recurring entity cluster may span units; synthesize it as one model-owned identity-aware shard. Re-read source spans for material claims.
-2. Synthesize complete typed artifacts. Copy source/unit/anchor fields from evidence; the service supplies quote text.
-3. Give every assigned candidate exactly one disposition:
+1. For a planned assignment, use its exact `units` and qualified `candidateIds` to call `mem_extraction_read_worker` directly for only those candidates; do not call extraction inventory first. Inventory is only for a legacy assignment that genuinely lacks exact candidate scope. Treat candidate title, payload, metadata, and provenance together as sufficient primary evidence when they support the artifact claim without an explicit gap or contradiction. A recurring entity cluster may span units; synthesize it as one model-owned identity-aware shard.
+2. `mem_source_read_worker` is an exception, not routine verification. Call it only when you can name a specific missing fact, explicit candidate uncertainty, or contradiction that prevents representing an assigned candidate, and request only its cited anchor range. Do not reopen source to verify anchors, restate or expand adequate extraction prose, increase confidence, or merely because a claim is important. With no specific evidence gap, a source call violates this role procedure.
+3. Synthesize complete typed artifacts. Copy source/unit/anchor fields from evidence; the service supplies quote text.
+4. Give every assigned candidate exactly one disposition:
    - `represented` or `merged` names a proposed `artifactId`;
    - `deferred` or `dropped` gives a reason.
-4. Keep artifacts and provenance concise but semantically complete. Use narrow supporting ranges and avoid repeating the same source prose across artifact sections.
-5. Call `mem_proposal_submit` with artifacts, dispositions, and a concise rationale.
+5. Keep artifacts and provenance concise but semantically complete. Use narrow supporting ranges and avoid repeating the same source prose across artifact sections.
+6. Call `mem_proposal_submit` with artifacts, dispositions, and a concise rationale.
 
 The submit is transactional: validation failure writes no proposal. Correct the exact reported field once; on malformed/truncated transport or repeated failure, stop and report it rather than repeatedly rebuilding an oversized body. The coordinator revokes the assignment and retries a smaller shard with a fresh task ID.
 

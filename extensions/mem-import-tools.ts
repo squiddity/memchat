@@ -31,6 +31,18 @@ function failure(error: unknown) {
   };
 }
 
+async function trackedEvidenceRead(toolName: string, params: { outputRoot: string; runId: string; taskId: string; grant: string }, read: () => Promise<unknown>): Promise<unknown> {
+  const value = await read();
+  const object = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const returnedChars = typeof object?.returnedChars === "number" && Number.isInteger(object.returnedChars) && object.returnedChars >= 0 ? object.returnedChars : 0;
+  const returnedItems = typeof object?.returnedItems === "number" && Number.isInteger(object.returnedItems) && object.returnedItems >= 0
+    ? object.returnedItems
+    : [object?.entries, object?.candidates, object?.artifacts, object?.decisions].find(Array.isArray)?.length
+      ?? (toolName === "mem_merge_read_artifact" && object?.artifact ? 1 : 0);
+  await service.recordEvidenceRead({ outputRoot: params.outputRoot, runId: params.runId, taskId: params.taskId, grant: params.grant, toolName, returnedItems, returnedChars });
+  return value;
+}
+
 function renderMemImportResult(result: { details?: unknown }, context: { expanded: boolean; isPartial: boolean }, theme: any) {
   if (context.isPartial) return new Text(theme.fg("warning", "Mem-import operation in progress…"), 0, 0);
   const details = result.details as { error?: unknown } | undefined;
@@ -486,7 +498,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 50000, description: "Maximum returned source characters; defaults to 12000." })),
     }),
     async execute(_id, params) {
-      try { return result(await service.readAssignedUnit(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_source_read_unit", params, () => service.readAssignedUnit(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -506,7 +518,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read an existing extraction packet only for a unit assigned to this extractor task.",
     parameters: Type.Object({ ...extractorSchema, unitId: Type.String({ description: "Assigned normalized unit ID." }) }),
     async execute(_id, params) {
-      try { return result(await service.readExtraction(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_extraction_read", params, () => service.readExtraction(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -582,7 +594,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "List immutable shard proposals visible to this reconciler, merger, or repairer. Use proposalHash with mem_proposal_read; do not reconstruct proposals from extraction packets.",
     parameters: Type.Object({ ...workerSchema, continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_id, params) {
-      try { return result(await proposals.inventoryWorkerProposals(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_proposal_inventory", params, () => proposals.inventoryWorkerProposals(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -597,7 +609,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       maxArtifacts: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     }),
     async execute(_id, params) {
-      try { return result(await proposals.readWorkerProposal(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_proposal_read", params, () => proposals.readWorkerProposal(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -607,7 +619,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "List immutable identity packets visible to this merger or repairer.",
     parameters: Type.Object({ ...workerSchema, continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_id, params) {
-      try { return result(await identities.inventoryWorkerIdentity(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_identity_inventory", params, () => identities.inventoryWorkerIdentity(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -617,7 +629,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read one immutable identity packet in bounded decision pages. Pass continuationCursor unchanged until truncated is false.",
     parameters: Type.Object({ ...workerSchema, identityProposalHash: Type.String({ pattern: "^[a-f0-9]{64}$" }), continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxDecisions: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_id, params) {
-      try { return result(await identities.readWorkerIdentity(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_identity_read", params, () => identities.readWorkerIdentity(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -634,7 +646,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 50000 })),
     }),
     async execute(_id, params) {
-      try { return result(await service.readWorkerUnit(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_source_read_worker", params, () => service.readWorkerUnit(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -649,7 +661,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     }),
     async execute(_id, params) {
-      try { return result(await service.readWorkerExtractionInventory(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_extraction_inventory_worker", params, () => service.readWorkerExtractionInventory(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -665,7 +677,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       maxCandidates: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     }),
     async execute(_id, params) {
-      try { return result(await service.readWorkerExtractions(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_extraction_read_worker", params, () => service.readWorkerExtractions(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -675,7 +687,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read compact cursor-paginated canonical artifact summaries for an authorized merger, reviewer, or repairer. Use this instead of loading a complete canonical snapshot.",
     parameters: Type.Object({ ...workerSchema, group: Type.Optional(extractionGroupSchema), continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_id, params) {
-      try { return result(await u2.readMergeInventoryForWorker(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_merge_inventory", params, () => u2.readMergeInventoryForWorker(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -685,7 +697,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read one explicit canonical artifact by ID for an authorized merger, reviewer, or repairer.",
     parameters: Type.Object({ ...workerSchema, artifactId: Type.String({ minLength: 1 }) }),
     async execute(_id, params) {
-      try { return result(await u2.readMergeArtifactForWorker(params)); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_merge_read_artifact", params, () => u2.readMergeArtifactForWorker(params))); } catch (error) { return failure(error); }
     },
   });
 

@@ -377,10 +377,13 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U6. Add demand-driven evidence reads
 
+- **Status:** Implemented and hardened on 2026-07-24 with proposer/merger demand-driven guidance, all-role content-free evidence-read telemetry, bounded work-status/final-audit summaries, deterministic coverage, and live tiny-import feedback.
 - **Goal:** Avoid rereading full chapters and extraction packets without need.
-- **Files:** proposer and merger role guidance; bounded read telemetry/evals.
-- **Work:** Make source reopening conditional and record per-role read counts.
-- **Done signal:** Proposers can complete from extraction evidence when sufficient; merge accept paths do not reopen source.
+- **Files:** proposer and merger role/profile guidance; service-owned bounded read telemetry; work-status/audit summaries; deterministic tests and evaluation fixtures.
+- **Evidence hierarchy:** Proposers treat assigned extraction candidates as primary evidence and reopen only exact cited source spans when candidate evidence is ambiguous, contradictory, visibly incomplete, or insufficient for an important identity/relationship claim. Mergers treat immutable proposals and identity packets as primary evidence; byte-for-byte accepts require no source/extraction reread, canonical bodies are read only for collision/replacement/synthesis/deletion/stale read sets, and source is reopened only for material disputes proposal evidence cannot settle.
+- **Telemetry:** Instrument successful evidence reads for all semantic roles. Persist content-free aggregates by run, assignment, role, and tool with call/page and returned item/character counts; expose bounded role/tool totals through existing coordinator status/audit surfaces. Never persist arguments, source text, prompts, grants, or failed authorization calls as evidence reads.
+- **Done signal:** Proposers can complete from sufficient extraction evidence with zero source reads; unchanged merge accept paths do not reopen source or extraction evidence; pagination remains demand-driven; compact durable telemetry makes these claims measurable.
+- **Live evidence and hardening:** A finalized DeepSeek V4 Flash tiny import proved the unchanged merger accept path used zero source/extraction reads, but all three proposers still reopened the complete source and redundantly paged extraction inventory. Guidance now requires planned proposers to read exact assigned candidate IDs directly, treats complete candidate payload/provenance as sufficient, and restricts source reopening to one named blocking gap/uncertainty/contradiction. The same run exposed a finalizer holding a coordinator lease while waiting and issuing 77 rapid heartbeats; finalizer guidance now forbids helper/document-reader launches, active-child resume/polling, and pre-review leases, while its named profile removes the heartbeat tool entirely.
 
 ### U7. Persist role/model usage telemetry
 
@@ -401,7 +404,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ## Next Steps After the Completed Safety Gate
 
-1. **Tiny artifact-led import:** validate the completed U4/U5 phase handoffs, cluster-plan reconstruction, exact worker scopes, reconciliation dependencies, and merge readiness in a small live corpus.
+1. **Tiny artifact-led import:** complete; the fresh four-phase Glass Tower run validated phase handoffs, cluster-plan reconstruction, exact worker scopes, reconciliation dependencies, dispatch-gated effects, and finalization.
 2. **U6 — demand-driven reads:** stop default source/chapter rereads and record bounded per-role read counts.
 3. **U7 — usage telemetry:** persist sanitized per-role/model/session token and cost totals, including explicit unavailable fields.
 4. **Three-chapter Alice evaluation:** after U6–U7, measure coordinator behavior, identity consolidation, narrative surfaces, transaction count, duration, and usage.

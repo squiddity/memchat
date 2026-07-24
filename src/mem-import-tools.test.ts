@@ -349,6 +349,49 @@ test("mem-import worker extraction reads are bounded, filtered, and monotonic", 
   );
 });
 
+test("evidence-read telemetry aggregates successful calls by assignment, role, and tool without content", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const extractor = await service.assignExtractor({ ...run, taskId: "telemetry-extractor", unitIds: [units[0]!.unitId] });
+  const reviewer = await service.assignWorker({ ...run, taskId: "telemetry-reviewer", role: "reviewer" });
+
+  await Promise.all([
+    service.recordEvidenceRead({ ...extractor, toolName: "mem_source_read_unit", returnedChars: 41 }),
+    service.recordEvidenceRead({ ...extractor, toolName: "mem_source_read_unit", returnedChars: 17 }),
+  ]);
+  await service.recordEvidenceRead({ ...reviewer, toolName: "mem_merge_inventory", returnedItems: 3 });
+  await assert.rejects(service.recordEvidenceRead({ ...reviewer, grant: "forged", toolName: "mem_merge_inventory", returnedItems: 99 }), /Invalid assignment grant/);
+  await assert.rejects(service.recordEvidenceRead({ ...reviewer, toolName: "mem_proposal_read", returnedItems: 1 }), /not an evidence read for assignment role reviewer/);
+
+  const telemetry = await service.evidenceReadTelemetry(run);
+  assert.deepEqual(telemetry, {
+    total: { calls: 3, pages: 3, returnedItems: 3, returnedChars: 58 },
+    roles: [
+      {
+        role: "extractor",
+        assignmentCount: 1,
+        calls: 2,
+        pages: 2,
+        returnedItems: 0,
+        returnedChars: 58,
+        tools: [{ toolName: "mem_source_read_unit", calls: 2, pages: 2, returnedItems: 0, returnedChars: 58 }],
+      },
+      {
+        role: "reviewer",
+        assignmentCount: 1,
+        calls: 1,
+        pages: 1,
+        returnedItems: 3,
+        returnedChars: 0,
+        tools: [{ toolName: "mem_merge_inventory", calls: 1, pages: 1, returnedItems: 3, returnedChars: 0 }],
+      },
+    ],
+  });
+  assert.deepEqual((await new MemImportU2Service(service).workStatus(run)).evidenceReads, telemetry);
+  const persisted = await readFile(join(output, "stages", "orchestration", "evidence-reads", "telemetry-extractor.json"), "utf-8");
+  assert.doesNotMatch(persisted, /Ada guards|grant|coordinatorGrant|source text|prompt/i);
+});
+
 test("fresh services rebuild proposal-stage, identity, and terminal work status from the durable ledger", async () => {
   const { output, run, units } = await setup();
   const service = new MemImportService();
@@ -404,6 +447,7 @@ test("fresh services rebuild proposal-stage, identity, and terminal work status 
     openConflictCount: 0,
     blockingConflictCount: 0,
     terminalStatus: "active",
+    evidenceReads: { total: { calls: 0, pages: 0, returnedItems: 0, returnedChars: 0 }, roles: [] },
   });
   const rebuiltControls = await new MemImportU2Service(new MemImportService()).mergeControls(run);
   assert.equal(rebuiltControls.uniqueProposedCandidateCount, 1);
@@ -927,6 +971,7 @@ test("mem-import U2 fences merge writes, preserves immutable revisions, and bind
   assert.equal(audit.version, 2);
   assert.equal(audit.status, "failed");
   assert.equal((audit.finalization as Record<string, unknown>).passed, false);
+  assert.deepEqual(audit.evidenceReads, { total: { calls: 0, pages: 0, returnedItems: 0, returnedChars: 0 }, roles: [] });
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize", fence: finalLease.fence });
 });
 
@@ -1486,6 +1531,10 @@ test("mem-import model-facing mutation tools use compact receipt methods", async
   assert.doesNotMatch(extensionSource, /return result\(await u2\.mergeState\(params\)\)/);
   assert.doesNotMatch(extensionSource, /return result\(await u2\.commitWorkerBatch\(params\)\)/);
   assert.doesNotMatch(extensionSource, /return result\(await u2\.applyWorkerRepairBatch\(params\)\)/);
+  for (const toolName of [
+    "mem_source_read_unit", "mem_extraction_read", "mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read",
+    "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_merge_inventory", "mem_merge_read_artifact",
+  ]) assert.match(extensionSource, new RegExp(`trackedEvidenceRead\\(\\"${toolName}\\"`));
 });
 
 test("a child process independently rejects a forged cross-process extractor grant", async () => {

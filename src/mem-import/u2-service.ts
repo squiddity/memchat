@@ -17,7 +17,7 @@ import {
 } from "../world-import/staging.js";
 import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
 import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
-import { MemImportService, type AssignmentRole, type MemImportAssignmentRecord, type MemImportCapability, type MemImportTerminalStatus } from "./service.js";
+import { MemImportService, type AssignmentRole, type EvidenceReadTelemetrySummary, type MemImportAssignmentRecord, type MemImportCapability, type MemImportTerminalStatus } from "./service.js";
 import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
 import { MemImportClusterPlanService } from "./cluster-plan-service.js";
 
@@ -103,6 +103,7 @@ export type MemImportWorkStatus = {
   openConflictCount: number;
   blockingConflictCount: number;
   terminalStatus: "active" | MemImportTerminalStatus;
+  evidenceReads: EvidenceReadTelemetrySummary;
 };
 
 export type MergeControls = MemImportWorkStatus & {
@@ -332,6 +333,7 @@ export class MemImportU2Service {
         if (conflict.blocking) blockingConflictCount += 1;
       }
     }
+    const evidenceReads = await this.base.evidenceReadTelemetry(options);
     return {
       revision: state.revision,
       contentHash: state.contentHash,
@@ -348,6 +350,7 @@ export class MemImportU2Service {
       openConflictCount,
       blockingConflictCount,
       terminalStatus: run.terminal?.status ?? "active",
+      evidenceReads,
     };
   }
 
@@ -709,6 +712,7 @@ export class MemImportU2Service {
     const checksPath = join(projectionRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
     await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, diagnostics, checks });
     const receiptPath = this.relative(projectionRoot, this.revisionReceiptPath(projectionRoot, state.revision, state.contentHash));
+    const evidenceReads = await this.base.evidenceReadTelemetry(options);
     const audit = await this.updateAudit(projectionRoot, run.runId, {
       kind: "finalization",
       path: this.relative(projectionRoot, checksPath),
@@ -720,6 +724,7 @@ export class MemImportU2Service {
       finalizedAt: this.now().toISOString(),
       merge: { revision: state.revision, contentHash: state.contentHash, revisionReceiptPath: receiptPath },
       finalization: { passed: errors === 0, errorCount: errors, warningCount: warnings, checksPath: this.relative(projectionRoot, checksPath) },
+      evidenceReads,
     });
     await this.recordEvent(projectionRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(projectionRoot, checksPath), errors, warnings, status: audit.status });
     if (errors === 0) await this.base.markRunTerminal(run, "finalized");

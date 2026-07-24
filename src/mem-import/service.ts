@@ -71,6 +71,21 @@ export const MEM_IMPORT_ROLE_TOOLS: Record<AssignmentRole, string[]> = {
   repairer: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_read_worker", "mem_merge_acquire_lease", "mem_merge_heartbeat_lease", "mem_merge_apply_repair_batch", "mem_merge_release_lease"],
 };
 
+/** Successful model-facing reads counted by U6 evidence-read telemetry. */
+export const MEM_IMPORT_EVIDENCE_READ_CAPABILITIES: Record<string, MemImportCapability> = {
+  mem_source_read_unit: "source:read",
+  mem_extraction_read: "extraction:read",
+  mem_source_read_worker: "source:read",
+  mem_extraction_inventory_worker: "extraction:read",
+  mem_extraction_read_worker: "extraction:read",
+  mem_proposal_inventory: "merge:read",
+  mem_proposal_read: "merge:read",
+  mem_identity_inventory: "merge:read",
+  mem_identity_read: "merge:read",
+  mem_merge_inventory: "merge:read",
+  mem_merge_read_artifact: "merge:read",
+};
+
 export type MemImportDispatchRecord = {
   version: 1;
   kind: "mem-import-worker-dispatch";
@@ -112,6 +127,22 @@ export type MemImportEffectInventoryResult = {
   returnedItems: number;
   truncated: boolean;
   continuationCursor?: string;
+};
+
+export type EvidenceReadTotals = {
+  calls: number;
+  pages: number;
+  returnedItems: number;
+  returnedChars: number;
+};
+
+export type EvidenceReadTelemetrySummary = {
+  total: EvidenceReadTotals;
+  roles: Array<EvidenceReadTotals & {
+    role: AssignmentRole;
+    assignmentCount: number;
+    tools: Array<EvidenceReadTotals & { toolName: string }>;
+  }>;
 };
 
 /** Deliberately small, credential-free runtime identity supplied by the parent. */
@@ -323,6 +354,10 @@ function dispatchPath(outputRoot: string, taskId: string): string {
 
 function extractionInventoryPath(outputRoot: string, unitId: string): string {
   return `${orchestrationDir(outputRoot)}/extraction-inventory/${unitId}.json`;
+}
+
+function evidenceReadTelemetryPath(outputRoot: string, taskId: string): string {
+  return `${orchestrationDir(outputRoot)}/evidence-reads/${taskId}.json`;
 }
 
 async function writeAuthorizationEvent(outputRoot: string, event: Record<string, unknown>): Promise<void> {
@@ -739,6 +774,73 @@ export class MemImportService {
     if (!normalized) return { runId: run.runId, normalized: false, unitCount: 0, extractionStageCount: 0 };
     const [manifest, extractionStages] = await Promise.all([readManifest(run.outputRoot), readExtractionStages(run.outputRoot)]);
     return { runId: run.runId, normalized: true, unitCount: manifest.units.length, extractionStageCount: extractionStages.length };
+  }
+
+  /** Persist one content-free aggregate after a model-facing evidence read succeeds. */
+  async recordEvidenceRead(options: {
+    outputRoot: string;
+    runId: string;
+    taskId: string;
+    grant: string;
+    toolName: string;
+    returnedItems?: number;
+    returnedChars?: number;
+  }): Promise<void> {
+    await this.withRunMutation(options.outputRoot, async () => {
+      const assignment = await this.authorizeWorkerCleanup(options);
+      const capability = MEM_IMPORT_EVIDENCE_READ_CAPABILITIES[options.toolName];
+      if (!capability || !assignment.capabilities.includes(capability) || !MEM_IMPORT_ROLE_TOOLS[assignment.role].includes(options.toolName)) throw new Error(`Tool ${options.toolName} is not an evidence read for assignment role ${assignment.role}`);
+      const returnedItems = options.returnedItems ?? 0;
+      const returnedChars = options.returnedChars ?? 0;
+      for (const [name, value] of [["returnedItems", returnedItems], ["returnedChars", returnedChars]] as const) {
+        if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
+      }
+      const path = evidenceReadTelemetryPath(assignment.outputRoot, assignment.taskId);
+      type RecordV1 = { version: 1; kind: "mem-import-evidence-read-telemetry"; runId: string; taskId: string; role: AssignmentRole; updatedAt: string; tools: Record<string, EvidenceReadTotals> };
+      let record: RecordV1 = { version: 1, kind: "mem-import-evidence-read-telemetry", runId: assignment.runId, taskId: assignment.taskId, role: assignment.role, updatedAt: this.now().toISOString(), tools: {} };
+      if (existsSync(path)) {
+        const existing = JSON.parse(await readFile(path, "utf-8")) as RecordV1;
+        if (existing.version !== 1 || existing.kind !== "mem-import-evidence-read-telemetry" || existing.runId !== assignment.runId || existing.taskId !== assignment.taskId || existing.role !== assignment.role || !existing.tools || typeof existing.tools !== "object") throw new Error(`Evidence-read telemetry for ${assignment.taskId} is invalid`);
+        record = existing;
+      }
+      const prior = record.tools[options.toolName] ?? { calls: 0, pages: 0, returnedItems: 0, returnedChars: 0 };
+      if (![prior.calls, prior.pages, prior.returnedItems, prior.returnedChars].every((value) => Number.isInteger(value) && value >= 0)) throw new Error(`Evidence-read telemetry for ${assignment.taskId} has invalid counts`);
+      record.tools[options.toolName] = { calls: prior.calls + 1, pages: prior.pages + 1, returnedItems: prior.returnedItems + returnedItems, returnedChars: prior.returnedChars + returnedChars };
+      await writeJson(path, { ...record, updatedAt: this.now().toISOString() });
+    });
+  }
+
+  /** Return bounded role/tool totals without source text, arguments, prompts, or grants. */
+  async evidenceReadTelemetry(options: { outputRoot: string; runId: string; coordinatorGrant: string }): Promise<EvidenceReadTelemetrySummary> {
+    const run = await this.authorizeCoordinator(options);
+    const directory = `${orchestrationDir(run.outputRoot)}/evidence-reads`;
+    const totals = (): EvidenceReadTotals => ({ calls: 0, pages: 0, returnedItems: 0, returnedChars: 0 });
+    const roleTotals = new Map<AssignmentRole, { assignmentIds: Set<string>; total: EvidenceReadTotals; tools: Map<string, EvidenceReadTotals> }>();
+    for (const file of existsSync(directory) ? (await readdir(directory)).filter((name) => name.endsWith(".json")).sort() : []) {
+      const record = JSON.parse(await readFile(`${directory}/${file}`, "utf-8")) as { version?: unknown; kind?: unknown; runId?: unknown; taskId?: unknown; role?: unknown; tools?: unknown };
+      if (record.version !== 1 || record.kind !== "mem-import-evidence-read-telemetry" || record.runId !== run.runId || typeof record.taskId !== "string" || !["extractor", "proposer", "reconciler", "merger", "reviewer", "repairer"].includes(String(record.role)) || !record.tools || typeof record.tools !== "object" || Array.isArray(record.tools)) throw new Error(`Evidence-read telemetry file ${file} is invalid`);
+      const role = record.role as AssignmentRole;
+      const aggregate = roleTotals.get(role) ?? { assignmentIds: new Set<string>(), total: totals(), tools: new Map<string, EvidenceReadTotals>() };
+      aggregate.assignmentIds.add(record.taskId);
+      for (const [toolName, raw] of Object.entries(record.tools as Record<string, unknown>)) {
+        if (!(toolName in MEM_IMPORT_EVIDENCE_READ_CAPABILITIES) || !raw || typeof raw !== "object") throw new Error(`Evidence-read telemetry file ${file} has an invalid tool counter`);
+        const counter = raw as Partial<EvidenceReadTotals>;
+        if (![counter.calls, counter.pages, counter.returnedItems, counter.returnedChars].every((value) => Number.isInteger(value) && Number(value) >= 0)) throw new Error(`Evidence-read telemetry file ${file} has invalid counts`);
+        const normalized = { calls: counter.calls!, pages: counter.pages!, returnedItems: counter.returnedItems!, returnedChars: counter.returnedChars! };
+        const prior = aggregate.tools.get(toolName) ?? totals();
+        for (const key of ["calls", "pages", "returnedItems", "returnedChars"] as const) { prior[key] += normalized[key]; aggregate.total[key] += normalized[key]; }
+        aggregate.tools.set(toolName, prior);
+      }
+      roleTotals.set(role, aggregate);
+    }
+    const total = totals();
+    const roles = (["extractor", "proposer", "reconciler", "merger", "reviewer", "repairer"] as AssignmentRole[]).flatMap((role) => {
+      const aggregate = roleTotals.get(role);
+      if (!aggregate) return [];
+      for (const key of ["calls", "pages", "returnedItems", "returnedChars"] as const) total[key] += aggregate.total[key];
+      return [{ role, assignmentCount: aggregate.assignmentIds.size, ...aggregate.total, tools: [...aggregate.tools.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([toolName, value]) => ({ toolName, ...value })) }];
+    });
+    return { total, roles };
   }
 
   async inspectExtractionCandidates(options: {

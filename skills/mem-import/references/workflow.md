@@ -80,7 +80,8 @@ Review one explicit lens at a time. Select any repair actions; a repairer receiv
 **Exit outputs**
 
 - Before finalization, require compact controls to report a current review for the final revision, no blocking conflict, no proposal/candidate gap, and checks with no errors.
-- Acquire the coordinator finalization lease, call `mem_import_finalize`, and release the lease in cleanup.
+- Do not acquire or heartbeat a coordinator lease while a reviewer or repairer runs. After each assigned child launch, end the turn and wait at rest for push-delivered terminal completion; do not poll, resume an active child, or launch helpers/document readers.
+- Only after the final review is current and checks have no errors, acquire the coordinator finalization lease, call `mem_import_finalize` immediately, and release the lease in cleanup. Normal finalization never needs a heartbeat.
 - Re-read `mem_import_work_status`; success requires `terminalStatus: "finalized"`. If the phase cannot repair a failed finalization/check result, call `mem_import_fail` and require durable `terminalStatus: "failed"`; never exit on a prose-only failure.
 
 ## Dispatch ledger for every phase

@@ -10,8 +10,8 @@ Launch one subagent with the merger bootstrap and exactly `assignment.tools`. Fo
 
 ## Steps
 
-1. Confirm the coordinator independently observed `readyForMerge`; assignment and commit enforce it again. Read proposal/identity inventory and every packet page used by the batch.
-2. Read only the bounded canonical neighborhood needed for identity, replacement, synthesis, or deletion. Canonical reads return `artifactContentHash` for commit read sets.
+1. Confirm the coordinator independently observed `readyForMerge`; assignment and commit enforce it again. Treat immutable proposals and identity packets as the primary evidence; read their inventory and every packet page used by the batch. Do not reopen extraction packets or source for byte-for-byte accepts.
+2. Read only the bounded canonical neighborhood needed for a collision, replacement, synthesis, deletion, or stale read set. Canonical reads return `artifactContentHash` for commit read sets. Reopen only the exact cited source span when a material dispute cannot be settled from proposal/identity evidence; never reread a whole unit by default.
 3. Group several compatible proposals into each transaction instead of committing proposal-by-proposal.
 4. Prepare a weighted batch:
    - up to 50 lightweight `accept` changes copy proposal artifacts unchanged;

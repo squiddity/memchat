@@ -63,7 +63,6 @@ export const MEM_IMPORT_COORDINATOR_PHASE_TOOLS: Record<MemImportCoordinatorPhas
     "mem_import_merge_state",
     "mem_import_assign_worker",
     "mem_import_acquire_merge_lease",
-    "mem_import_heartbeat_merge_lease",
     "mem_import_release_merge_lease",
     "mem_check_run",
     "mem_import_finalize",

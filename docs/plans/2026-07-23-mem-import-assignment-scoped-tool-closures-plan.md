@@ -1,10 +1,10 @@
 # Mem-import assignment-scoped tool closures
 
 **Date:** 2026-07-23  
-**Status:** resumed after profile-launch stabilization and successful tiny-import acceptance
-**Risk:** critical authorization change; comprehensive deterministic and cross-process tests required
+**Status:** deferred after profile-launch stabilization and successful tiny-import acceptance
+**Risk:** critical authorization change; comprehensive deterministic and cross-process tests required when resumed
 
-> **Resumption decision (2026-07-24):** [Mem-import profile launch stabilization](2026-07-23-mem-import-profile-launch-stabilization-plan.md) passed focused acceptance, including exact named worker launches, exact dispatch/effect evidence, repaired recursive descendant tracking, and one fresh four-phase tiny import finalized without ordinary-path resume. Reliability is now sufficient to resume this design. The acceptance did not bind model-visible grants to a host session/cwd, prevent copied-grant use by a correctly named duplicate process, or make dispatch evidence the authorization source. Proceed with the implementation phases below; keep the executors generic and do not conflate the successful tiny import with closure-equivalent authorization.
+> **Deferral decision (2026-07-24):** [Mem-import profile launch stabilization](2026-07-23-mem-import-profile-launch-stabilization-plan.md) passed focused acceptance, including exact named worker launches, exact dispatch/effect evidence, repaired recursive descendant tracking, and one fresh four-phase tiny import finalized without ordinary-path resume. Trusted/local grant-v1 evaluation may therefore continue while efficiency-plan U6–U7 take priority. This explicitly accepts, rather than solves, model-visible grant replay, missing host session/cwd binding, and copied-grant use by a correctly named duplicate process. Resume this plan before adversarial or multi-tenant execution, remote or weakly trusted worker facilities, routine duplicate-worker concurrency, assignment bootstraps crossing trust boundaries, any claim of process/session-bound authorization, or after a replay/duplicate-effect incident. Keep the executors generic when work resumes.
 
 ## Decision
 

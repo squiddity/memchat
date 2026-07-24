@@ -1,9 +1,9 @@
 # Mem-import profile launch stabilization
 
 **Date:** 2026-07-23  
-**Status:** stabilization and focused tiny-import acceptance complete; authorization follow-up selected
+**Status:** stabilization and focused tiny-import acceptance complete; closure follow-up deferred by explicit risk acceptance
 **Scope:** generic `pi-herdr-subagents` launch reliability plus mem-import role prompt/profile stabilization
-**Closure decision:** resume `2026-07-23-mem-import-assignment-scoped-tool-closures-plan.md`; reliability passed, but grant/cwd/session binding risks remain
+**Closure decision:** defer `2026-07-23-mem-import-assignment-scoped-tool-closures-plan.md` while trusted/local grant-v1 evaluation continues; reliability passed, but grant/cwd/session binding risks remain accepted rather than solved
 
 ## Decision
 
@@ -449,7 +449,9 @@ Reliability acceptance passed, but it did not establish closure-equivalent autho
 4. **Raw model-visible worker authority remains unacceptable for the intended boundary.** The successful tiny import proves operational viability, not that repeatedly exposing grants in worker calls is the desired long-term design.
 5. **Dispatch/effect records are necessary audit and readiness evidence, not sufficient binding.** They prove an exact-profile host completion correlated with a durable effect; they do not prove every authority-bearing tool call came from that attested host session/cwd.
 
-**Selected follow-up: resume the deferred assignment-scoped tool-closures plan.** Keep the executors generic; bind mem-import worker tools through canonical assignment cwd/workspaces, remove raw worker authority from model-visible schemas, retain exact profile/tool telemetry, and add stable binding-aware effect/finalization checks. Do not treat the successful tiny import as replay or duplicate-process containment evidence.
+**Updated follow-up decision (2026-07-24): defer assignment-scoped tool closures while trusted/local grant-v1 evaluation continues.** Exact named profiles, child allowlists, generated role bodies, and dispatch-gated effects now provide sufficient ordinary-path reliability to prioritize efficiency-plan U6–U7. This explicitly accepts, rather than solves, model-visible grant replay and missing cwd/session binding. Do not describe the successful tiny import as replay or duplicate-process containment evidence.
+
+Resume closure work before adversarial or multi-tenant execution, remote or weakly trusted worker facilities, routine concurrent duplicate-worker operation, assignment bootstraps crossing trust boundaries, or any claim of process/session-bound authorization. A replay or duplicate-effect incident also resumes it immediately. Stable one-shot effect slots and append-only dispatch evidence may be implemented independently as correctness hardening.
 
 The alternatives below remain recorded for context:
 

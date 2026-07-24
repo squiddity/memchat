@@ -366,6 +366,10 @@ export type MemImportRunAuditV2 = {
   source: { normalizedUnits: number; manifestHash: string };
   merge?: { revision: number; contentHash: string; revisionReceiptPath: string };
   finalization?: { passed: boolean; errorCount: number; warningCount: number; checksPath: string };
+  evidenceReads?: {
+    total: { calls: number; pages: number; returnedItems: number; returnedChars: number };
+    roles: Array<{ role: string; assignmentCount: number; calls: number; pages: number; returnedItems: number; returnedChars: number; tools: Array<{ toolName: string; calls: number; pages: number; returnedItems: number; returnedChars: number }> }>;
+  };
   effects: Array<{ kind: "merge" | "review" | "finalization"; path: string; contentHash: string; at: string; taskId?: string }>;
   error?: string;
 };
