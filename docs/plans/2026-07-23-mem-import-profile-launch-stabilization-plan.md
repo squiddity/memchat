@@ -1,8 +1,8 @@
 # Mem-import profile launch stabilization
 
 **Date:** 2026-07-23  
-**Status:** implementation-ready precursor  
-**Scope:** generic `pi-herdr-subagents` launch reliability plus mem-import role prompt/profile stabilization  
+**Status:** stabilization tranche implemented; focused acceptance and cleanup pending
+**Scope:** generic `pi-herdr-subagents` launch reliability plus mem-import role prompt/profile stabilization
 **Closure decision:** defer `2026-07-23-mem-import-assignment-scoped-tool-closures-plan.md` until this plan's acceptance evidence is reviewed
 
 ## Decision
@@ -28,6 +28,18 @@ After focused negative tests and one complete tiny import, reassess whether the 
 ## Why this precedes closure work
 
 The named-profile import failures were caused by profile selection and lifecycle affordances before they were caused by model capability or context size.
+
+## Progress update
+
+Implemented in separate repository commits:
+
+- `pi-herdr-subagents` now fails closed for unknown explicit profile keys.
+- Named parent profiles can enforce exact child-profile allowlists, with policy preserved in signed launch profiles and exposed through sanitized telemetry.
+- Recursive `subagent_done` is guarded by a host-owned tracked-descendant registry.
+- `memchat` now owns the role-to-profile map, returns exact assignment/brief profile keys, generates concise role/phase bodies, and removes child `skills: mem-import` invocation.
+- Planned proposal and reconciliation effects require completed exact ordinary-subagent dispatch evidence before contributing to merge readiness.
+
+Remaining acceptance work includes focused negative launcher tests, an extraction-only live test, the tiny four-phase import, and the post-acceptance authorization decision. The stabilization changes also revealed cleanup work in the generic executor repository: samples and tests still contain `mem-import`-specific names, prompts, or fixtures and should be made generic before the repository is treated as reusable.
 
 Observed behavior:
 
@@ -216,6 +228,8 @@ npm run lint
 ```
 
 Run only the focused Herdr integration tests needed for profile resolution, recursive lifecycle, and first-turn ordering. Use an explicit authenticated test model and the repository's documented timeout. Do not run mem-import semantics from this repository.
+
+Cleanup follow-up: replace mem-import-specific samples, test agents, prompts, and fixture names in `pi-herdr-subagents` with generic executor examples. Keep regression coverage for exact named-profile behavior, child-policy enforcement, and lifecycle guards, but do not make the generic repository depend on mem-import terminology or application fixtures.
 
 ## Part B — Mem-import role/profile stabilization
 
@@ -474,18 +488,19 @@ Do not create cross-repository commits or vendor one repository into the other.
 
 ## Done criteria
 
-- [ ] Supplied unknown agent keys fail before launch.
+- [x] Supplied unknown agent keys fail before launch.
 - [ ] Intentional bare launches still work when no parent child policy forbids them.
-- [ ] Parent profile child allowlists are host-resolved, attested, resume-preserved, and enforced.
-- [ ] Bundled `reviewer` cannot be launched by a mem-import finalize coordinator.
-- [ ] `subagent_done` cannot ordinarily abandon tracked descendants.
-- [ ] Mem-import assignments return exact service-derived profile keys.
-- [ ] Child mem-import profiles no longer invoke the monolithic skill.
-- [ ] All ten profiles have concise generated role/phase bodies.
-- [ ] Coordinator bodies name only their exact allowed worker profiles.
-- [ ] Workers receive only role-specific static guidance plus bounded assignment context.
-- [ ] Proposal/reconciliation/merge readiness requires completed exact dispatch evidence.
-- [ ] Generic and mem-import deterministic tests pass.
+- [x] Parent profile child allowlists are host-resolved, attested, resume-preserved, and enforced.
+- [x] Bundled `reviewer` cannot be launched by a mem-import finalize coordinator.
+- [x] `subagent_done` cannot ordinarily abandon tracked descendants.
+- [x] Mem-import assignments return exact service-derived profile keys.
+- [x] Child mem-import profiles no longer invoke the monolithic skill.
+- [x] All ten profiles have concise generated role/phase bodies.
+- [x] Coordinator bodies name only their exact allowed worker profiles.
+- [x] Workers receive only role-specific static guidance plus bounded assignment context.
+- [x] Proposal/reconciliation/merge readiness requires completed exact dispatch evidence.
+- [x] Generic and mem-import deterministic tests pass.
+- [ ] Generic `pi-herdr-subagents` samples, tests, prompts, and fixtures contain no mem-import-specific application references.
 - [ ] Focused Herdr profile/lifecycle integration tests pass.
 - [ ] One exact-profile extraction-only run passes.
 - [ ] One tiny four-phase import reaches durable finalized status without ordinary-path resume.
