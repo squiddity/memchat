@@ -1249,6 +1249,28 @@ export class MemImportService {
     return record;
   }
 
+  /** Return whether one semantic effect has an active exact ordinary-worker dispatch receipt. */
+  async hasCompletedExactWorkerDispatch(outputRoot: string, runId: string, taskId: string, role: AssignmentRole): Promise<boolean> {
+    try {
+      const assignment = await readAssignment(outputRoot, taskId);
+      if (assignment.runId !== runId || assignment.role !== role || assignment.revokedAt || assignment.supersededAt) return false;
+      const dispatchFile = dispatchPath(outputRoot, taskId);
+      if (!existsSync(dispatchFile)) return false;
+      const dispatch = JSON.parse(await readFile(dispatchFile, "utf-8")) as MemImportDispatchRecord;
+      return dispatch.version === 1
+        && dispatch.kind === "mem-import-worker-dispatch"
+        && dispatch.runId === runId
+        && dispatch.taskId === taskId
+        && dispatch.role === role
+        && dispatch.facility === "ordinary-subagent"
+        && dispatch.outcome === "completed"
+        && sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[role])
+        && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[role]);
+    } catch {
+      return false;
+    }
+  }
+
   async recordWorkerEffect(assignment: MemImportAssignmentRecord, effect: { kind: string; path: string; contentHash: string }): Promise<void> {
     return this.withRunMutation(assignment.outputRoot, () => this.recordWorkerEffectLocked(assignment, effect));
   }

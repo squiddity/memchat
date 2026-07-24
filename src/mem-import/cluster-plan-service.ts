@@ -196,6 +196,7 @@ export class MemImportClusterPlanService {
       const { runId: packetRunId, taskId: _taskId, contentHash, submittedAt: _submittedAt, ...semantic } = packet;
       if (packetRunId !== runId || !/^[a-f0-9]{64}$/.test(contentHash) || canonicalHash(semantic) !== contentHash) throw new Error(`Cluster ${packet.clusterId} has an invalid immutable proposal`);
       if (!plan.clusters.some((cluster) => cluster.id === packet.clusterId)) throw new Error(`Proposal references missing cluster ${packet.clusterId}`);
+      if (typeof packet.taskId !== "string" || !(await this.base.hasCompletedExactWorkerDispatch(outputRoot, runId, packet.taskId, "proposer"))) continue;
       if (proposalByCluster.has(packet.clusterId) && proposalByCluster.get(packet.clusterId) !== contentHash) throw new Error(`Cluster ${packet.clusterId} has more than one effective proposal`);
       proposalByCluster.set(packet.clusterId, contentHash);
     }
@@ -208,6 +209,7 @@ export class MemImportClusterPlanService {
       const { runId: packetRunId, taskId: _taskId, contentHash, submittedAt: _submittedAt, ...semantic } = packet;
       if (packetRunId !== runId || !/^[a-f0-9]{64}$/.test(contentHash) || canonicalHash(semantic) !== contentHash) throw new Error(`Reconciliation set ${packet.reconciliationSetId} has an invalid immutable identity packet`);
       if (!plan.reconciliationSets.some((set) => set.id === packet.reconciliationSetId)) throw new Error(`Identity packet references missing reconciliation set ${packet.reconciliationSetId}`);
+      if (typeof packet.taskId !== "string" || !(await this.base.hasCompletedExactWorkerDispatch(outputRoot, runId, packet.taskId, "reconciler"))) continue;
       if (identityBySet.has(packet.reconciliationSetId) && identityBySet.get(packet.reconciliationSetId) !== contentHash) throw new Error(`Reconciliation set ${packet.reconciliationSetId} has more than one effective identity packet`);
       identityBySet.set(packet.reconciliationSetId, contentHash);
     }

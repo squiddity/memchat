@@ -1603,6 +1603,7 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
   const storedProposal = JSON.parse(await readFile(join(output, proposal.path), "utf-8")) as { planHash: string; clusterId: string };
   assert.equal(storedProposal.planHash, submittedPlan.planHash);
   assert.equal(storedProposal.clusterId, "ada-recurring");
+  await recordDispatch(service, run, proposer.taskId, "proposer");
   await assert.rejects(service.assignWorker({ ...run, taskId: "plan-proposer-second", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" }), /effective assignment/);
 
   const beforeIdentity = await plans.status({ ...run, maxItems: 1 });
@@ -1627,6 +1628,7 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
   assert.deepEqual(storedIdentity.proposalHashes, [proposal.contentHash]);
   assert.equal(storedIdentity.baselineRevision, seeded.revision);
   assert.equal(storedIdentity.canonicalDependencies.length, 1);
+  await recordDispatch(service, run, reconciler.taskId, "reconciler");
 
   const ready = await new MemImportClusterPlanService(new MemImportService()).status({ ...run, maxItems: 1 });
   assert.equal(ready.readyForMerge, true);
