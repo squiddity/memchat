@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MEM_IMPORT_ROLE_TOOLS, MEM_IMPORT_ROLE_TO_PROFILE, type AssignmentRole } from "./service.js";
 
 export { MEM_IMPORT_ROLE_TO_PROFILE } from "./service.js";
@@ -122,15 +125,39 @@ export function memImportProfileTools(profile: MemImportNamedProfile, adapter: M
   return [...MEM_IMPORT_COORDINATOR_PHASE_TOOLS[profile.phase!], ...lifecycle];
 }
 
+const PROFILE_BODIES_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../skills/mem-import/references/profile-bodies",
+);
+
+const PROFILE_BODY_FILES: Record<string, string> = {
+  extraction: "coordinator-extraction.md",
+  proposal: "coordinator-proposal-reconciliation.md",
+  merge: "coordinator-merge.md",
+  finalize: "coordinator-review-finalization.md",
+  extractor: "extractor.md",
+  proposer: "proposer.md",
+  reconciler: "reconciler.md",
+  merger: "merger.md",
+  reviewer: "reviewer.md",
+  repairer: "repairer.md",
+};
+
+function memImportProfileBody(profile: MemImportNamedProfile): string {
+  const key = profile.kind === "coordinator" ? profile.phase! : profile.role!;
+  const filename = PROFILE_BODY_FILES[key];
+  if (!filename) throw new Error(`No generated mem-import profile body for ${key}`);
+  const body = readFileSync(resolve(PROFILE_BODIES_ROOT, filename), "utf8").trim();
+  if (!body) throw new Error(`Mem-import profile body is empty for ${key}`);
+  return body;
+}
+
 /**
  * Render one adapter-specific profile. Herdr cannot load extension entries from
  * frontmatter, so its live project profiles rely on the package's ambient
- * extension plus explicit/inherited launch entries. pi-subagents receives a
- * child-only extension entry. Its rendering intentionally omits `skills`:
- * pi-subagents adds the generic `read` tool whenever that field is present,
- * which would violate the assignment's exact worker allowlist. The launching
- * task must therefore carry the static mem-import role guidance for that
- * adapter until it supports read-free skill injection.
+ * extension plus explicit/inherited launch entries. Both adapters receive a
+ * generated static role body before their dynamic assignment task; neither
+ * child invokes the monolithic mem-import skill.
  */
 export function renderMemImportNamedProfile(profile: MemImportNamedProfile, adapter: MemImportProfileAdapter): string {
   const tools = memImportProfileTools(profile, adapter);
@@ -148,7 +175,6 @@ export function renderMemImportNamedProfile(profile: MemImportNamedProfile, adap
       : DENIED_GENERIC_TOOLS;
     return [
       ...common,
-      `skills: ${MEM_IMPORT_PROFILE_SKILL}`,
       "system-prompt: replace",
       "session-mode: standalone",
       `spawning: ${profile.spawning}`,
@@ -157,6 +183,8 @@ export function renderMemImportNamedProfile(profile: MemImportNamedProfile, adap
       `auto-exit: ${profile.autoExit}`,
       `interactive: ${profile.kind === "coordinator"}`,
       "---",
+      "",
+      memImportProfileBody(profile),
       "",
     ].join("\n");
   }
@@ -170,6 +198,8 @@ export function renderMemImportNamedProfile(profile: MemImportNamedProfile, adap
     `maxSubagentDepth: ${profile.maxSubagentDepth}`,
     `subagentOnlyExtensions: ${MEM_IMPORT_PROFILE_EXTENSION}`,
     "---",
+    "",
+    memImportProfileBody(profile),
     "",
   ].join("\n");
 }

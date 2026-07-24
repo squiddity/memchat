@@ -7,7 +7,6 @@ import {
   MEM_IMPORT_COORDINATOR_PHASE_TOOLS,
   MEM_IMPORT_NAMED_PROFILES,
   MEM_IMPORT_PROFILE_EXTENSION,
-  MEM_IMPORT_PROFILE_SKILL,
   memImportProfileTools,
   renderMemImportNamedProfile,
   type MemImportNamedProfile,
@@ -87,7 +86,7 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
         assert.equal(fields.spawning, "false");
         assert.equal(fields["auto-exit"], "true");
         assert.equal(fields["session-mode"], "standalone");
-        assert.equal(fields.skills, MEM_IMPORT_PROFILE_SKILL);
+        assert.equal(fields.skills, undefined);
         assert.deepEqual(csv(fields["deny-tools"]).filter((tool) => forbiddenWorkerTools.has(tool)).sort(), [...forbiddenWorkerTools].sort());
       } else {
         assert.equal(fields.defaultContext, "fresh");
@@ -96,7 +95,8 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
         assert.equal(fields.subagentOnlyExtensions, MEM_IMPORT_PROFILE_EXTENSION);
       }
       assert.equal(fields.cwd, undefined, "profiles must inherit the invoking checkout rather than pin a machine path");
-      assert.equal(body.trim(), "", "profiles must not persist task prompts or source payloads");
+      assert.ok(body.trim().length > 0, "profiles must contain generated role guidance");
+      assert.doesNotMatch(body, /coordinatorGrant|\brunId:|\boutputRoot:|candidateId:|sourceId:/i);
     }
   });
 
@@ -121,7 +121,7 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
         assert.equal(fields.spawning, "true");
         assert.equal(fields["auto-exit"], "false");
         assert.equal(fields["session-mode"], "standalone");
-        assert.equal(fields.skills, MEM_IMPORT_PROFILE_SKILL);
+        assert.equal(fields.skills, undefined);
       } else {
         assert.equal(fields.defaultContext, "fresh");
         assert.equal(fields.maxSubagentDepth, "1");
@@ -129,7 +129,7 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
         assert.deepEqual(tools.filter((tool) => tool.startsWith("subagent")), ["subagent"]);
       }
       assert.equal(fields.cwd, undefined);
-      assert.equal(body.trim(), "");
+      assert.ok(body.trim().length > 0, "profiles must contain generated phase guidance");
     }
   });
 }
