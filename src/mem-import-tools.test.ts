@@ -24,7 +24,7 @@ function serializedModelToolResultSize(value: unknown): number {
 
 async function recordDispatch(service: MemImportService, run: { outputRoot: string; runId: string; coordinatorGrant: string }, taskId: string, role: AssignmentRole): Promise<void> {
   const tools = MEM_IMPORT_ROLE_TOOLS[role];
-  await service.recordWorkerDispatch({ ...run, taskId, facility: "ordinary-subagent", hostTaskId: `host-${taskId}`, requestedTools: tools, observedTools: tools, outcome: "completed" });
+  await service.recordWorkerDispatch({ ...run, taskId, facility: "subagent", hostTaskId: `host-${taskId}`, requestedTools: tools, observedTools: tools, outcome: "completed" });
 }
 
 async function setup(service = new MemImportService()): Promise<{
@@ -706,9 +706,9 @@ test("mem-import prevents live assignment overlap and stale submissions after re
 
   await service.revokeAssignment({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: first.taskId });
   const tools = MEM_IMPORT_ROLE_TOOLS.extractor;
-  await service.recordWorkerDispatch({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: first.taskId, facility: "ordinary-subagent", hostTaskId: "interrupted-extractor", requestedTools: tools, observedTools: tools, outcome: "cancelled" });
+  await service.recordWorkerDispatch({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: first.taskId, facility: "subagent", hostTaskId: "interrupted-extractor", requestedTools: tools, observedTools: tools, outcome: "cancelled" });
   const retry = await service.assignExtractor({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "retry", unitIds: [unit.unitId], retriesTaskId: first.taskId });
-  await service.recordWorkerDispatch({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: retry.taskId, facility: "ordinary-subagent", hostTaskId: "resumed-extractor", requestedTools: tools, observedTools: tools, outcome: "completed" });
+  await service.recordWorkerDispatch({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: retry.taskId, facility: "subagent", hostTaskId: "resumed-extractor", requestedTools: tools, observedTools: tools, outcome: "completed" });
   await service.submitExtraction({ ...retry, unitId: unit.unitId, stage: validStage(unit) });
   await assert.rejects(
     service.submitExtraction({ ...first, unitId: unit.unitId, stage: validStage(unit) }),
@@ -930,7 +930,7 @@ test("mem-import U2 fences merge writes, preserves immutable revisions, and bind
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize", fence: finalLease.fence });
 });
 
-test("mem-import finalization rejects inline, managed, or missing semantic dispatch receipts", async () => {
+test("mem-import finalization rejects inline or missing semantic dispatch receipts", async () => {
   const { output, run, units } = await setup();
   const service = new MemImportService();
   const u2 = new MemImportU2Service(service);
@@ -949,14 +949,14 @@ test("mem-import finalization rejects inline, managed, or missing semantic dispa
 
   const tools = MEM_IMPORT_ROLE_TOOLS.extractor;
   await assert.rejects(
-    service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "ordinary-subagent", hostTaskId: "/private/session.jsonl", requestedTools: tools, observedTools: tools, outcome: "completed" }),
+    service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "subagent", hostTaskId: "/private/session.jsonl", requestedTools: tools, observedTools: tools, outcome: "completed" }),
     /sanitized opaque identifier/,
   );
-  await service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "managed-agent", hostTaskId: "managed-extract", requestedTools: tools, observedTools: tools, outcome: "completed" });
-  const managedLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize" });
-  const managed = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize", fence: managedLease.fence });
-  assert.equal(managed.finalized, false);
-  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize", fence: managedLease.fence });
+  await service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "inline", hostTaskId: "inline-extract", requestedTools: tools, observedTools: tools, outcome: "completed" });
+  const inlineLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize" });
+  const inline = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize", fence: inlineLease.fence });
+  assert.equal(inline.finalized, false);
+  await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-finalize", fence: inlineLease.fence });
 
   await recordDispatch(service, run, extractor.taskId, "extractor");
   const finalLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "dispatch-success" });
@@ -1007,7 +1007,7 @@ test("mem-import explicit failure is terminal for every semantic mutation surfac
   await assert.rejects(service.assignExtractor({ ...run, taskId: "after-failure-extractor", unitIds: [unit.unitId] }), terminal);
   await assert.rejects(service.assignWorker({ ...run, taskId: "after-failure-reviewer", role: "reviewer" }), terminal);
   await assert.rejects(service.assignmentBrief({ ...run, taskId: extractor.taskId, grant: extractor.grant }), terminal);
-  await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "ordinary-subagent", hostTaskId: "terminal-host", requestedTools: extractor.tools, observedTools: extractor.tools, outcome: "completed" }), terminal);
+  await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "subagent", hostTaskId: "terminal-host", requestedTools: extractor.tools, observedTools: extractor.tools, outcome: "completed" }), terminal);
   await assert.rejects(service.revokeAssignment({ ...run, taskId: extractor.taskId }), terminal);
   await assert.rejects(service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) }), terminal);
   await assert.rejects(proposals.submitWorkerProposalBody({ ...proposer, artifacts: [], candidateDispositions: [], rationale: "Terminal proposal must not persist." }), terminal);
@@ -1586,7 +1586,7 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
   assert.deepEqual(failedProposer.candidateIds, candidateIds);
   assert.deepEqual(failedProposer.unitIds, units.map((unit) => unit.unitId));
   await assert.rejects(service.assignWorker({ ...run, taskId: "plan-proposer-overlap", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" }), /live assignment/);
-  await service.recordWorkerDispatch({ ...run, taskId: failedProposer.taskId, facility: "ordinary-subagent", hostTaskId: "failed-plan-proposer", requestedTools: failedProposer.tools, observedTools: failedProposer.tools, outcome: "failed" });
+  await service.recordWorkerDispatch({ ...run, taskId: failedProposer.taskId, facility: "subagent", hostTaskId: "failed-plan-proposer", requestedTools: failedProposer.tools, observedTools: failedProposer.tools, outcome: "failed" });
   await assert.rejects(service.assignWorker({ ...run, taskId: "plan-proposer-unlinked-retry", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring" }), /requires retriesTaskId/);
   const proposer = await service.assignWorker({ ...run, taskId: "plan-proposer-retry", role: "proposer", planHash: submittedPlan.planHash, clusterId: "ada-recurring", retriesTaskId: failedProposer.taskId });
   const proposedAda = {

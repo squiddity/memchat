@@ -16,7 +16,7 @@ export type AcceptanceProfile = {
 };
 
 export type HostProbeEvidence = {
-  facility: "ordinary-subagent" | "coordinator-direct";
+  facility: "subagent" | "coordinator-direct";
   hostTaskId?: string;
   /** Must be derived from the child runtime, never copied from assignment prose. */
   evidenceSource?: "host-runtime";
@@ -92,7 +92,7 @@ export function buildAssignmentBoundProbeLaunch(prepared: PreparedAcceptanceProb
   thinking: string;
   task: string;
 } {
-  if (!prepared.assignment) throw new Error("Normalization is coordinator-owned and does not use an ordinary-subagent launch");
+  if (!prepared.assignment) throw new Error("Normalization is coordinator-owned and does not use a subagent launch");
   requireSafeText(model, "model");
   requireSafeText(thinking, "thinking");
   return {
@@ -134,7 +134,7 @@ export class MemImportAcceptanceService {
       if (!status.normalized || status.unitCount !== prepared.expected.unitCount) throw new Error("Normalization acceptance effect does not match the fixture expectation");
       return common;
     }
-    if (evidence.facility !== "ordinary-subagent" || !evidence.hostTaskId) throw new Error("Semantic acceptance requires an ordinary-subagent host identity");
+    if (evidence.facility !== "subagent" || !evidence.hostTaskId) throw new Error("Semantic acceptance requires a subagent host identity");
     if (evidence.evidenceSource !== "host-runtime" || evidence.profileStatus !== "verified" || evidence.toolProfileStatus !== "exact") throw new Error("Semantic acceptance requires host-derived verified/exact tool-profile evidence");
     if (evidence.isolationMode !== "explicit" && evidence.isolationMode !== "sdk-in-memory") throw new Error("Semantic acceptance requires explicit or SDK-isolated runtime evidence");
     if (evidence.auxiliaryLaunchCount !== 0) throw new Error("Semantic acceptance forbids auxiliary or helper child launches");
@@ -158,7 +158,7 @@ export class MemImportAcceptanceService {
     const effects = targetEntries.map((entry) => entry.effect!);
     if (effects.length !== 1) throw new Error(`Acceptance probe task must have exactly one durable effect; found ${effects.length}`);
     const dispatch = targetEntries[0]!.dispatch;
-    if (!dispatch || dispatch.facility !== "ordinary-subagent" || dispatch.outcome !== "completed" || !dispatch.exactToolMatch || dispatch.hostTaskId !== evidence.hostTaskId) throw new Error("Acceptance probe durable dispatch does not match authoritative host evidence");
+    if (!dispatch || dispatch.facility !== "subagent" || dispatch.outcome !== "completed" || !dispatch.exactToolMatch || dispatch.hostTaskId !== evidence.hostTaskId) throw new Error("Acceptance probe durable dispatch does not match authoritative host evidence");
     const expectedKind = prepared.expected.kind;
     if (typeof expectedKind !== "string" || effects[0]!.kind !== expectedKind) throw new Error(`Acceptance probe effect kind ${effects[0]!.kind} does not match expected ${String(expectedKind)}`);
     const expectedContentHash = prepared.expected.contentHash;

@@ -48,7 +48,7 @@ export const MEM_IMPORT_ROLE_TO_PROFILE: Record<AssignmentRole, string> = {
 };
 
 export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
-export type DispatchFacility = "ordinary-subagent" | "managed-agent" | "inline" | "unknown";
+export type DispatchFacility = "subagent" | "inline" | "unknown";
 export type DispatchOutcome = "completed" | "failed" | "cancelled";
 export type MemImportTerminalStatus = "failed" | "finalized";
 
@@ -61,7 +61,7 @@ const MUTATING_WORKER_CAPABILITIES = new Set<MemImportCapability>([
   "review:submit",
 ]);
 
-/** Exact model-visible role allowlists expected from an ordinary semantic worker. */
+/** Exact model-visible role allowlists expected from a semantic worker. */
 export const MEM_IMPORT_ROLE_TOOLS: Record<AssignmentRole, string[]> = {
   extractor: ["mem_source_read_unit", "mem_extraction_status", "mem_extraction_read", "mem_extraction_validate", "mem_extraction_submit"],
   proposer: ["mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_proposal_submit"],
@@ -1221,7 +1221,7 @@ export class MemImportService {
     const run = await this.authorizeCoordinatorMutation(options);
     const assignment = await readAssignment(run.outputRoot, options.taskId);
     if (assignment.runId !== run.runId) throw new Error("Dispatch assignment does not belong to this run");
-    if (!["ordinary-subagent", "managed-agent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid dispatch facility");
+    if (!["subagent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid dispatch facility");
     if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid dispatch outcome");
     assertHostTaskId(options.hostTaskId);
     if (!Array.isArray(options.requestedTools) || !Array.isArray(options.observedTools) || options.requestedTools.some((tool) => typeof tool !== "string" || !tool.trim()) || options.observedTools.some((tool) => typeof tool !== "string" || !tool.trim())) throw new Error("Dispatch tool lists must contain non-empty names");
@@ -1249,7 +1249,7 @@ export class MemImportService {
     return record;
   }
 
-  /** Return whether one semantic effect has an active exact ordinary-worker dispatch receipt. */
+  /** Return whether one semantic effect has an active exact subagent dispatch receipt. */
   async hasCompletedExactWorkerDispatch(outputRoot: string, runId: string, taskId: string, role: AssignmentRole): Promise<boolean> {
     try {
       const assignment = await readAssignment(outputRoot, taskId);
@@ -1262,7 +1262,7 @@ export class MemImportService {
         && dispatch.runId === runId
         && dispatch.taskId === taskId
         && dispatch.role === role
-        && dispatch.facility === "ordinary-subagent"
+        && dispatch.facility === "subagent"
         && dispatch.outcome === "completed"
         && sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[role])
         && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[role]);
@@ -1359,7 +1359,7 @@ export class MemImportService {
       try { dispatch = JSON.parse(await readFile(dispatchFile, "utf-8")) as MemImportDispatchRecord; }
       catch { diagnostics.push({ taskId, message: "Semantic worker dispatch receipt is unreadable." }); continue; }
       if (dispatch.version !== 1 || dispatch.kind !== "mem-import-worker-dispatch" || dispatch.runId !== assignment.runId || dispatch.taskId !== taskId || dispatch.role !== assignment.role) diagnostics.push({ taskId, message: "Semantic worker dispatch receipt does not correlate to its assignment." });
-      else if (dispatch.facility !== "ordinary-subagent") diagnostics.push({ taskId, message: `Semantic worker used disallowed ${dispatch.facility} facility.` });
+      else if (dispatch.facility !== "subagent") diagnostics.push({ taskId, message: `Semantic worker used disallowed ${dispatch.facility} facility.` });
       else if (dispatch.outcome !== "completed") diagnostics.push({ taskId, message: `Semantic worker dispatch ended ${dispatch.outcome}.` });
       else if (!sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) || !sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role])) diagnostics.push({ taskId, message: "Semantic worker dispatch allowlist does not match its role." });
     }

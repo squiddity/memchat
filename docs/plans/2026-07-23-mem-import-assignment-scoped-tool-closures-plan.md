@@ -325,7 +325,7 @@ observedAuxiliaryTools?: string[];
 
 Validation requires canonical requested/observed cwd, exact role profile, exact semantic tools, allowed lifecycle tools only, matching binding/schema/extension, and sanitized model/thinking. Dispatch records become append-only or immutable-idempotent; a later different receipt cannot overwrite prior evidence.
 
-Effects establish application binding because the service writes them after closure authorization. Dispatch establishes host lifecycle/profile evidence, not OS isolation. Effect inventory, checks, and finalization require matching assignment binding, stable effect slot, exact completed ordinary-subagent dispatch, and no conflicting effect.
+Effects establish application binding because the service writes them after closure authorization. Dispatch establishes host lifecycle/profile evidence, not OS isolation. Effect inventory, checks, and finalization require matching assignment binding, stable effect slot, exact completed subagent dispatch, and no conflicting effect.
 
 ## Implementation phases
 

@@ -55,7 +55,7 @@ export async function runFocusedAcceptance(options: {
         evidence = { facility: "coordinator-direct", requestedTools: prepared.assignmentTools, observedTools: prepared.assignmentTools, toolCalls: [prepared.targetTool], outcome: "completed" };
       } else {
         evidence = await options.host.launch(prepared, { model: profile.model, thinking: profile.thinking });
-        if (evidence.facility !== "ordinary-subagent" || !evidence.hostTaskId) throw new Error(`Acceptance host returned invalid semantic lifecycle evidence for ${probe}`);
+        if (evidence.facility !== "subagent" || !evidence.hostTaskId) throw new Error(`Acceptance host returned invalid semantic lifecycle evidence for ${probe}`);
         await base.recordWorkerDispatch({
           outputRoot: prepared.outputRoot,
           runId: prepared.runId,

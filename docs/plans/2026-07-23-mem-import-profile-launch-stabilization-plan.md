@@ -37,7 +37,7 @@ Implemented in separate repository commits:
 - Named parent profiles can enforce exact child-profile allowlists, with policy preserved in signed launch profiles and exposed through sanitized telemetry.
 - Recursive `subagent_done` is guarded by a host-owned tracked-descendant registry.
 - `memchat` now owns the role-to-profile map, returns exact assignment/brief profile keys, generates concise role/phase bodies, and removes child `skills: mem-import` invocation.
-- Planned proposal and reconciliation effects require completed exact ordinary-subagent dispatch evidence before contributing to merge readiness.
+- Planned proposal and reconciliation effects require completed exact subagent dispatch evidence before contributing to merge readiness.
 
 Remaining acceptance work includes focused negative launcher tests, an extraction-only live test, the tiny four-phase import, and the post-acceptance authorization decision. The stabilization changes also revealed cleanup work in the generic executor repository: samples and tests still contain `mem-import`-specific names, prompts, or fixtures and should be made generic before the repository is treated as reusable.
 

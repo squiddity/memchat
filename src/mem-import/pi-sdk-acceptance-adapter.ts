@@ -91,7 +91,7 @@ export class PiSdkAcceptanceHostAdapter implements AssignmentBoundAcceptanceHost
       session.dispose();
     }
     return {
-      facility: "ordinary-subagent",
+      facility: "subagent",
       hostTaskId: session.sessionId,
       evidenceSource: "host-runtime",
       profileStatus: "verified",

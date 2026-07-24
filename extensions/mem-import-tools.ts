@@ -412,11 +412,11 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_import_record_dispatch",
     label: "Record Worker Dispatch",
-    description: "Persist host-issued ordinary-subagent dispatch/lifecycle evidence for one assigned semantic worker. Finalization rejects effects lacking a completed exact-allowlist ordinary-subagent receipt.",
+    description: "Persist host-issued subagent dispatch/lifecycle evidence for one assigned semantic worker. Finalization rejects effects lacking a completed exact-allowlist subagent receipt.",
     parameters: Type.Object({
       ...coordinatorSchema,
       taskId: Type.String({ minLength: 1 }),
-      facility: Type.Union([Type.Literal("ordinary-subagent"), Type.Literal("managed-agent"), Type.Literal("inline"), Type.Literal("unknown")]),
+      facility: Type.Union([Type.Literal("subagent"), Type.Literal("inline"), Type.Literal("unknown")]),
       hostTaskId: Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$", description: "Sanitized opaque host-issued child/session identifier; never a path, grant, or prompt." }),
       requestedTools: Type.Array(Type.String({ minLength: 1 })),
       observedTools: Type.Array(Type.String({ minLength: 1 })),
