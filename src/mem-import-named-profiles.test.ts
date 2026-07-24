@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
+  MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN,
   MEM_IMPORT_COORDINATOR_PHASE_TOOLS,
   MEM_IMPORT_NAMED_PROFILES,
   MEM_IMPORT_PROFILE_EXTENSION,
@@ -108,6 +109,10 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
       assert.deepEqual(tools, [...MEM_IMPORT_COORDINATOR_PHASE_TOOLS[profile.phase], ...lifecycle]);
       assert.deepEqual(tools, memImportProfileTools(profile, adapter));
       assert.equal(fields.name, `mem-import-coordinator-${profile.phase}`);
+      assert.deepEqual(
+        csv(fields["allowed-child-agents"]),
+        adapter === "pi-herdr-subagents" ? [...MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN[profile.phase]] : [],
+      );
       assert.ok(tools.includes("subagent"));
       assert.equal(tools.some((tool) => Object.values(MEM_IMPORT_ROLE_TOOLS).some((roleTools) => roleTools.includes(tool))), false);
       assert.equal(tools.some((tool) => ["bash", "read", "write", "edit"].includes(tool)), false);

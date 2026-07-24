@@ -8,6 +8,7 @@ skills: mem-import
 system-prompt: replace
 session-mode: standalone
 spawning: true
+allowed-child-agents: mem-import-merger
 deny-tools: bash, read, write, edit
 auto-exit: false
 interactive: true

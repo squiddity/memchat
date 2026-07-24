@@ -92,7 +92,8 @@ test("mem-import typed extraction flow normalizes, scopes reads, and atomically 
     blockCount: units[0]!.blockCount,
   }]);
   const brief = await service.assignmentBrief({ ...run, taskId: assignment.taskId, grant: assignment.grant });
-  assert.deepEqual(brief, { outputRoot: output, runId: run.runId, taskId: assignment.taskId, grant: assignment.grant, role: "extractor", units: [{ unitId: units[0]!.unitId, sourceId: units[0]!.sourceId }], candidateIds: [], proposalHashes: [], checkpointIds: [], actionIds: [], tools: MEM_IMPORT_ROLE_TOOLS.extractor });
+  assert.deepEqual(brief, { outputRoot: output, runId: run.runId, taskId: assignment.taskId, grant: assignment.grant, role: "extractor", units: [{ unitId: units[0]!.unitId, sourceId: units[0]!.sourceId }], candidateIds: [], proposalHashes: [], checkpointIds: [], actionIds: [], profile: "mem-import-extractor", tools: MEM_IMPORT_ROLE_TOOLS.extractor });
+  assert.equal(assignment.profile, "mem-import-extractor");
   assert.deepEqual(assignment.tools, MEM_IMPORT_ROLE_TOOLS.extractor);
   await assert.rejects(service.assignmentBrief({ ...run, taskId: assignment.taskId, grant: "forged" }), /Invalid assignment grant/);
   const source = await service.readAssignedUnit({ ...assignment, unitId: units[0]!.unitId, maxChars: 1000 });

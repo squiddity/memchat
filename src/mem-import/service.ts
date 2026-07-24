@@ -36,6 +36,17 @@ export const MEM_IMPORT_CAPABILITIES = [
 export type ExtractorCapability = (typeof EXTRACTOR_CAPABILITIES)[number];
 export type MemImportCapability = (typeof MEM_IMPORT_CAPABILITIES)[number];
 export type AssignmentRole = "extractor" | "proposer" | "reconciler" | "merger" | "reviewer" | "repairer";
+
+/** Service-owned exact profile key for each semantic assignment role. */
+export const MEM_IMPORT_ROLE_TO_PROFILE: Record<AssignmentRole, string> = {
+  extractor: "mem-import-extractor",
+  proposer: "mem-import-proposer",
+  reconciler: "mem-import-reconciler",
+  merger: "mem-import-merger",
+  reviewer: "mem-import-reviewer",
+  repairer: "mem-import-repairer",
+};
+
 export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
 export type DispatchFacility = "ordinary-subagent" | "managed-agent" | "inline" | "unknown";
 export type DispatchOutcome = "completed" | "failed" | "cancelled";
@@ -186,6 +197,8 @@ export type ExtractorAssignmentResult = {
   units: ExtractorAssignmentUnit[];
   expiresAt: string;
   capabilities: ExtractorCapability[];
+  /** Exact service-derived named profile for this worker. */
+  profile: string;
   /** Exact model-visible tools the host must allow for this worker. */
   tools: string[];
 };
@@ -207,6 +220,8 @@ export type WorkerAssignmentResult = {
   reconciliationSetId?: string;
   checkpointIds: string[];
   actionIds: string[];
+  /** Exact service-derived named profile for this worker. */
+  profile: string;
   /** Exact model-visible tools the host must allow for this worker. */
   tools: string[];
   units: Array<{ unitId: string; sourceId: string }>;
@@ -834,7 +849,7 @@ export class MemImportService {
       lifecycleOutcome: "assigned",
       ...(supersedesTaskIds.length > 0 ? { supersedesTaskIds } : {}),
       ...(options.retriesTaskId ? { retriesTaskId: options.retriesTaskId } : {}),
-      ...(audit ? { audit } : {}),
+      audit: { ...(audit ?? {}), profile: MEM_IMPORT_ROLE_TO_PROFILE.extractor },
     };
 
     await withUnitLocks(run.outputRoot, unitIds, async () => {
@@ -877,6 +892,7 @@ export class MemImportService {
       }),
       expiresAt: assignment.expiresAt,
       capabilities: [...EXTRACTOR_CAPABILITIES],
+      profile: MEM_IMPORT_ROLE_TO_PROFILE.extractor,
       tools: [...MEM_IMPORT_ROLE_TOOLS.extractor],
     };
   }
@@ -1048,7 +1064,7 @@ export class MemImportService {
       expiresAt: expiresAt.toISOString(),
       lifecycleOutcome: "assigned",
       ...(options.retriesTaskId ? { retriesTaskId: options.retriesTaskId } : {}),
-      ...(sanitizeAudit(options.audit) ? { audit: sanitizeAudit(options.audit) } : {}),
+      audit: { ...(sanitizeAudit(options.audit) ?? {}), profile: MEM_IMPORT_ROLE_TO_PROFILE[options.role] },
     };
     await writeJson(assignmentPath(run.outputRoot, assignment.taskId), assignment);
     return {
@@ -1072,6 +1088,7 @@ export class MemImportService {
       ...(reconciliationSetId ? { reconciliationSetId } : {}),
       checkpointIds,
       actionIds,
+      profile: MEM_IMPORT_ROLE_TO_PROFILE[assignment.role],
       tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
     };
   }
@@ -1105,6 +1122,7 @@ export class MemImportService {
     reconciliationSetId?: string;
     checkpointIds: string[];
     actionIds: string[];
+    profile: string;
     tools: string[];
   }> {
     return this.withRunMutation(options.outputRoot, () => this.assignmentBriefLocked(options));
@@ -1131,6 +1149,7 @@ export class MemImportService {
     reconciliationSetId?: string;
     checkpointIds: string[];
     actionIds: string[];
+    profile: string;
     tools: string[];
   }> {
     const run = await this.authorizeCoordinatorMutation(options);
@@ -1161,6 +1180,7 @@ export class MemImportService {
       ...(assignment.reconciliationSetId ? { reconciliationSetId: assignment.reconciliationSetId } : {}),
       checkpointIds: assignment.allowedCheckpointIds ?? [],
       actionIds: assignment.allowedActionIds ?? [],
+      profile: MEM_IMPORT_ROLE_TO_PROFILE[assignment.role],
       tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
     };
   }

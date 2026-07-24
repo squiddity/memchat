@@ -1,4 +1,6 @@
-import { MEM_IMPORT_ROLE_TOOLS, type AssignmentRole } from "./service.js";
+import { MEM_IMPORT_ROLE_TOOLS, MEM_IMPORT_ROLE_TO_PROFILE, type AssignmentRole } from "./service.js";
+
+export { MEM_IMPORT_ROLE_TO_PROFILE } from "./service.js";
 
 export const MEM_IMPORT_PROFILE_EXTENSION = "./extensions/mem-import-tools.ts";
 export const MEM_IMPORT_PROFILE_SKILL = "mem-import";
@@ -7,6 +9,14 @@ export const MEM_IMPORT_PROFILE_THINKING = "low";
 
 export type MemImportProfileAdapter = "pi-herdr-subagents" | "pi-subagents";
 export type MemImportCoordinatorPhase = "extraction" | "proposal" | "merge" | "finalize";
+
+/** Service-owned child profile policy for each coordinator phase. */
+export const MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN: Record<MemImportCoordinatorPhase, readonly string[]> = {
+  extraction: [MEM_IMPORT_ROLE_TO_PROFILE.extractor],
+  proposal: [MEM_IMPORT_ROLE_TO_PROFILE.proposer, MEM_IMPORT_ROLE_TO_PROFILE.reconciler],
+  merge: [MEM_IMPORT_ROLE_TO_PROFILE.merger],
+  finalize: [MEM_IMPORT_ROLE_TO_PROFILE.reviewer, MEM_IMPORT_ROLE_TO_PROFILE.repairer],
+};
 
 const HERDR_COORDINATOR_LIFECYCLE_TOOLS = ["subagent", "subagent_interrupt", "subagent_resume"] as const;
 const PI_SUBAGENTS_COORDINATOR_LIFECYCLE_TOOLS = ["subagent"] as const;
@@ -66,6 +76,7 @@ export type MemImportNamedProfile = {
   spawning: boolean;
   autoExit: boolean;
   maxSubagentDepth: number;
+  allowedChildAgents?: readonly string[];
 };
 
 const coordinatorProfiles: MemImportNamedProfile[] = ([
@@ -81,10 +92,11 @@ const coordinatorProfiles: MemImportNamedProfile[] = ([
   spawning: true,
   autoExit: false,
   maxSubagentDepth: 1,
+  allowedChildAgents: MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN[phase],
 }));
 
 const workerProfiles: MemImportNamedProfile[] = (Object.keys(MEM_IMPORT_ROLE_TOOLS) as AssignmentRole[]).map((role) => ({
-  name: `mem-import-${role}`,
+  name: MEM_IMPORT_ROLE_TO_PROFILE[role],
   description: `Assignment-bound mem-import ${role} worker`,
   kind: "worker",
   role,
@@ -140,6 +152,7 @@ export function renderMemImportNamedProfile(profile: MemImportNamedProfile, adap
       "system-prompt: replace",
       "session-mode: standalone",
       `spawning: ${profile.spawning}`,
+      ...(profile.allowedChildAgents ? [`allowed-child-agents: ${profile.allowedChildAgents.join(", ")}`] : []),
       `deny-tools: ${denied.join(", ")}`,
       `auto-exit: ${profile.autoExit}`,
       `interactive: ${profile.kind === "coordinator"}`,
