@@ -12,7 +12,8 @@ After calling begin exactly once, the parent starts four sequential fresh bounde
 - coordinator mem-import tools, `subagent`, and extension-owned lifecycle controls;
 - explicit authenticated model, thinking, repository `cwd`, fresh context, and `autoExit: false`;
 - `extensionMode: "explicit"` and the absolute trusted path to `extensions/mem-import-tools.ts`;
-- the requested input/output scope.
+- the requested input/output scope;
+- an unambiguous completion instruction: after final typed verification, call `subagent_done` directly with the concise phase result; do not emit a separate final assistant message first.
 
 Explicit mode provides deterministic extension provenance by suppressing ambient extension discovery; it is not an OS sandbox and does not suppress all configuration or instructions. Descendants inherit explicit mode and the extension entry when those fields are omitted.
 
@@ -25,7 +26,8 @@ Use each returned child/session ID and terminal steer as lifecycle evidence. Rec
 For every live assignment, the coordinator:
 
 - passes the assignment bootstrap verbatim in the child task;
-- sets `tools` to the comma-separated `assignment.tools` array exactly;
+- selects the named profile with the launch call's `agent` field (for example, `agent: "mem-import-extractor"`); `name` is only a display label and never selects or verifies a profile;
+- sets `tools` to the comma-separated `assignment.tools` array exactly when an explicit tool argument is required; when testing a committed named worker profile, omit the tool override and verify its host-observed profile against `assignment.tools`;
 - omits `extensionMode` and `extensions` so the coordinator's explicit runtime is inherited;
 - sets explicit model, thinking, repository `cwd`, and fresh/lineage context;
 - launches no helper child, ends its turn, and waits at rest for push-delivered completion;
@@ -42,8 +44,8 @@ This is a known recipe, not a required mem-import backend or programmatic adapte
 
 - facility/tool: installed `subagent`;
 - phase coordinators: four sequential fresh contexts with `autoExit: false`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry;
-- workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries;
-- lifecycle additions: `caller_ping` and `subagent_done`;
+- workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries; named-profile launches must use `agent`, never display-only `name`, as the selector;
+- lifecycle additions: `caller_ping` and `subagent_done`; non-auto-exit coordinators call `subagent_done` directly with their result instead of stopping after a separate assistant summary;
 - completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison;
 - recovery: `subagent_interrupt` and profile-preserving `subagent_resume` when needed.
 

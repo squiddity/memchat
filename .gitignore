@@ -10,7 +10,10 @@ dist/
 .env.*
 
 # Agent/tool local state
-.pi/
+.pi/*
+!.pi/agents/
+.pi/agents/*
+!.pi/agents/mem-import-*.md
 .claude/
 .pi-subagents/
 .memchat*/

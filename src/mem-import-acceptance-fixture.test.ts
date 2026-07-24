@@ -78,6 +78,8 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(adapter, /Real imports still require each assignment's exact profile/);
   assert.match(adapter, /four sequential fresh bounded coordinators/);
   assert.match(adapter, /Recover only the current incomplete phase/);
+  assert.match(adapter, /call `subagent_done` directly[\s\S]*do not emit a separate final assistant message first/);
+  assert.match(adapter, /`agent` field[\s\S]*`name` is only a display label and never selects or verifies a profile/);
   assert.match(genericAdapter, /four sequential fresh phase coordinators/);
   assert.match(genericAdapter, /passes no prior coordinator prose between phases/);
 });
