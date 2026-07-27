@@ -306,6 +306,7 @@ function renderAuditLog(audit: WorldImportRunAudit | MemImportRunAuditV2 | undef
       `- **Source units:** ${audit.source.normalizedUnits}`,
       ...(audit.merge ? [`- **Canonical merge:** revision ${audit.merge.revision}, \`${audit.merge.contentHash}\``] : []),
       `- **Result:** ${audit.status}${audit.finalization ? `; ${audit.finalization.errorCount} error(s), ${audit.finalization.warningCount} warning(s)` : ""}`,
+      ...(audit.usage ? [`- **Model usage:** ${audit.usage.availability}; ${audit.usage.totals.totalTokens ?? "unavailable"} total tokens; ${audit.usage.totals.cost.total ?? "unavailable"} provider-reported cost across ${audit.usage.recordCount} session record(s)`] : []),
       "- **Audit record:** [`stages/import-run.json`](../stages/import-run.json)",
       "",
       "## Durable Evidence",

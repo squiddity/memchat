@@ -2,13 +2,14 @@ import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { MemImportService } from "../src/mem-import/service.js";
+import { PiHerdrUsageResolver } from "../src/mem-import/pi-herdr-usage-resolver.js";
 import { MemImportU2Service } from "../src/mem-import/u2-service.js";
 import { MemImportProposalService } from "../src/mem-import/proposal-service.js";
 import { MemImportCompendiumService } from "../src/mem-import/compendium-service.js";
 import { MemImportIdentityService } from "../src/mem-import/identity-service.js";
 import { MemImportClusterPlanService } from "../src/mem-import/cluster-plan-service.js";
 
-const service = new MemImportService();
+const service = new MemImportService(undefined, new PiHerdrUsageResolver());
 const u2 = new MemImportU2Service(service);
 const proposals = new MemImportProposalService(service);
 const compendia = new MemImportCompendiumService(service);
@@ -72,6 +73,49 @@ const assignmentAuditSchema = Type.Object({
   adapter: Type.Optional(Type.String({ minLength: 1, description: "Worker adapter identity." })),
   profile: Type.Optional(Type.String({ minLength: 1, description: "Worker role/profile identity." })),
 }, { additionalProperties: false });
+
+const nullableMetricSchema = Type.Union([Type.Number({ minimum: 0 }), Type.Null()]);
+const usageCostSchema = Type.Object({
+  input: nullableMetricSchema,
+  output: nullableMetricSchema,
+  cacheRead: nullableMetricSchema,
+  cacheWrite: nullableMetricSchema,
+  total: nullableMetricSchema,
+}, { additionalProperties: false });
+const usageTotalsFields = {
+  version: Type.Literal(1),
+  sessions: Type.Integer({ minimum: 0 }),
+  turns: Type.Integer({ minimum: 0 }),
+  responses: Type.Integer({ minimum: 0 }),
+  inputTokens: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  outputTokens: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  cacheReadTokens: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  cacheWriteTokens: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  reasoningTokens: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  totalTokens: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+  cost: usageCostSchema,
+};
+const runtimeLabelSchema = Type.String({ minLength: 1, maxLength: 200, pattern: "^[^\\x00-\\x1F\\x7F]+$", description: "Trimmed, control-free runtime identifier or setting; never include prompts, credentials, or account identifiers." });
+const usageEvidenceSchema = Type.Union([
+  Type.Object({
+    version: Type.Literal(1),
+    status: Type.Literal("available"),
+    source: Type.Literal("subagent-result"),
+    usage: Type.Object(usageTotalsFields, { additionalProperties: false }),
+    usageByModel: Type.Array(Type.Object({
+      ...usageTotalsFields,
+      sessions: Type.Optional(Type.Never()),
+      turns: Type.Optional(Type.Never()),
+      provider: Type.String({ minLength: 1, maxLength: 200 }),
+      model: Type.String({ minLength: 1, maxLength: 200 }),
+    }, { additionalProperties: false }), { maxItems: 32 }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    version: Type.Literal(1),
+    status: Type.Literal("unavailable"),
+    reason: Type.Union([Type.Literal("adapter-unavailable"), Type.Literal("host-result-missing")]),
+  }, { additionalProperties: false }),
+], { description: "Optional live schema-v1 usage hint. Adapter-specific post-facto sidecar retrieval is authoritative when configured; never estimate missing values." });
 
 const coordinatorSchema = {
   outputRoot: Type.String({ description: "Absolute or relative mem-import output root; it is canonicalized and bound when the run begins." }),
@@ -429,17 +473,43 @@ export default function memImportTools(pi: ExtensionAPI) {
       ...coordinatorSchema,
       taskId: Type.String({ minLength: 1 }),
       facility: Type.Union([Type.Literal("subagent"), Type.Literal("inline"), Type.Literal("unknown")]),
-      hostTaskId: Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$", description: "Sanitized opaque host-issued child/session identifier; never a path, grant, or prompt." }),
+      hostAdapter: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Exact selected host adapter identity, such as pi-herdr-subagents." })),
+      hostTaskId: Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$", description: "Exact sanitized running-child ID; never a path, grant, or prompt." }),
+      hostSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$", description: "Sanitized session filename stem used to bind resumed children without reading the transcript." })),
       requestedTools: Type.Array(Type.String({ minLength: 1 })),
       observedTools: Type.Array(Type.String({ minLength: 1 })),
       outcome: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled")]),
-      requestedModel: Type.Optional(Type.String({ minLength: 1 })),
-      observedModel: Type.Optional(Type.String({ minLength: 1 })),
-      requestedThinking: Type.Optional(Type.String({ minLength: 1 })),
-      observedThinking: Type.Optional(Type.String({ minLength: 1 })),
+      requestedModel: Type.Optional(runtimeLabelSchema),
+      observedModel: Type.Optional(runtimeLabelSchema),
+      requestedThinking: Type.Optional(runtimeLabelSchema),
+      observedThinking: Type.Optional(runtimeLabelSchema),
+      usageEvidence: Type.Optional(usageEvidenceSchema),
     }),
     async execute(_id, params) {
       try { return result(await service.recordWorkerDispatch(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_record_session",
+    label: "Record Coordinator Session",
+    description: "Persist one phase coordinator's sanitized host identity and lifecycle. Optional live usage is non-authoritative when adapter-specific post-facto retrieval is configured. This audit-only operation remains allowed after finalization.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      phase: Type.Union([Type.Literal("extraction"), Type.Literal("proposal-reconciliation"), Type.Literal("merge"), Type.Literal("review-finalization")]),
+      facility: Type.Union([Type.Literal("subagent"), Type.Literal("inline"), Type.Literal("unknown")]),
+      hostAdapter: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+      hostTaskId: Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$" }),
+      hostSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$" })),
+      outcome: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled")]),
+      requestedModel: Type.Optional(runtimeLabelSchema),
+      observedModel: Type.Optional(runtimeLabelSchema),
+      requestedThinking: Type.Optional(runtimeLabelSchema),
+      observedThinking: Type.Optional(runtimeLabelSchema),
+      usageEvidence: Type.Optional(usageEvidenceSchema),
+    }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await u2.recordCoordinatorSession(params)); } catch (error) { return failure(error); }
     },
   });
 

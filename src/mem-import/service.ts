@@ -17,6 +17,17 @@ import {
 } from "../world-import/staging.js";
 import { validateStageEnvelope } from "../world-import/staging.js";
 import { WORLD_IMPORT_GROUPS, type SourceManifest, type SourceManifestEntry, type StageEnvelope, type WorldImportGroup } from "../world-import/types.js";
+import { PI_HERDR_USAGE_ADAPTER, type MemImportUsageResolver, type MemImportUsageResolution } from "./pi-herdr-usage-resolver.js";
+import {
+  MEM_IMPORT_ROLE_PHASE,
+  aggregateUsageTelemetry,
+  validateUsageEvidence,
+  type MemImportCoordinatorSessionRecord,
+  type MemImportUsageEvidence,
+  type MemImportUsagePhase,
+  type MemImportUsageRecord,
+  type MemImportUsageSummary,
+} from "./usage-telemetry.js";
 
 export const MEM_IMPORT_RUN_VERSION = 1;
 export const EXTRACTOR_CAPABILITIES = ["source:read", "extraction:read", "extraction:validate", "extraction:submit"] as const;
@@ -93,7 +104,9 @@ export type MemImportDispatchRecord = {
   taskId: string;
   role: AssignmentRole;
   facility: DispatchFacility;
+  hostAdapter?: string;
   hostTaskId: string;
+  hostSessionId?: string;
   requestedTools: string[];
   observedTools: string[];
   outcome: DispatchOutcome;
@@ -101,6 +114,12 @@ export type MemImportDispatchRecord = {
   observedModel?: string;
   requestedThinking?: string;
   observedThinking?: string;
+  usageEvidence: MemImportUsageEvidence;
+  usageAdapter?: string;
+  hostChildId?: string;
+  hostScopeId?: string;
+  activitySequence?: number;
+  activityUpdatedAt?: string;
   recordedAt: string;
 };
 
@@ -352,6 +371,11 @@ function dispatchPath(outputRoot: string, taskId: string): string {
   return `${orchestrationDir(outputRoot)}/dispatches/${taskId}.json`;
 }
 
+function coordinatorSessionPath(outputRoot: string, phase: MemImportUsagePhase, hostTaskId: string): string {
+  const hostHash = createHash("sha256").update(hostTaskId).digest("hex").slice(0, 20);
+  return `${orchestrationDir(outputRoot)}/coordinator-sessions/${phase}-${hostHash}.json`;
+}
+
 function extractionInventoryPath(outputRoot: string, unitId: string): string {
   return `${orchestrationDir(outputRoot)}/extraction-inventory/${unitId}.json`;
 }
@@ -487,6 +511,33 @@ function assertTaskId(taskId: string): void {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(taskId)) {
     throw new Error("taskId must contain only letters, numbers, dots, underscores, and hyphens");
   }
+}
+
+function normalizeRuntimeLabel(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value !== value.trim() || value.length === 0 || value.length > 200 || /[\x00-\x1f\x7f]/.test(value)) {
+    throw new Error(`${name} must be a trimmed, control-free string of at most 200 characters`);
+  }
+  return value;
+}
+
+function persistedHostAdapter(value: unknown): string | undefined {
+  try { return normalizeRuntimeLabel(value, "hostAdapter"); } catch { return undefined; }
+}
+
+function persistedUsageMetadata(value: Partial<MemImportDispatchRecord | MemImportCoordinatorSessionRecord> | undefined): Partial<MemImportUsageRecord> {
+  if (value?.usageAdapter !== PI_HERDR_USAGE_ADAPTER || typeof value.hostChildId !== "string" || !/^[a-f0-9]{8}$/.test(value.hostChildId)) return {};
+  const activitySequence = Number.isSafeInteger(value.activitySequence) && Number(value.activitySequence) >= 0 ? Number(value.activitySequence) : undefined;
+  const activityUpdatedAt = typeof value.activityUpdatedAt === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.activityUpdatedAt)
+    ? value.activityUpdatedAt
+    : undefined;
+  return {
+    adapter: PI_HERDR_USAGE_ADAPTER,
+    hostChildId: value.hostChildId,
+    ...(typeof value.hostScopeId === "string" && /^[a-f0-9]{20}$/.test(value.hostScopeId) ? { hostScopeId: value.hostScopeId } : {}),
+    ...(activitySequence !== undefined ? { activitySequence } : {}),
+    ...(activityUpdatedAt ? { activityUpdatedAt } : {}),
+  };
 }
 
 /** Host correlation IDs are opaque labels, never local paths, prompts, or credentials. */
@@ -678,7 +729,10 @@ function canonicalQuoteRange(blocks: Array<{ text: string }>): string {
 }
 
 export class MemImportService {
-  constructor(private readonly now: Clock = () => new Date()) {}
+  constructor(
+    private readonly now: Clock = () => new Date(),
+    private readonly usageResolver?: MemImportUsageResolver,
+  ) {}
 
   async withRunMutation<T>(outputRootInput: string, action: () => Promise<T>): Promise<T> {
     const outputRoot = canonicalOutputRoot(outputRootInput);
@@ -1293,7 +1347,9 @@ export class MemImportService {
     coordinatorGrant: string;
     taskId: string;
     facility: DispatchFacility;
+    hostAdapter?: string;
     hostTaskId: string;
+    hostSessionId?: string;
     requestedTools: string[];
     observedTools: string[];
     outcome: DispatchOutcome;
@@ -1301,6 +1357,7 @@ export class MemImportService {
     observedModel?: string;
     requestedThinking?: string;
     observedThinking?: string;
+    usageEvidence?: MemImportUsageEvidence;
   }): Promise<MemImportDispatchRecord> {
     return this.withRunMutation(options.outputRoot, () => this.recordWorkerDispatchLocked(options));
   }
@@ -1311,7 +1368,9 @@ export class MemImportService {
     coordinatorGrant: string;
     taskId: string;
     facility: DispatchFacility;
+    hostAdapter?: string;
     hostTaskId: string;
+    hostSessionId?: string;
     requestedTools: string[];
     observedTools: string[];
     outcome: DispatchOutcome;
@@ -1319,6 +1378,7 @@ export class MemImportService {
     observedModel?: string;
     requestedThinking?: string;
     observedThinking?: string;
+    usageEvidence?: MemImportUsageEvidence;
   }): Promise<MemImportDispatchRecord> {
     const run = await this.authorizeCoordinatorMutation(options);
     const assignment = await readAssignment(run.outputRoot, options.taskId);
@@ -1326,17 +1386,25 @@ export class MemImportService {
     if (!["subagent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid dispatch facility");
     if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid dispatch outcome");
     assertHostTaskId(options.hostTaskId);
+    if (options.hostSessionId) assertHostTaskId(options.hostSessionId);
+    if (this.usageResolver && options.facility === "subagent" && !options.hostAdapter) throw new Error("hostAdapter is required for subagent telemetry correlation");
+    if (assignment.audit?.adapter && options.hostAdapter && options.hostAdapter !== assignment.audit.adapter) throw new Error("Dispatch hostAdapter does not match the assignment adapter");
     if (!Array.isArray(options.requestedTools) || !Array.isArray(options.observedTools) || options.requestedTools.some((tool) => typeof tool !== "string" || !tool.trim()) || options.observedTools.some((tool) => typeof tool !== "string" || !tool.trim())) throw new Error("Dispatch tool lists must contain non-empty names");
     const expectedTools = MEM_IMPORT_ROLE_TOOLS[assignment.role];
     if (!sameToolSet(options.requestedTools, expectedTools) || !sameToolSet(options.observedTools, expectedTools)) throw new Error(`Dispatch tool allowlist does not exactly match the ${assignment.role} role`);
-    for (const [name, value] of Object.entries({ requestedModel: options.requestedModel, observedModel: options.observedModel, requestedThinking: options.requestedThinking, observedThinking: options.observedThinking })) {
-      if (value !== undefined && (typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a non-empty string when supplied`);
-    }
+    const runtime = {
+      requestedModel: normalizeRuntimeLabel(options.requestedModel, "requestedModel"),
+      observedModel: normalizeRuntimeLabel(options.observedModel, "observedModel"),
+      requestedThinking: normalizeRuntimeLabel(options.requestedThinking, "requestedThinking"),
+      observedThinking: normalizeRuntimeLabel(options.observedThinking, "observedThinking"),
+    };
+    const usageEvidence = validateUsageEvidence(options.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" });
     const record: MemImportDispatchRecord = {
       version: 1, kind: "mem-import-worker-dispatch", runId: run.runId, taskId: assignment.taskId, role: assignment.role,
-      facility: options.facility, hostTaskId: options.hostTaskId, requestedTools: [...options.requestedTools].sort(), observedTools: [...options.observedTools].sort(), outcome: options.outcome,
-      ...(options.requestedModel ? { requestedModel: options.requestedModel } : {}), ...(options.observedModel ? { observedModel: options.observedModel } : {}),
-      ...(options.requestedThinking ? { requestedThinking: options.requestedThinking } : {}), ...(options.observedThinking ? { observedThinking: options.observedThinking } : {}),
+      facility: options.facility, ...(options.hostAdapter ? { hostAdapter: normalizeRuntimeLabel(options.hostAdapter, "hostAdapter") } : {}), hostTaskId: options.hostTaskId, ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}), requestedTools: [...options.requestedTools].sort(), observedTools: [...options.observedTools].sort(), outcome: options.outcome,
+      ...(runtime.requestedModel ? { requestedModel: runtime.requestedModel } : {}), ...(runtime.observedModel ? { observedModel: runtime.observedModel } : {}),
+      ...(runtime.requestedThinking ? { requestedThinking: runtime.requestedThinking } : {}), ...(runtime.observedThinking ? { observedThinking: runtime.observedThinking } : {}),
+      usageEvidence,
       recordedAt: this.now().toISOString(),
     };
     await writeJson(dispatchPath(run.outputRoot, assignment.taskId), record);
@@ -1349,6 +1417,194 @@ export class MemImportService {
       }
     }
     return record;
+  }
+
+  /** Persist parent-observed telemetry for one phase-coordinator child, including after terminal finalization. */
+  async recordCoordinatorSession(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    phase: MemImportUsagePhase;
+    facility: DispatchFacility;
+    hostAdapter?: string;
+    hostTaskId: string;
+    hostSessionId?: string;
+    outcome: DispatchOutcome;
+    requestedModel?: string;
+    observedModel?: string;
+    requestedThinking?: string;
+    observedThinking?: string;
+    usageEvidence?: MemImportUsageEvidence;
+  }): Promise<MemImportCoordinatorSessionRecord> {
+    return this.withRunMutation(options.outputRoot, async () => {
+      const run = await this.authorizeCoordinator(options);
+      if (!["extraction", "proposal-reconciliation", "merge", "review-finalization"].includes(options.phase)) throw new Error("Invalid coordinator phase");
+      if (!["subagent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid coordinator facility");
+      if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid coordinator outcome");
+      assertHostTaskId(options.hostTaskId);
+      if (options.hostSessionId) assertHostTaskId(options.hostSessionId);
+      if (this.usageResolver && options.facility === "subagent" && !options.hostAdapter) throw new Error("hostAdapter is required for subagent telemetry correlation");
+      const runtime = {
+        requestedModel: normalizeRuntimeLabel(options.requestedModel, "requestedModel"),
+        observedModel: normalizeRuntimeLabel(options.observedModel, "observedModel"),
+        requestedThinking: normalizeRuntimeLabel(options.requestedThinking, "requestedThinking"),
+        observedThinking: normalizeRuntimeLabel(options.observedThinking, "observedThinking"),
+      };
+      const record: MemImportCoordinatorSessionRecord = {
+        version: 1,
+        kind: "mem-import-coordinator-session",
+        runId: run.runId,
+        phase: options.phase,
+        role: "coordinator",
+        facility: options.facility,
+        ...(options.hostAdapter ? { hostAdapter: normalizeRuntimeLabel(options.hostAdapter, "hostAdapter") } : {}),
+        hostTaskId: options.hostTaskId,
+        ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}),
+        outcome: options.outcome,
+        ...(runtime.requestedModel ? { requestedModel: runtime.requestedModel } : {}),
+        ...(runtime.observedModel ? { observedModel: runtime.observedModel } : {}),
+        ...(runtime.requestedThinking ? { requestedThinking: runtime.requestedThinking } : {}),
+        ...(runtime.observedThinking ? { observedThinking: runtime.observedThinking } : {}),
+        usageEvidence: validateUsageEvidence(options.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" }),
+        recordedAt: this.now().toISOString(),
+      };
+      await writeJson(coordinatorSessionPath(run.outputRoot, record.phase, record.hostTaskId), record);
+      return record;
+    });
+  }
+
+  /** Aggregate content-free host telemetry across worker assignments and phase-coordinator sessions. */
+  async usageTelemetry(options: { outputRoot: string; runId: string; coordinatorGrant: string }): Promise<MemImportUsageSummary> {
+    const run = await this.authorizeCoordinator(options);
+    const records: MemImportUsageRecord[] = [];
+    const refreshTargets = new Map<string, { path: string; envelope: Record<string, unknown> }>();
+    const dispatchDirectory = `${orchestrationDir(run.outputRoot)}/dispatches`;
+    if (existsSync(dispatchDirectory)) {
+      for (const name of (await readdir(dispatchDirectory)).filter((item) => item.endsWith(".json")).sort()) {
+        const taskId = name.slice(0, -5);
+        let assignment: MemImportAssignmentRecord;
+        try { assignment = await readAssignment(run.outputRoot, taskId); } catch { continue; }
+        if (assignment.runId !== run.runId) continue;
+        const path = `${dispatchDirectory}/${name}`;
+        let dispatch: Partial<MemImportDispatchRecord> | undefined;
+        try { dispatch = JSON.parse(await readFile(path, "utf-8")) as Partial<MemImportDispatchRecord>; } catch { dispatch = undefined; }
+        const validEnvelope = dispatch?.version === 1
+          && dispatch.kind === "mem-import-worker-dispatch"
+          && dispatch.runId === run.runId
+          && dispatch.taskId === taskId
+          && dispatch.role === assignment.role
+          && typeof dispatch.hostTaskId === "string"
+          && ["subagent", "inline", "unknown"].includes(String(dispatch.facility));
+        let evidence: MemImportUsageEvidence;
+        try {
+          evidence = validEnvelope
+            ? validateUsageEvidence(dispatch!.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" })
+            : { version: 1, status: "unavailable", reason: "invalid-telemetry-record" };
+        } catch {
+          evidence = { version: 1, status: "unavailable", reason: "invalid-telemetry-record" };
+        }
+        const key = `worker:${taskId}`;
+        records.push({
+          phase: MEM_IMPORT_ROLE_PHASE[assignment.role], role: assignment.role, taskId,
+          facility: validEnvelope ? dispatch!.facility! : "unknown",
+          ...(validEnvelope ? { hostTaskId: dispatch!.hostTaskId } : {}),
+          ...(validEnvelope && typeof dispatch!.hostSessionId === "string" ? { hostSessionId: dispatch!.hostSessionId } : {}),
+          ...(validEnvelope && typeof dispatch!.recordedAt === "string" && /^\d{4}-\d{2}-\d{2}T/.test(dispatch!.recordedAt) ? { recordedAt: dispatch!.recordedAt } : {}),
+          ...(persistedHostAdapter(dispatch?.hostAdapter) ? { adapter: persistedHostAdapter(dispatch?.hostAdapter) } : {}),
+          ...persistedUsageMetadata(dispatch),
+          evidence,
+        });
+        if (validEnvelope && dispatch!.facility === "subagent" && dispatch!.hostAdapter === this.usageResolver?.adapter) refreshTargets.set(key, { path, envelope: dispatch as Record<string, unknown> });
+      }
+    }
+    const sessionDirectory = `${orchestrationDir(run.outputRoot)}/coordinator-sessions`;
+    if (existsSync(sessionDirectory)) {
+      const phases: MemImportUsagePhase[] = ["extraction", "proposal-reconciliation", "merge", "review-finalization"];
+      for (const name of (await readdir(sessionDirectory)).filter((item) => item.endsWith(".json")).sort()) {
+        const phase = phases.find((item) => name.startsWith(`${item}-`));
+        if (!phase) continue;
+        const path = `${sessionDirectory}/${name}`;
+        let session: Partial<MemImportCoordinatorSessionRecord> | undefined;
+        try { session = JSON.parse(await readFile(path, "utf-8")) as Partial<MemImportCoordinatorSessionRecord>; } catch { session = undefined; }
+        const validEnvelope = session?.version === 1
+          && session.kind === "mem-import-coordinator-session" && session.runId === run.runId
+          && session.phase === phase && session.role === "coordinator" && typeof session.hostTaskId === "string"
+          && coordinatorSessionPath(run.outputRoot, phase, session.hostTaskId).endsWith(`/${name}`)
+          && ["subagent", "inline", "unknown"].includes(String(session.facility));
+        let evidence: MemImportUsageEvidence;
+        try {
+          evidence = validEnvelope ? validateUsageEvidence(session!.usageEvidence) : { version: 1, status: "unavailable", reason: "invalid-telemetry-record" };
+        } catch {
+          evidence = { version: 1, status: "unavailable", reason: "invalid-telemetry-record" };
+        }
+        const taskId = validEnvelope ? session!.hostTaskId! : `invalid-${name.slice(0, -5)}`;
+        records.push({
+          phase, role: "coordinator", taskId,
+          facility: validEnvelope ? session!.facility! : "unknown",
+          ...(validEnvelope ? { hostTaskId: session!.hostTaskId } : {}),
+          ...(validEnvelope && typeof session!.hostSessionId === "string" ? { hostSessionId: session!.hostSessionId } : {}),
+          ...(validEnvelope && typeof session!.recordedAt === "string" && /^\d{4}-\d{2}-\d{2}T/.test(session!.recordedAt) ? { recordedAt: session!.recordedAt } : {}),
+          ...(persistedHostAdapter(session?.hostAdapter) ? { adapter: persistedHostAdapter(session?.hostAdapter) } : {}),
+          ...persistedUsageMetadata(session),
+          evidence,
+        });
+        if (validEnvelope && session!.facility === "subagent" && session!.hostAdapter === this.usageResolver?.adapter) refreshTargets.set(`coordinator:${taskId}`, { path, envelope: session as Record<string, unknown> });
+      }
+    }
+
+    if (this.usageResolver && refreshTargets.size > 0) {
+      const resolutions = await this.usageResolver.resolve([...refreshTargets].map(([key, target]) => ({
+        key,
+        hostTaskId: String(target.envelope.hostTaskId),
+        ...(typeof target.envelope.hostSessionId === "string" ? { hostSessionId: target.envelope.hostSessionId } : {}),
+      })));
+      for (const record of records) {
+        const key = record.role === "coordinator" ? `coordinator:${record.taskId}` : `worker:${record.taskId}`;
+        const resolution: MemImportUsageResolution | undefined = resolutions.get(key);
+        const target = refreshTargets.get(key);
+        if (!resolution || !target) continue;
+        const persistedUpdatedAt = record.activityUpdatedAt ? Date.parse(record.activityUpdatedAt) : -1;
+        const resolvedUpdatedAt = resolution.activityUpdatedAt ? Date.parse(resolution.activityUpdatedAt) : -1;
+        if (record.evidence.status === "available" && record.evidence.source === "pi-herdr-activity-sidecar"
+          && (resolution.evidence.status === "unavailable" || resolvedUpdatedAt < persistedUpdatedAt
+            || (resolvedUpdatedAt === persistedUpdatedAt && record.activitySequence !== undefined && (resolution.activitySequence ?? -1) < record.activitySequence))) continue;
+        record.evidence = resolution.evidence;
+        record.adapter = resolution.adapter;
+        if (resolution.hostChildId) record.hostChildId = resolution.hostChildId;
+        if (resolution.hostScopeId) record.hostScopeId = resolution.hostScopeId;
+        if (resolution.activitySequence !== undefined) record.activitySequence = resolution.activitySequence;
+        if (resolution.activityUpdatedAt) record.activityUpdatedAt = resolution.activityUpdatedAt;
+        await writeJson(target.path, {
+          ...target.envelope,
+          usageEvidence: resolution.evidence,
+          usageAdapter: resolution.adapter,
+          ...(resolution.hostChildId ? { hostChildId: resolution.hostChildId } : {}),
+          ...(resolution.hostScopeId ? { hostScopeId: resolution.hostScopeId } : {}),
+          ...(resolution.activitySequence !== undefined ? { activitySequence: resolution.activitySequence } : {}),
+          ...(resolution.activityUpdatedAt ? { activityUpdatedAt: resolution.activityUpdatedAt } : {}),
+        });
+      }
+    }
+
+    const latestByChild = new Map<string, MemImportUsageRecord>();
+    for (const record of records.filter((item) => item.adapter && item.hostChildId && item.activitySequence !== undefined)) {
+      const key = `${record.adapter}\0${record.hostScopeId ?? "unscoped"}\0${record.hostChildId}`;
+      const previous = latestByChild.get(key);
+      const recordUpdatedAt = record.activityUpdatedAt ? Date.parse(record.activityUpdatedAt) : -1;
+      const previousUpdatedAt = previous?.activityUpdatedAt ? Date.parse(previous.activityUpdatedAt) : -1;
+      const recordRecordedAt = record.recordedAt ? Date.parse(record.recordedAt) : -1;
+      const previousRecordedAt = previous?.recordedAt ? Date.parse(previous.recordedAt) : -1;
+      if (!previous || recordUpdatedAt > previousUpdatedAt
+        || (recordUpdatedAt === previousUpdatedAt && record.activitySequence! > previous.activitySequence!)
+        || (recordUpdatedAt === previousUpdatedAt && record.activitySequence === previous.activitySequence && recordRecordedAt > previousRecordedAt)
+        || (recordUpdatedAt === previousUpdatedAt && record.activitySequence === previous.activitySequence && recordRecordedAt === previousRecordedAt && record.taskId.localeCompare(previous.taskId) < 0)) latestByChild.set(key, record);
+    }
+    for (const record of records) {
+      if (!record.adapter || !record.hostChildId || record.activitySequence === undefined) continue;
+      const latest = latestByChild.get(`${record.adapter}\0${record.hostScopeId ?? "unscoped"}\0${record.hostChildId}`);
+      if (latest && latest !== record) record.duplicateOf = latest.taskId;
+    }
+    return aggregateUsageTelemetry(records);
   }
 
   /** Return whether one semantic effect has an active exact subagent dispatch receipt. */

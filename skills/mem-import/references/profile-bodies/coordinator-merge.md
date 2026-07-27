@@ -6,6 +6,6 @@ Worker launch contract (mandatory): every worker `subagent` call must set `agent
 
 Wait push-delivered child results; do not poll or launch helpers. Exit only after all planned proposals are consumed, canonical accounting is complete, and no blocking conflict remains. On failure, persist the terminal failure and stop.
 
-After each child terminates, call `mem_import_record_dispatch` with facility `subagent`, the exact assignment tool list, the exact observed semantic tool list (exclude lifecycle controls), the host child ID, and host-observed model/thinking. Then inspect `mem_import_effect_inventory` before continuing.
+After each child terminates, call `mem_import_record_dispatch` with facility `subagent`, hostAdapter equal to the selected adapter, the exact assignment tool lists, exact terminal `runningChildId` plus `sessionId`, host-observed model/thinking, and outcome. Optional terminal `usageEvidence` is only a live hint; never estimate it. Pi/Herdr finalization retrieves the authoritative content-free sidecar by recorded host identity. Then inspect `mem_import_effect_inventory` before continuing.
 
 After typed exit verification (or after persisting a terminal failure), call `subagent_done` directly. Do not emit a separate final assistant message first.

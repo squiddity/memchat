@@ -90,7 +90,7 @@ Review one explicit lens at a time. Select any repair actions; a repairer receiv
 2. Pass its bootstrap and semantic `tools` array verbatim to the selected facility; launch no helper child.
 3. End the turn and wait at rest for push-delivered terminal completion. Do not poll, schedule an ordinary wake-up, or launch a wait/no-op/monitor child.
 4. Require the exact semantic tool profile plus documented lifecycle controls. Verify active/denied tools and profile-preserving resume when the host exposes that evidence; record unavailable fields as unavailable.
-5. Record requested tools and only actually observed model, thinking, child ID, tools, lifecycle profile, and outcome with `mem_import_record_dispatch`. Never derive observations from the assignment or worker prose.
+5. Record requested tools and only actually observed model, thinking, exact selected `hostAdapter`, running-child ID, sanitized session filename stem, tools, lifecycle profile, and outcome with `mem_import_record_dispatch`. Copy schema-v1 terminal `usage` and `usageByModel` when present, but never estimate metrics or infer them from prose. Adapter-specific post-facto retrieval is authoritative when configured; the persisted identity, not model prose, correlates the content-free sidecar.
 6. Inspect the effect with `mem_import_effect_inventory` before dependent work. A durable effect cannot replace required dispatch evidence.
 
 A failed, cancelled, missing, mismatched, broadened, or inaccurately recorded receipt invalidates the dispatch; retry fresh or stop. Treat a terminal host result as final even if its prose claims otherwise.

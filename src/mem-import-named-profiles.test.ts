@@ -134,6 +134,11 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
       assert.match(body, /`name` is display-only/);
       assert.match(body, /do not launch or retry bare/);
       assert.match(body, /fresh task ID/);
+      assert.match(body, /usageEvidence/);
+      assert.match(body, /hostAdapter equal to the selected adapter/);
+      assert.match(body, /Optional terminal `usageEvidence` is only a live hint/);
+      assert.match(body, /authoritative content-free sidecar/);
+      assert.match(body, /never estimate it/i);
     }
   });
 }

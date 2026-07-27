@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, readdir, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +11,8 @@ import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
 import { MemImportIdentityService, canonicalHash } from "./mem-import/identity-service.js";
 import { MemImportClusterPlanService } from "./mem-import/cluster-plan-service.js";
+import { aggregateUsageTelemetry } from "./mem-import/usage-telemetry.js";
+import { PiHerdrUsageResolver, piHerdrChildId } from "./mem-import/pi-herdr-usage-resolver.js";
 import { buildCoveragePlan } from "./world-import/helper-tools.js";
 import type { SourceManifestEntry, StageEnvelope } from "./world-import/types.js";
 
@@ -20,6 +22,29 @@ async function tempDir(): Promise<string> {
 
 function serializedModelToolResultSize(value: unknown): number {
   return JSON.stringify({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }], details: value }).length;
+}
+
+function usageEvidence(inputTokens: number, outputTokens: number, provider = "test-provider", model = "test-model") {
+  const usage = {
+    version: 1 as const,
+    sessions: 1,
+    turns: 1,
+    responses: 1,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: null,
+    reasoningTokens: null,
+    totalTokens: inputTokens + outputTokens,
+    cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: null, total: 0.03 },
+  };
+  return {
+    version: 1 as const,
+    status: "available" as const,
+    source: "subagent-result" as const,
+    usage,
+    usageByModel: [{ ...usage, provider, model, responses: 1, version: 1 as const, sessions: undefined, turns: undefined }].map(({ sessions: _sessions, turns: _turns, ...item }) => item),
+  };
 }
 
 async function recordDispatch(service: MemImportService, run: { outputRoot: string; runId: string; coordinatorGrant: string }, taskId: string, role: AssignmentRole): Promise<void> {
@@ -390,6 +415,274 @@ test("evidence-read telemetry aggregates successful calls by assignment, role, a
   assert.deepEqual((await new MemImportU2Service(service).workStatus(run)).evidenceReads, telemetry);
   const persisted = await readFile(join(output, "stages", "orchestration", "evidence-reads", "telemetry-extractor.json"), "utf-8");
   assert.doesNotMatch(persisted, /Ada guards|grant|coordinatorGrant|source text|prompt/i);
+});
+
+test("usage telemetry persists subagent-result snapshots and aggregates by role, phase, and model", async () => {
+  const { output, run, units } = await setup();
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "usage-extractor", unitIds: [units[0]!.unitId] });
+  const proposer = await service.assignWorker({ ...run, taskId: "usage-proposer", role: "proposer", unitIds: [units[0]!.unitId] });
+  const reviewer = await service.assignWorker({ ...run, taskId: "usage-corrupt", role: "reviewer" });
+  const taintedEvidence = usageEvidence(10, 5) as ReturnType<typeof usageEvidence> & { secretPrompt?: string; usage: ReturnType<typeof usageEvidence>["usage"] & { grant?: string } };
+  taintedEvidence.secretPrompt = "must not persist";
+  taintedEvidence.usage.grant = "must not persist";
+  (taintedEvidence.usage.cost as Record<string, unknown>).credentials = "must not persist";
+  (taintedEvidence.usageByModel[0] as Record<string, unknown>).responseText = "must not persist";
+
+  await service.recordWorkerDispatch({
+    ...run,
+    taskId: extractor.taskId,
+    facility: "subagent",
+    hostTaskId: "usage-worker-host",
+    requestedTools: extractor.tools,
+    observedTools: extractor.tools,
+    outcome: "completed",
+    observedModel: "test-model",
+    usageEvidence: taintedEvidence,
+  });
+  await service.recordWorkerDispatch({
+    ...run,
+    taskId: proposer.taskId,
+    facility: "unknown",
+    hostTaskId: "usage-unavailable-host",
+    requestedTools: proposer.tools,
+    observedTools: proposer.tools,
+    outcome: "failed",
+    usageEvidence: { version: 1, status: "unavailable", reason: "adapter-unavailable" },
+  });
+  await service.recordWorkerDispatch({
+    ...run,
+    taskId: reviewer.taskId,
+    facility: "subagent",
+    hostTaskId: "usage-corrupt-host",
+    requestedTools: reviewer.tools,
+    observedTools: reviewer.tools,
+    outcome: "completed",
+    usageEvidence: usageEvidence(3, 2),
+  });
+  await writeFile(join(output, "stages", "orchestration", "dispatches", "usage-corrupt.json"), JSON.stringify({ version: 99, totalTokens: -4, prompt: "must not persist into aggregates" }), "utf-8");
+  await mkdir(join(output, "stages", "orchestration", "coordinator-sessions"), { recursive: true });
+  await writeFile(join(output, "stages", "orchestration", "coordinator-sessions", "merge-corrupt.json"), JSON.stringify({ version: 1, kind: "mem-import-coordinator-session", runId: run.runId, phase: "merge", role: "coordinator", facility: "subagent", hostTaskId: "bad", usageEvidence: { version: 1, status: "available", source: "subagent-result", usage: { totalTokens: -1 } } }), "utf-8");
+
+  await u2.recordCoordinatorSession({
+    ...run,
+    phase: "extraction",
+    facility: "subagent",
+    hostTaskId: "usage-coordinator-host",
+    outcome: "completed",
+    observedModel: "test-model",
+    usageEvidence: usageEvidence(20, 10),
+  });
+
+  const telemetry = await service.usageTelemetry(run);
+  assert.equal(telemetry.version, 1);
+  assert.equal(telemetry.availability, "partial");
+  assert.equal(telemetry.recordCount, 5);
+  assert.equal(telemetry.availableRecordCount, 2);
+  assert.equal(telemetry.unavailableRecordCount, 3);
+  assert.equal(telemetry.totals.totalTokens, null, "a partial corpus must not report an inexact grand total");
+  assert.deepEqual(telemetry.unavailable, [
+    { phase: "review-finalization", role: "reviewer", taskId: "usage-corrupt", facility: "unknown", reason: "invalid-telemetry-record" },
+    { phase: "proposal-reconciliation", role: "proposer", taskId: "usage-proposer", facility: "unknown", reason: "adapter-unavailable" },
+    { phase: "merge", role: "coordinator", taskId: "invalid-merge-corrupt", facility: "unknown", reason: "invalid-telemetry-record" },
+  ]);
+  assert.equal(telemetry.roles.find((item) => item.role === "extractor")?.totals.totalTokens, 15);
+  assert.equal(telemetry.roles.find((item) => item.role === "coordinator")?.totals.totalTokens, null);
+  assert.equal(telemetry.phases.find((item) => item.phase === "extraction")?.totals.totalTokens, 45);
+  assert.equal(telemetry.models[0]?.provider, "test-provider");
+  assert.equal(telemetry.models[0]?.model, "test-model");
+  assert.equal(telemetry.models[0]?.totals.sessions, null, "host model buckets do not attribute sessions");
+  assert.equal(telemetry.models[0]?.totals.turns, null, "host model buckets do not attribute turns");
+  assert.equal(telemetry.models[0]?.totals.responses, 2);
+  assert.equal(telemetry.models[0]?.totals.totalTokens, 45);
+
+  const dispatch = JSON.parse(await readFile(join(output, "stages", "orchestration", "dispatches", "usage-extractor.json"), "utf-8")) as Record<string, unknown>;
+  assert.deepEqual(dispatch.usageEvidence, usageEvidence(10, 5));
+  assert.doesNotMatch(JSON.stringify(dispatch), /must not persist|secretPrompt|credentials|responseText|grant/);
+  const audit = JSON.parse(await readFile(join(output, "stages", "import-run.json"), "utf-8")) as { usage: typeof telemetry };
+  assert.equal(audit.usage.recordCount, 5);
+  assert.doesNotMatch(JSON.stringify({ dispatch, audit }), /prompt|grant|secret/i);
+
+  await assert.rejects(service.recordWorkerDispatch({
+    ...run,
+    taskId: extractor.taskId,
+    facility: "subagent",
+    hostTaskId: "invalid-usage-host",
+    requestedTools: extractor.tools,
+    observedTools: extractor.tools,
+    outcome: "completed",
+    usageEvidence: { ...usageEvidence(1, 1), usageByModel: [{ ...usageEvidence(1, 1).usageByModel[0]!, model: "bad\nmodel" }] },
+  }), /invalid provider or model/);
+  await assert.rejects(u2.recordCoordinatorSession({
+    ...run,
+    phase: "merge",
+    facility: "subagent",
+    hostTaskId: "invalid-runtime-label",
+    outcome: "completed",
+    observedModel: "safe-model\nsecret-token",
+    usageEvidence: { version: 1, status: "unavailable", reason: "host-result-missing" },
+  }), /control-free string/);
+});
+
+test("Pi/Herdr post-facto usage retrieval validates sidecars, keeps latest resume snapshot, and deduplicates child identities", async () => {
+  assert.equal(piHerdrChildId("019f9a1b-4c6f-74c2-b685-a7100fdd0031"), undefined, "a host session UUID must not be truncated into a child identity");
+  assert.equal(piHerdrChildId("e2127f29-b75f7964-8542d9a0-1fa8"), "e2127f29");
+  const root = await tempDir();
+  const sessionsRoot = join(root, "sessions");
+  const resolver = new PiHerdrUsageResolver(sessionsRoot);
+  const service = new MemImportService(undefined, resolver);
+  const { output, run, units } = await setup(service);
+  const first = await service.assignExtractor({ ...run, taskId: "sidecar-first", unitIds: [units[0]!.unitId] });
+  const duplicate = await service.assignWorker({ ...run, taskId: "sidecar-duplicate", role: "reviewer" });
+  const missing = await service.assignWorker({ ...run, taskId: "sidecar-missing", role: "proposer", unitIds: [units[0]!.unitId] });
+  const unmatched = await service.assignWorker({ ...run, taskId: "sidecar-unmatched", role: "merger" });
+  const generic = await service.assignWorker({ ...run, taskId: "generic-live", role: "repairer", checkpointIds: ["checkpoint"], actionIds: ["action"] });
+
+  await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostTaskId: "deadbeef", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" }), /hostAdapter is required/);
+  await service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" });
+  await service.recordWorkerDispatch({ ...run, taskId: duplicate.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session", requestedTools: duplicate.tools, observedTools: duplicate.tools, outcome: "completed" });
+  await service.recordWorkerDispatch({ ...run, taskId: missing.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "cafebabe", hostSessionId: "2026-07-25T00-02-00-000Z_cafebabe-session", requestedTools: missing.tools, observedTools: missing.tools, outcome: "completed" });
+  await service.recordWorkerDispatch({ ...run, taskId: unmatched.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "opaque-session-without-child-id", requestedTools: unmatched.tools, observedTools: unmatched.tools, outcome: "completed", usageEvidence: usageEvidence(999, 1) });
+  await service.recordWorkerDispatch({ ...run, taskId: generic.taskId, facility: "subagent", hostAdapter: "pi-subagents", hostTaskId: "generic-child", requestedTools: generic.tools, observedTools: generic.tools, outcome: "completed", usageEvidence: usageEvidence(7, 3, "generic-provider", "generic-model") });
+
+  const sidecarStart = Date.UTC(2026, 6, 25, 0, 0, 0);
+  async function writeSidecar(parent: string, childId: string, sequence: number, inputTokens: number, secret = false, updatedAt = sidecarStart + sequence) {
+    const directory = join(sessionsRoot, "workspace", "artifacts", parent, "subagent-activity");
+    await mkdir(directory, { recursive: true });
+    const evidence = usageEvidence(inputTokens, 2);
+    await writeFile(join(directory, `${childId}.json`), JSON.stringify({
+      version: 1, runningChildId: childId, createdAt: sidecarStart, updatedAt, sequence,
+      latestEvent: "subagent_done", phase: "done", agentActive: false, turnActive: false, providerActive: false, toolActive: false,
+      usage: evidence.usage, usageByModel: evidence.usageByModel,
+      ...(secret ? { prompt: "must not persist", credentials: "must not persist" } : {}),
+    }), "utf-8");
+  }
+  await writeSidecar("parent-old", "deadbeef", 4, 10);
+  await writeSidecar("parent-latest", "deadbeef", 1, 40, true, sidecarStart + 3000);
+  const workspaceRoot = join(sessionsRoot, "workspace");
+  for (const sessionName of [
+    "2026-07-25T00-00-00-000Z_deadbeef-session", "2026-07-25T00-01-00-000Z_deadbeef-resume",
+    "2026-07-25T00-02-00-000Z_cafebabe-session", "2026-07-25T00-03-00-000Z_badc0ffe-session",
+    "2026-07-25T00-04-00-000Z_facefeed-session", "2026-07-25T00-05-00-000Z_feedbabe-session",
+    "2026-07-25T00-06-00-000Z_decafbad-session",
+  ]) await writeFile(join(workspaceRoot, `${sessionName}.jsonl`), "", "utf-8");
+  const edgeDirectory = join(sessionsRoot, "workspace", "artifacts", "parent-edge", "subagent-activity");
+  await mkdir(edgeDirectory, { recursive: true });
+  await writeFile(join(edgeDirectory, "badc0ffe.json"), JSON.stringify({ version: 1, runningChildId: "badc0ffe", updatedAt: 3000, sequence: 2, phase: "active" }), "utf-8");
+  await writeFile(join(edgeDirectory, "facefeed.json"), "{bad", "utf-8");
+  await writeFile(join(edgeDirectory, "decafbad.json"), JSON.stringify({
+    version: 1, runningChildId: "decafbad", createdAt: sidecarStart, updatedAt: Number.MAX_SAFE_INTEGER, sequence: 1,
+    latestEvent: "subagent_done", phase: "done", agentActive: false, turnActive: false, providerActive: false, toolActive: false,
+    usage: usageEvidence(1, 1).usage, usageByModel: usageEvidence(1, 1).usageByModel,
+  }), "utf-8");
+  const secretSidecar = join(root, "secret-sidecar.json");
+  const secretEvidence = usageEvidence(900, 2);
+  await writeFile(secretSidecar, JSON.stringify({
+    version: 1, runningChildId: "feedbabe", createdAt: 1000, updatedAt: 3000, sequence: 3,
+    latestEvent: "subagent_done", phase: "done", agentActive: false, turnActive: false, providerActive: false, toolActive: false,
+    usage: secretEvidence.usage, usageByModel: secretEvidence.usageByModel,
+  }), "utf-8");
+  await symlink(secretSidecar, join(edgeDirectory, "feedbabe.json"));
+  const edgeCases = await resolver.resolve([
+    { key: "stale", hostTaskId: "badc0ffe-session" },
+    { key: "invalid", hostTaskId: "facefeed-session" },
+    { key: "symlink", hostTaskId: "feedbabe-session" },
+    { key: "date-range", hostTaskId: "decafbad-session" },
+  ]);
+  const staleEvidence = edgeCases.get("stale")?.evidence;
+  const invalidEvidence = edgeCases.get("invalid")?.evidence;
+  assert.equal(staleEvidence?.status === "unavailable" ? staleEvidence.reason : null, "sidecar-stale");
+  assert.equal(invalidEvidence?.status === "unavailable" ? invalidEvidence.reason : null, "sidecar-invalid");
+  const symlinkEvidence = edgeCases.get("symlink")?.evidence;
+  assert.equal(symlinkEvidence?.status === "unavailable" ? symlinkEvidence.reason : null, "sidecar-invalid", "resolver must not follow a sidecar symlink");
+  const dateRangeEvidence = edgeCases.get("date-range")?.evidence;
+  assert.equal(dateRangeEvidence?.status === "unavailable" ? dateRangeEvidence.reason : null, "sidecar-invalid", "an out-of-range timestamp must not abort finalization");
+
+  const collisionRoot = join(root, "collision-sessions");
+  for (const [workspace, sessionId, inputTokens] of [
+    ["workspace-a", "2026-07-25T01-00-00-000Z_deadbeef-a", 3],
+    ["workspace-b", "2026-07-25T02-00-00-000Z_deadbeef-b", 30],
+  ] as const) {
+    const activity = join(collisionRoot, workspace, "artifacts", "parent", "subagent-activity");
+    await mkdir(activity, { recursive: true });
+    await writeFile(join(collisionRoot, workspace, `${sessionId}.jsonl`), "", "utf-8");
+    const evidence = usageEvidence(inputTokens, 1);
+    await writeFile(join(activity, "deadbeef.json"), JSON.stringify({
+      version: 1, runningChildId: "deadbeef", createdAt: sidecarStart, updatedAt: sidecarStart + inputTokens, sequence: 1,
+      latestEvent: "subagent_done", phase: "done", agentActive: false, turnActive: false, providerActive: false, toolActive: false,
+      usage: evidence.usage, usageByModel: evidence.usageByModel,
+    }), "utf-8");
+  }
+  const collision = await new PiHerdrUsageResolver(collisionRoot).resolve([
+    { key: "a", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T01-00-00-000Z_deadbeef-a" },
+    { key: "b", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T02-00-00-000Z_deadbeef-b" },
+  ]);
+  const collisionA = collision.get("a")?.evidence;
+  const collisionB = collision.get("b")?.evidence;
+  assert.equal(collisionA?.status === "available" ? collisionA.usage.inputTokens : null, 3);
+  assert.equal(collisionB?.status === "available" ? collisionB.usage.inputTokens : null, 30, "same child IDs in different workspaces must resolve per session");
+  assert.notEqual(collision.get("a")?.hostScopeId, collision.get("b")?.hostScopeId);
+
+  await writeSidecar("parent-resumed-child", "abcd1234", 1, 55, false, sidecarStart + 86_400_000);
+  const resumedChild = await resolver.resolve([{
+    key: "resumed", hostTaskId: "abcd1234", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session",
+  }]);
+  const resumedEvidence = resumedChild.get("resumed")?.evidence;
+  assert.equal(resumedEvidence?.status === "available" ? resumedEvidence.usage.inputTokens : null, 55, "a resumed child binds its new child ID to the original sanitized session stem");
+
+  const telemetry = await service.usageTelemetry(run);
+  assert.equal(telemetry.recordCount, 4, "duplicate cumulative resume snapshots count as one host session");
+  assert.equal(telemetry.records.length, 5, "portable records preserve assignment accounting");
+  assert.equal(telemetry.records.filter((record) => record.duplicateOf).length, 1);
+  assert.equal(telemetry.records.find((record) => record.taskId === "sidecar-first")?.activitySequence, 1, "newer updatedAt wins when a restarted recorder resets sequence");
+  assert.equal(telemetry.records.find((record) => record.taskId === "sidecar-duplicate")?.activitySequence, 1);
+  assert.equal(telemetry.availableRecordCount, 2);
+  assert.equal(telemetry.unavailableRecordCount, 2);
+  assert.equal(telemetry.records.find((record) => record.taskId === "generic-live")?.evidence.status, "available", "a different adapter's live evidence must not be replaced by Pi/Herdr retrieval");
+  assert.deepEqual(telemetry.unavailable.map((item) => [item.taskId, item.reason]), [
+    ["sidecar-missing", "sidecar-missing"],
+    ["sidecar-unmatched", "sidecar-unmatched"],
+  ]);
+  assert.equal(telemetry.records.find((record) => !record.duplicateOf && record.hostChildId === "deadbeef")?.evidence.status, "available");
+  const effective = telemetry.records.find((record) => !record.duplicateOf && record.hostChildId === "deadbeef");
+  assert.equal(effective?.evidence.status === "available" ? effective.evidence.usage.inputTokens : null, 40);
+
+  const persisted = await readFile(join(output, "stages", "orchestration", "dispatches", "sidecar-first.json"), "utf-8");
+  assert.match(persisted, /pi-herdr-activity-sidecar/);
+  assert.match(persisted, /"activitySequence": 1/);
+  assert.doesNotMatch(persisted, /must not persist|prompt|credentials/);
+
+  await writeFile(join(sessionsRoot, "workspace", "artifacts", "parent-latest", "subagent-activity", "deadbeef.json"), "{bad", "utf-8");
+  const afterCleanup = await service.usageTelemetry(run);
+  assert.equal(afterCleanup.records.find((record) => record.hostChildId === "deadbeef")?.evidence.status, "available", "latest remaining valid snapshot survives an invalid duplicate sidecar");
+});
+
+test("usage aggregation nulls integer and finite-number overflow instead of emitting invalid totals", () => {
+  const first = usageEvidence(Number.MAX_SAFE_INTEGER, 0);
+  first.usage.sessions = Number.MAX_SAFE_INTEGER;
+  first.usage.turns = Number.MAX_SAFE_INTEGER;
+  first.usage.responses = Number.MAX_SAFE_INTEGER;
+  first.usage.cost.total = Number.MAX_VALUE;
+  first.usageByModel[0]!.responses = Number.MAX_SAFE_INTEGER;
+  first.usageByModel[0]!.cost.total = Number.MAX_VALUE;
+  const second = usageEvidence(1, 0);
+  second.usage.cost.total = Number.MAX_VALUE;
+  second.usageByModel[0]!.cost.total = Number.MAX_VALUE;
+  const summary = aggregateUsageTelemetry([
+    { phase: "extraction", role: "extractor", taskId: "overflow-1", facility: "subagent", evidence: first },
+    { phase: "extraction", role: "extractor", taskId: "overflow-2", facility: "subagent", evidence: second },
+  ]);
+  assert.equal(summary.availability, "available");
+  assert.equal(summary.totals.sessions, null);
+  assert.equal(summary.totals.turns, null);
+  assert.equal(summary.totals.responses, null);
+  assert.equal(summary.totals.inputTokens, null);
+  assert.equal(summary.totals.cost.total, null);
+  assert.equal(summary.models[0]?.totals.responses, null);
+  assert.equal(summary.models[0]?.totals.inputTokens, null);
+  assert.equal(summary.models[0]?.totals.cost.total, null);
+  assert.doesNotMatch(JSON.stringify(summary), /Infinity/);
 });
 
 test("fresh services rebuild proposal-stage, identity, and terminal work status from the durable ledger", async () => {
@@ -1012,6 +1305,18 @@ test("mem-import finalization rejects inline or missing semantic dispatch receip
   assert.equal(terminalRun.terminal?.status, "finalized");
   assert.equal((await new MemImportU2Service(new MemImportService()).workStatus(run)).terminalStatus, "finalized");
   assert.equal((await service.status(run)).normalized, true);
+  await u2.recordCoordinatorSession({
+    ...run,
+    phase: "review-finalization",
+    facility: "subagent",
+    hostTaskId: "final-coordinator-host",
+    outcome: "completed",
+    usageEvidence: usageEvidence(12, 4),
+  });
+  const terminalAudit = JSON.parse(await readFile(join(output, "stages", "import-run.json"), "utf-8")) as { status: string; usage?: { roles: Array<{ role: string }> } };
+  assert.equal(terminalAudit.status, "finalized");
+  assert.ok(terminalAudit.usage?.roles.some((item) => item.role === "coordinator"), "post-terminal coordinator usage refreshes the final audit");
+  assert.match(await readFile(join(output, "world", "log.md"), "utf-8"), /\*\*Model usage:\*\* partial;[\s\S]*across 2 session record\(s\)/, "post-terminal usage refreshes the human-readable log");
   await assert.rejects(service.assignWorker({ ...run, taskId: "after-finalization", role: "reviewer" }), /run is terminal/);
   await assert.rejects(u2.acquireCoordinatorLease({ ...run, taskId: "after-finalization" }), /run is terminal/);
 });

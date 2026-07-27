@@ -52,17 +52,17 @@ Completed:
 - immutable extraction-snapshot-bound cluster plans with model-owned cross-unit identity/coherent shards, plan-derived worker scopes, reconciliation dependencies, and merge-readiness enforcement;
 - exact named-profile launch stabilization, dispatch-gated effects, and one successful fresh four-phase tiny import;
 - explicit deferral of assignment-scoped cwd closures while trusted/local grant-v1 evaluation continues, with model-visible replay and missing cwd/session binding accepted as residual risks;
-- demand-driven proposer/merger evidence guidance plus all-role content-free read telemetry in bounded status and final-audit summaries.
+- demand-driven proposer/merger evidence guidance plus all-role content-free read telemetry in bounded status and final-audit summaries;
+- adapter-specific post-facto Pi/Herdr usage retrieval by sanitized child identity, latest-sequence resume deduplication, portable per-session audit snapshots, explicit sidecar failure classifications, and a final synchronous live-completion refresh.
 
 Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not acceptance evidence. See the [superseded hardening handoff](2026-07-22-mem-import-subagent-hardening-handoff.md).
 
 ## Remaining roadmap
 
 1. Let real imports accumulate small sanitized facility recipes; version-control only broadly useful examples.
-2. Implement efficiency-plan U7 role/model usage telemetry. U4 phase-bounded coordination, U5 identity-aware planning, and U6 demand-driven evidence reads are complete.
-3. Run a bounded three-chapter evaluation only when explicitly requested after U6–U7; the tiny artifact-led validation is complete.
-4. Resume assignment-scoped closure work before adversarial/multi-tenant execution, weakly trusted remote facilities, routine duplicate-worker concurrency, cross-boundary bootstrap handling, or any process/session-bound authorization claim; a replay or duplicate-effect incident also resumes it immediately.
-5. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
+2. The bounded three-chapter evaluation is complete. Rerun it with exact host child IDs after the identified narrative/reviewer-action fixes to validate the new authoritative audit path; the tiny artifact-led validation is also complete.
+3. Resume assignment-scoped closure work before adversarial/multi-tenant execution, weakly trusted remote facilities, routine duplicate-worker concurrency, cross-boundary bootstrap handling, or any process/session-bound authorization claim; a replay or duplicate-effect incident also resumes it immediately.
+4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
 
 ## Documentation authority map
 

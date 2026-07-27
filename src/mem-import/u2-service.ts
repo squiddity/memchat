@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { emitWorldLibrary } from "../world-import/emit.js";
+import { emitWorldLibrary, refreshWorldImportLog } from "../world-import/emit.js";
 import { deterministicWorldImportChecks, lintWorldImport } from "../world-import/eval.js";
 import { buildCoveragePlan, provenanceAudit } from "../world-import/helper-tools.js";
 import {
@@ -16,6 +16,7 @@ import {
   writeMergeStage,
 } from "../world-import/staging.js";
 import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
+import type { MemImportCoordinatorSessionRecord, MemImportUsageEvidence, MemImportUsagePhase } from "./usage-telemetry.js";
 import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
 import { MemImportService, type AssignmentRole, type EvidenceReadTelemetrySummary, type MemImportAssignmentRecord, type MemImportCapability, type MemImportTerminalStatus } from "./service.js";
 import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
@@ -712,7 +713,10 @@ export class MemImportU2Service {
     const checksPath = join(projectionRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
     await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, diagnostics, checks });
     const receiptPath = this.relative(projectionRoot, this.revisionReceiptPath(projectionRoot, state.revision, state.contentHash));
-    const evidenceReads = await this.base.evidenceReadTelemetry(options);
+    const [evidenceReads, usage] = await Promise.all([
+      this.base.evidenceReadTelemetry(options),
+      this.base.usageTelemetry(options),
+    ]);
     const audit = await this.updateAudit(projectionRoot, run.runId, {
       kind: "finalization",
       path: this.relative(projectionRoot, checksPath),
@@ -725,10 +729,42 @@ export class MemImportU2Service {
       merge: { revision: state.revision, contentHash: state.contentHash, revisionReceiptPath: receiptPath },
       finalization: { passed: errors === 0, errorCount: errors, warningCount: warnings, checksPath: this.relative(projectionRoot, checksPath) },
       evidenceReads,
+      usage,
     });
+    await refreshWorldImportLog(projectionRoot);
     await this.recordEvent(projectionRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(projectionRoot, checksPath), errors, warnings, status: audit.status });
     if (errors === 0) await this.base.markRunTerminal(run, "finalized");
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(projectionRoot, checksPath), errors, warnings };
+  }
+
+  /** Record a parent-observed coordinator result and refresh the final audit, even after terminal finalization. */
+  async recordCoordinatorSession(options: {
+    outputRoot: string;
+    runId: string;
+    coordinatorGrant: string;
+    phase: MemImportUsagePhase;
+    facility: "subagent" | "inline" | "unknown";
+    hostAdapter?: string;
+    hostTaskId: string;
+    hostSessionId?: string;
+    outcome: "completed" | "failed" | "cancelled";
+    requestedModel?: string;
+    observedModel?: string;
+    requestedThinking?: string;
+    observedThinking?: string;
+    usageEvidence?: MemImportUsageEvidence;
+  }): Promise<MemImportCoordinatorSessionRecord> {
+    return this.base.withRunMutation(options.outputRoot, async () => {
+      const record = await this.base.recordCoordinatorSession(options);
+      const run = await this.base.authorizeCoordinator(options);
+      const projectionRoot = this.canonicalRoot(run);
+      return this.base.withRunMutation(projectionRoot, async () => {
+        const usage = await this.base.usageTelemetry(options);
+        await this.updateAudit(projectionRoot, run.runId, undefined, { usage });
+        if (existsSync(join(projectionRoot, "world", "log.md"))) await refreshWorldImportLog(projectionRoot);
+        return record;
+      });
+    });
   }
 
   private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "identityProposalHashes" | "readSet" | "operations" | "candidateDispositions" | "conflictOperations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {

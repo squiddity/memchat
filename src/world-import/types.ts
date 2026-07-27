@@ -370,6 +370,7 @@ export type MemImportRunAuditV2 = {
     total: { calls: number; pages: number; returnedItems: number; returnedChars: number };
     roles: Array<{ role: string; assignmentCount: number; calls: number; pages: number; returnedItems: number; returnedChars: number; tools: Array<{ toolName: string; calls: number; pages: number; returnedItems: number; returnedChars: number }> }>;
   };
+  usage?: import("../mem-import/usage-telemetry.js").MemImportUsageSummary;
   effects: Array<{ kind: "merge" | "review" | "finalization"; path: string; contentHash: string; at: string; taskId?: string }>;
   error?: string;
 };

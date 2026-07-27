@@ -31,7 +31,7 @@ const exactHostEvidence = {
 } as const;
 
 test("active guidance keeps brief acceptance and enforces artifact-led phase handoffs", async () => {
-  const [skill, parentPreflight, workflow, helperTools, acceptance, recipes, capabilities, adapter, genericAdapter] = await Promise.all([
+  const [skill, parentPreflight, workflow, helperTools, acceptance, recipes, capabilities, adapter, genericAdapter, extension] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/parent-preflight.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/workflow.md"), "utf8"),
@@ -41,6 +41,7 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
     readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/adapters/pi-herdr-subagents.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/adapters/pi-subagents.md"), "utf8"),
+    readFile(resolve("extensions/mem-import-tools.ts"), "utf8"),
   ]);
   assert.match(skill, /Parent agent:[\s\S]*call exactly one begin tool[\s\S]*four fresh phase coordinators in order/);
   assert.match(skill, /Phase coordinator:[\s\S]*Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase/);
@@ -59,6 +60,8 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(parentPreflight, /launch call's `agent` field selects that profile/);
   assert.match(parentPreflight, /Do not omit `agent`/);
   assert.match(parentPreflight, /resume the current phase only/);
+  assert.match(parentPreflight, /mem_import_record_session[\s\S]*host-issued running-child ID[\s\S]*session filename stem[\s\S]*post-facto activity-sidecar retrieval/);
+  assert.match(parentPreflight, /review\/finalization coordinator after it exits[\s\S]*valid after terminal finalization/);
   assert.match(workflow, /At startup[\s\S]*typed read tools/);
   assert.match(workflow, /At exit[\s\S]*typed reads again/);
   assert.match(workflow, /uniqueProposedCandidateCount === candidateCount/);
@@ -69,6 +72,9 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(helperTools, /model-authored exact candidate partition/);
   assert.match(helperTools, /compact cross-phase ledger handoff/);
   assert.match(helperTools, /no status depends on an earlier service instance or coordinator conversation/);
+  assert.match(helperTools, /aggregates[\s\S]*by role and phase[\s\S]*provider\/model buckets/);
+  assert.match(helperTools, /per-model session\/turn attribution null/);
+  assert.match(helperTools, /partial coverage cannot become an inexact grand total/);
   assert.match(parentPreflight, /Choose one facility/);
   assert.match(parentPreflight, /otherwise run \[brief acceptance\]/);
   assert.match(parentPreflight, /Do not run role-by-role conformance/);
@@ -83,10 +89,13 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(adapter, /Real imports still require each assignment's exact profile/);
   assert.match(adapter, /four sequential fresh bounded coordinators/);
   assert.match(adapter, /Recover only the current incomplete phase/);
+  assert.match(adapter, /hostAdapter: "pi-herdr-subagents"/);
+  assert.match(adapter, /content-free activity sidecar[\s\S]*latest cumulative activity sequence/);
   assert.match(adapter, /call `subagent_done` directly[\s\S]*do not emit a separate final assistant message first/);
   assert.match(adapter, /`agent` field[\s\S]*`name` is only a display label and never selects or verifies a profile/);
   assert.match(genericAdapter, /four sequential fresh phase coordinators/);
   assert.match(genericAdapter, /passes no prior coordinator prose between phases/);
+  assert.match(extension, /usageEvidence:\s*Type\.Optional\(usageEvidenceSchema\)/, "stale coordinator profiles must degrade to explicit missing-result telemetry instead of failing tool validation");
 });
 
 async function tempOutput(label: string): Promise<string> {

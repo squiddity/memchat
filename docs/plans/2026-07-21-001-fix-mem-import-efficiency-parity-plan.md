@@ -387,6 +387,8 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U7. Persist role/model usage telemetry
 
+- **Status:** Complete on 2026-07-27. Schema-v1 per-assignment/coordinator records, role/phase/provider-model aggregation, null preservation, explicit unavailability, and post-finalization refresh now feed an adapter-specific Pi/Herdr resolver. It reads only content-free activity sidecars by sanitized host child identity, retains the latest cumulative activity sequence, deduplicates resumes, persists portable per-session snapshots before cleanup, and classifies missing/invalid/stale/unmatched evidence explicitly. The Pi/Herdr completion path also performs one final synchronous sidecar refresh before delivering live details. No generic event bus or model-mediated telemetry transport was added.
+- **Chosen repair:** For the current local Pi/Herdr adapter, retrieve usage post facto from existing content-free activity sidecars by the exact sanitized running-child IDs and session filename stems stored in dispatch/session records. Finalization or a post-run audit command validates and deduplicates the latest cumulative resume snapshot, persists sanitized per-session records and aggregates into `stages/import-run.json` before cleanup, and marks unavailable only genuinely absent/invalid/unmatched sidecars. Do not add a generic event bus or correlation protocol yet. Separately refresh the final sidecar before constructing live completion details; live delivery is useful but not authoritative persistence.
 - **Goal:** Make future legacy/mem-import comparisons exact and reproducible.
 - **Files:** run audit types/services, subagent integration, docs/tests.
 - **Work:** Aggregate sanitized host usage into schema-versioned run telemetry.
@@ -394,7 +396,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U8. Run controlled Alice A/B evaluation
 
-- **Status:** Pending. This is now the next evaluation milestone after implementing U4–U7.
+- **Status:** Pending rerun. The bounded three-chapter run completed on 2026-07-25; see [the evaluation report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md). It validated accounting, identity consolidation, one-transaction merge, and demand-driven proposal/merge reads. The telemetry bridge is now implemented; rerun with exact host child identities to validate authoritative aggregation while addressing the remaining narrative/reviewer-action quality gaps.
 - **Goal:** Verify efficiency and quality after U1–U7.
 - **Controls:** Same EPUB, skill revision, coordinator/worker models, thinking settings, acceptance profile, subagent behavior, and reviewer rubric.
 - **Compare:** Current finalized baseline, compact-response mem-import, and a newly instrumented legacy run where practical.
@@ -406,9 +408,9 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 1. **Tiny artifact-led import:** complete; the fresh four-phase Glass Tower run validated phase handoffs, cluster-plan reconstruction, exact worker scopes, reconciliation dependencies, dispatch-gated effects, and finalization.
 2. **U6 — demand-driven reads:** stop default source/chapter rereads and record bounded per-role read counts.
-3. **U7 — usage telemetry:** persist sanitized per-role/model/session token and cost totals, including explicit unavailable fields.
-4. **Three-chapter Alice evaluation:** after U6–U7, measure coordinator behavior, identity consolidation, narrative surfaces, transaction count, duration, and usage.
-5. **U8 — controlled full Alice A/B:** after U4–U7, compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
+3. **U7 — usage telemetry:** complete; deterministic Pi/Herdr sidecar retrieval now owns authoritative host-to-audit ingestion and live completion refresh.
+4. **Three-chapter Alice evaluation:** complete on 2026-07-25; durable results and follow-ups are in [the evaluation report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md).
+5. **U8 — controlled full Alice A/B:** address the identified narrative/reviewer-action fixes, then compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
 
 Do not rerun the retired coordinator-driven acceptance ladder. Run the focused multi-role suite only for maintainer conformance after relevant production-tool, fixture, authorization, or adapter changes; ordinary imports use a brief facility recipe/probe.
 
