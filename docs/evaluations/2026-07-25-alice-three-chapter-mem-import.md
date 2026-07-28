@@ -106,9 +106,9 @@ The output has a useful style artifact but no promoted synopsis or timeline surf
 
 ## Conclusion and next actions
 
-The compact protocol achieved complete provenance-backed accounting, global identity consolidation, one-transaction merge, and demand-driven proposal/merge evidence use. Do not begin the full U8 A/B yet. First:
+The compact protocol achieved complete provenance-backed accounting, global identity consolidation, one-transaction merge, and demand-driven proposal/merge evidence use. The completion-to-mem-import bridge is now implemented in memchat commit `0de2a02` with the live adapter refresh in `bca9903`; the five historical UUID-only extractor receipts cannot be recovered without unsafe heuristic matching. Do not begin the full U8 A/B yet. First:
 
-1. fix the completion-to-mem-import bridge described above so already-captured host telemetry reaches every coordinator/worker audit record;
-2. decide whether `repair` reviewer findings must block finalization or be explicitly deferred;
-3. strengthen planning/review guidance for synopsis, timeline/chapter guide, and salient-object coverage;
-4. rerun the same three-chapter fixture, then use that validated setup for the controlled full Alice A/B.
+1. decide and implement whether `repair` reviewer findings block finalization or require an explicit durable defer/accept decision;
+2. strengthen planning/review guidance for synopsis, timeline/chapter guide, and salient-object coverage;
+3. rerun the same three-chapter fixture with exact terminal `runningChildId` and sanitized `sessionId` persistence, then verify complete authoritative telemetry, no resume double-counting, and resolved or explicitly deferred semantic findings;
+4. use that validated setup for the controlled full Alice A/B.

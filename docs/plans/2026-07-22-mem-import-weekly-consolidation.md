@@ -64,6 +64,17 @@ Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not ac
 3. Resume assignment-scoped closure work before adversarial/multi-tenant execution, weakly trusted remote facilities, routine duplicate-worker concurrency, cross-boundary bootstrap handling, or any process/session-bound authorization claim; a replay or duplicate-effect incident also resumes it immediately.
 4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
 
+## New-session handoff (2026-07-27)
+
+Start from memchat commit `0de2a02` and Pi/Herdr adapter commit `bca9903`; both feature branches were pushed and validated. U7 telemetry implementation is complete. The five UUID-only extractor receipts in the historical three-chapter run are intentionally unrecoverable because they predate the exact `runningChildId` + sanitized `sessionId` contract; do not add heuristic matching for them.
+
+Execute the remaining quality/evaluation work in this order:
+
+1. Decide and implement reviewer-action enforcement: a `repair` finding must either block finalization until a current post-repair review passes or have an explicit durable defer/accept decision. Do not let deterministic success silently discard it.
+2. Strengthen cluster planning and review guidance so substantive narrative imports produce a synopsis plus timeline/chapter-guide coverage and standalone artifacts for salient objects such as the White Rabbit's watch when evidence supports them.
+3. Rerun the same bounded three-chapter fixture in a fresh output root. Require every new Pi/Herdr dispatch/session record to persist `hostAdapter`, exact terminal `runningChildId`, and sanitized terminal `sessionId`. Verify authoritative `stages/import-run.json` and `world/log.md` agree, no resolvable session is unavailable, resume snapshots are not double-counted, the bank is not over-specified as a riverbank, and the narrative/object findings are resolved or explicitly deferred.
+4. Only after that rerun passes, execute U8's controlled full Alice A/B with the same source, model/thinking controls, profiles, and reviewer rubric.
+
 ## Documentation authority map
 
 - `skills/mem-import/SKILL.md`: short role branch and corpus coordinator behavior.

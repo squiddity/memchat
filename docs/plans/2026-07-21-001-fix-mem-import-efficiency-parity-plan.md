@@ -407,7 +407,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 ## Next Steps After the Completed Safety Gate
 
 1. **Tiny artifact-led import:** complete; the fresh four-phase Glass Tower run validated phase handoffs, cluster-plan reconstruction, exact worker scopes, reconciliation dependencies, dispatch-gated effects, and finalization.
-2. **U6 — demand-driven reads:** stop default source/chapter rereads and record bounded per-role read counts.
+2. **U6 — demand-driven reads:** complete; default source/chapter rereads are constrained and bounded per-role read counts are recorded.
 3. **U7 — usage telemetry:** complete; deterministic Pi/Herdr sidecar retrieval now owns authoritative host-to-audit ingestion and live completion refresh.
 4. **Three-chapter Alice evaluation:** complete on 2026-07-25; durable results and follow-ups are in [the evaluation report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md).
 5. **U8 — controlled full Alice A/B:** address the identified narrative/reviewer-action fixes, then compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
