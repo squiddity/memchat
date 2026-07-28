@@ -52,4 +52,4 @@ These tools validate scope, references, immutability, and concurrency. They do n
 
 ## Completion
 
-`mem_check_run` emits deterministic coverage, provenance, conflict, dispatch, and readiness diagnostics. `mem_import_finalize` emits Markdown, reruns checks, and writes schema-v2 `stages/import-run.json`; error diagnostics prevent successful finalization.
+`mem_check_run` first emits the current deterministic Markdown projection, then returns coverage, provenance, conflict, dispatch, reviewer-action, and readiness diagnostics. A current `repair`/`critical` review finding or action is an error; once any review requests repair, a clean scoped post-repair review of the final canonical revision is required. `mem_import_finalize` emits Markdown, reruns the same checks, and writes schema-v2 `stages/import-run.json`; error diagnostics prevent successful finalization.

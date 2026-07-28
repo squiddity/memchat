@@ -256,7 +256,8 @@ test("mem-import compendium integration projects two work runs through finalizat
   assert.equal(edition.result.revision, 3);
   assert.equal(edition.result.stage.artifacts?.filter((item) => item.id === "ada").length, 1, "edition repeat updates the matched canonical artifact instead of creating a duplicate");
   const checks = await u2.checks(edition.run);
-  assert.equal(checks.deterministic.passed, false, "pre-finalization checks correctly require an emitted shared projection");
+  assert.equal(checks.deterministic.passed, true, "pre-finalization checks emit and validate the shared projection");
+  assert.ok(existsSync(join(compendiumRoot, "world", "index.md")));
   const finalizeLease = await u2.acquireCoordinatorLease({ ...edition.run, taskId: "compendium-finalize" });
   const final = await u2.finalize({ ...edition.run, taskId: "compendium-finalize", fence: finalizeLease.fence });
   assert.equal(final.finalized, true, await readFile(join(compendiumRoot, final.checksPath), "utf-8"));
@@ -876,6 +877,9 @@ test("mem-import persists immutable scoped shard proposals against exact extract
       readSet: [{ artifactId: "ada", contentHash: canonicalArtifact.artifactContentHash }],
     },
   });
+  const repairBlockedChecks = await u2.checks(run);
+  assert.ok(repairBlockedChecks.readiness.diagnostics.some((item) => item.message.includes("Unresolved repair review finding repair-ada-description")));
+  assert.ok(repairBlockedChecks.readiness.diagnostics.some((item) => item.message.includes("Unresolved repair review action clarify-ada")));
   const repairer = await service.assignWorker({ ...run, taskId: "proposal-repairer", role: "repairer", checkpointIds: ["proposal-quality"], actionIds: ["clarify-ada"] });
   const repairLease = await u2.acquireWorkerLease(repairer);
   const repairedArtifact = { ...canonicalArtifact.artifact!, description: "Ada is the guard at the glass tower." };
@@ -919,6 +923,26 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   assert.equal("stage" in controls, false);
   assert.equal("artifacts" in controls, false);
   assert.equal("candidateDispositions" in controls, false);
+  const postRepairChecks = await u2.checks(run);
+  assert.ok(postRepairChecks.readiness.diagnostics.some((item) => item.message.includes("requires a current scoped post-repair review")));
+
+  const postRepairReviewer = await service.assignWorker({ ...run, taskId: "proposal-post-repair-reviewer", role: "reviewer" });
+  const repairedCanonical = await u2.readMergeArtifactForWorker({ ...postRepairReviewer, artifactId: "ada" });
+  await u2.submitReview({
+    ...postRepairReviewer,
+    packet: {
+      version: 1,
+      kind: "mem-import-review",
+      checkpointId: "proposal-quality-post-repair",
+      reviewedMergeRevision: repairReceipt.revision,
+      reviewedMergeHash: repairReceipt.contentHash!,
+      findings: [],
+      requestedActions: [],
+      readSet: [{ artifactId: "ada", contentHash: repairedCanonical.artifactContentHash }],
+    },
+  });
+  const clearedChecks = await u2.checks(run);
+  assert.ok(!clearedChecks.readiness.diagnostics.some((item) => /review (finding|action)|post-repair review/.test(item.message)));
 
   const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
   assert.equal(transactionFiles.length, 2);
@@ -1259,7 +1283,8 @@ test("mem-import U2 fences merge writes, preserves immutable revisions, and bind
   );
   const finalLease = await u2.acquireCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize" });
   const final = await u2.finalize({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "parent-finalize", fence: finalLease.fence });
-  assert.equal(final.finalized, false, "one unextracted body unit remains a hard blocker");
+  assert.equal(final.finalized, false, "coverage and the unresolved reviewer action remain hard blockers");
+  assert.match(await readFile(join(output, final.checksPath), "utf-8"), /requires a current scoped post-repair review/);
   const audit = JSON.parse(await readFile(join(output, "stages", "import-run.json"), "utf-8")) as Record<string, unknown>;
   assert.equal(audit.version, 2);
   assert.equal(audit.status, "failed");

@@ -31,11 +31,14 @@ const exactHostEvidence = {
 } as const;
 
 test("active guidance keeps brief acceptance and enforces artifact-led phase handoffs", async () => {
-  const [skill, parentPreflight, workflow, helperTools, acceptance, recipes, capabilities, adapter, genericAdapter, extension] = await Promise.all([
+  const [skill, parentPreflight, workflow, helperTools, proposalRole, mergerRole, reviewerRole, acceptance, recipes, capabilities, adapter, genericAdapter, extension] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/parent-preflight.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/workflow.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/helper-tools.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/proposal-role.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/merger-role.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/reviewer-role.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/acceptance.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/facility-recipes.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
@@ -69,6 +72,14 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(workflow, /terminalStatus: "finalized"/);
   assert.match(workflow, /mem_import_cluster_plan_submit/);
   assert.match(workflow, /readyForMerge: true/);
+  assert.match(workflow, /dedicated synopsis, ordered timeline, and chapter\/scene-guide artifacts/);
+  assert.match(workflow, /White Rabbit's watch/);
+  assert.match(workflow, /current `repair` or `critical` finding\/action is a finalization error/);
+  assert.match(proposalRole, /dedicated synopsis, ordered-timeline, and chapter\/scene-guide artifacts/);
+  assert.match(mergerRole, /union of receipt `consumedProposalHashes`/);
+  assert.match(workflow, /A partial durable merge is resumable, not an immediate terminal failure/);
+  assert.match(reviewerRole, /White Rabbit's watch/);
+  assert.match(reviewerRole, /new scoped review of the final revision/);
   assert.match(helperTools, /model-authored exact candidate partition/);
   assert.match(helperTools, /compact cross-phase ledger handoff/);
   assert.match(helperTools, /no status depends on an earlier service instance or coordinator conversation/);

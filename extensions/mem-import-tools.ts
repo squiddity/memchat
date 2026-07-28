@@ -923,7 +923,7 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_check_run",
     label: "Run Import Checks",
-    description: "Run deterministic lint, coverage, provenance, identity, dispatch, and readiness checks without choosing semantic repairs.",
+    description: "Emit the current deterministic Markdown projection, then run lint, coverage, provenance, identity, dispatch, reviewer-action, and readiness checks without choosing semantic repairs.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
       try { return result(await u2.checks(params)); } catch (error) { return failure(error); }

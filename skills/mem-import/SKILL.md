@@ -52,8 +52,8 @@ Success requires all of the following:
 - planned merge assignment and writes independently passed ledger-derived plan readiness and hash-scope checks;
 - the canonical revision/hash and transaction history reconstruct successfully;
 - no blocking identity conflict remains;
-- a current review covers the final canonical revision;
-- `mem_check_run` reports no errors;
+- a current scoped review covers the final canonical revision, and if any review requested repair, that final review contains no `repair` or `critical` findings/actions;
+- `mem_check_run` reports no errors, including no unresolved reviewer-action diagnostic;
 - `mem_import_finalize` writes a successful schema-v2 `stages/import-run.json`, and fresh work status reports `terminalStatus: "finalized"`.
 
 A failure is complete only after `mem_import_fail` persists the terminal reason. Never report success from worker or coordinator prose alone.

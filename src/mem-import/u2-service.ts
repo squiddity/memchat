@@ -669,14 +669,19 @@ export class MemImportU2Service {
     const run = await this.base.authorizeCoordinator(options);
     const projectionRoot = this.canonicalRoot(run);
     if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
+    await emitWorldLibrary(projectionRoot);
     const checks = await this.collectChecks(projectionRoot);
-    const identityDiagnostics = await this.identityDiagnostics(projectionRoot);
+    const state = await this.readMergeState(projectionRoot);
+    const [identityDiagnostics, reviewDiagnostics] = await Promise.all([
+      this.identityDiagnostics(projectionRoot),
+      this.reviewActionDiagnostics(projectionRoot, state.stage),
+    ]);
     const dispatchRoots = run.compendiumRoot
       ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
       : [run.outputRoot];
     const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
       .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
-    const diagnostics = [...identityDiagnostics, ...dispatchDiagnostics];
+    const diagnostics = [...identityDiagnostics, ...reviewDiagnostics, ...dispatchDiagnostics];
     return { ...checks, readiness: { passed: diagnostics.every((item) => item.level !== "error"), diagnostics } };
   }
 
@@ -691,7 +696,11 @@ export class MemImportU2Service {
     if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
     await emitWorldLibrary(projectionRoot);
     const checks = await this.collectChecks(projectionRoot);
-    const identityDiagnostics = await this.identityDiagnostics(projectionRoot);
+    const state = await this.readMergeState(projectionRoot);
+    const [identityDiagnostics, reviewDiagnostics] = await Promise.all([
+      this.identityDiagnostics(projectionRoot),
+      this.reviewActionDiagnostics(projectionRoot, state.stage),
+    ]);
     const dispatchRoots = run.compendiumRoot
       ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
       : [run.outputRoot];
@@ -704,11 +713,11 @@ export class MemImportU2Service {
       ...checks.provenance.diagnostics,
       ...checks.deterministic.checks.flatMap((check) => check.diagnostics ?? []),
       ...identityDiagnostics,
+      ...reviewDiagnostics,
       ...dispatchDiagnostics,
     ];
     const errors = diagnostics.filter((item) => item.level === "error").length;
     const warnings = diagnostics.filter((item) => item.level === "warning").length;
-    const state = await this.readMergeState(projectionRoot);
     if (!state.contentHash) throw new Error("Cannot finalize before a canonical merge revision exists");
     const checksPath = join(projectionRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
     await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, diagnostics, checks });
@@ -1296,19 +1305,53 @@ export class MemImportU2Service {
     }
   }
 
-  private async reviewPackets(directory: string): Promise<Array<{ path: string; packet: { reviewedMergeRevision?: unknown; reviewedMergeHash?: unknown; readSet?: ReviewPacket["readSet"]; contentHash?: unknown } }>> {
+  private async reviewPackets(directory: string): Promise<Array<{ path: string; packet: Partial<ReviewPacket> & { contentHash?: unknown } }>> {
     if (!existsSync(directory)) return [];
     const entries = await readdir(directory, { withFileTypes: true });
-    const packets: Array<{ path: string; packet: { reviewedMergeRevision?: unknown; reviewedMergeHash?: unknown; readSet?: ReviewPacket["readSet"]; contentHash?: unknown } }> = [];
+    const packets: Array<{ path: string; packet: Partial<ReviewPacket> & { contentHash?: unknown } }> = [];
     for (const entry of entries) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) packets.push(...await this.reviewPackets(path));
       else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "validity.json") {
-        const packet = JSON.parse(await readFile(path, "utf-8")) as { reviewedMergeRevision?: unknown; reviewedMergeHash?: unknown; readSet?: ReviewPacket["readSet"]; contentHash?: unknown };
+        const packet = JSON.parse(await readFile(path, "utf-8")) as Partial<ReviewPacket> & { contentHash?: unknown };
         if (typeof packet.reviewedMergeRevision === "number" && typeof packet.reviewedMergeHash === "string") packets.push({ path, packet });
       }
     }
     return packets;
+  }
+
+  private async reviewActionDiagnostics(outputRoot: string, stage: StageEnvelope): Promise<Array<{ level: "error"; message: string; path: string }>> {
+    const packets = await this.reviewPackets(join(outputRoot, "stages", "reviews"));
+    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    const isBlockingSeverity = (severity: unknown) => severity === "repair" || severity === "critical";
+    const hasBlockingRequest = (packet: Partial<ReviewPacket>) =>
+      (packet.findings ?? []).some((finding) => isBlockingSeverity(finding.severity))
+      || (packet.requestedActions ?? []).some((action) => isBlockingSeverity(action.severity));
+    const repairRequested = packets.some(({ packet }) => hasBlockingRequest(packet));
+    if (!repairRequested) return [];
+
+    const current = packets.filter(({ packet }) => {
+      if (packet.reviewedMergeRevision !== stage.revision || packet.reviewedMergeHash !== stage.contentHash || !packet.readSet) return false;
+      return !packet.readSet.some((item) => (artifacts.get(item.artifactId) ? hash(artifacts.get(item.artifactId)) : null) !== item.contentHash);
+    });
+    const diagnostics = current.flatMap(({ path, packet }) => [
+      ...(packet.findings ?? []).filter((finding) => isBlockingSeverity(finding.severity)).map((finding) => ({
+        level: "error" as const,
+        message: `Unresolved ${finding.severity} review finding ${finding.id}: ${finding.summary}`,
+        path: this.relative(outputRoot, path),
+      })),
+      ...(packet.requestedActions ?? []).filter((action) => isBlockingSeverity(action.severity)).map((action) => ({
+        level: "error" as const,
+        message: `Unresolved ${action.severity} review action ${action.id}: ${action.summary}`,
+        path: this.relative(outputRoot, path),
+      })),
+    ]);
+    if (current.length === 0) diagnostics.push({
+      level: "error",
+      message: "A prior review requested repair; finalization requires a current scoped post-repair review of the final canonical revision.",
+      path: "stages/reviews",
+    });
+    return diagnostics;
   }
 
   private async refreshReviewValidity(outputRoot: string, stage: StageEnvelope): Promise<void> {
