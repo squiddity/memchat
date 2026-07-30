@@ -143,6 +143,36 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
   });
 }
 
+test("facility preflight profiles enforce named read-only nested isolation", async () => {
+  const coordinator = parseFlatProfile(await readFile(resolve(herdrRoot, "facility-preflight-coordinator.md"), "utf8"));
+  assert.equal(coordinator.fields.spawning, "true");
+  assert.equal(coordinator.fields["allowed-child-agents"], "facility-preflight-reader");
+  assert.deepEqual(csv(coordinator.fields.tools), ["subagent"]);
+  assert.match(coordinator.body, /Set `agent` to `facility-preflight-reader`/);
+  assert.match(coordinator.body, /Do not replace the named profile with a raw `tools` allowlist/);
+
+  const reader = parseFlatProfile(await readFile(resolve(herdrRoot, "facility-preflight-reader.md"), "utf8"));
+  assert.equal(reader.fields.spawning, "false");
+  assert.equal(reader.fields["auto-exit"], "true");
+  assert.deepEqual(csv(reader.fields.tools), ["read"]);
+  assert.deepEqual(csv(reader.fields["deny-tools"]).filter((tool) => forbiddenWorkerTools.has(tool)).sort(), [...forbiddenWorkerTools].filter((tool) => tool !== "read").sort());
+  assert.match(reader.body, /Do not read any file/);
+  assert.match(reader.body, /`subagent_done` must be your final action/);
+});
+
+test("pi-herdr-subagents profiles use one explicit final-action completion contract", async () => {
+  for (const profile of MEM_IMPORT_NAMED_PROFILES) {
+    const { body } = parseFlatProfile(await readFile(profilePath(profile, "pi-herdr-subagents"), "utf8"));
+    assert.equal((body.match(/Completion contract:/g) ?? []).length, 1);
+    assert.match(body, /call `subagent_done` exactly once with a concise direct result/);
+    assert.match(body, /Submitted the assigned packet; durable effect verified/);
+    assert.match(body, /never write ‘I will call’, ‘Let me call’, or ‘Now calling `subagent_done`’/);
+    assert.match(body, /`subagent_done` must be your final action/);
+    assert.match(body, /do not send another assistant message or call another tool/);
+    assert.ok(body.trimEnd().endsWith("another tool."), "the completion contract must be the profile's final instruction");
+  }
+});
+
 test("U6 proposer and merger profiles require demand-driven evidence reads", async () => {
   for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
     const proposer = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === "proposer")!, adapter), "utf8")).body;
@@ -154,6 +184,15 @@ test("U6 proposer and merger profiles require demand-driven evidence reads", asy
     assert.match(merger, /byte-for-byte accepts require no source\/extraction reread/);
     assert.match(merger, /Read canonical bodies only for collision, replacement, synthesis, deletion, or stale read sets/);
     assert.match(merger, /reopen only exact source spans/);
+  }
+});
+
+test("reviewer profiles make requested narrative omissions repair-level", async () => {
+  for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
+    const reviewer = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === "reviewer")!, adapter), "utf8")).body;
+    assert.match(reviewer, /dedicated synopsis, source-ordered timeline, chapter\/scene guide/);
+    assert.match(reviewer, /report it as `repair`, not `info`/);
+    assert.match(reviewer, /falsely says those units were unavailable/);
   }
 });
 

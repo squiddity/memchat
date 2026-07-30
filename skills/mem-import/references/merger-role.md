@@ -21,7 +21,7 @@ Launch one subagent with the merger bootstrap and exactly `assignment.tools`. Fo
 6. Use the compact receipt's revision/hash/counts as acknowledgement. Read inventory or explicit artifacts only when the next semantic decision requires them.
 7. Maintain an exact set of proposal hashes returned by `mem_proposal_inventory` and subtract only hashes acknowledged in compact commit receipts. Repeat with another bounded batch until that set is empty. Before returning, compare the complete assigned set with the union of receipt `consumedProposalHashes`; counts or a rationale saying “all” are not sufficient.
 
-The commit tool carries proposal candidate dispositions, checks every proposal/identity hash against the merger assignment, re-derives plan readiness from the ledger, and owns lease, fencing, current-revision CAS, transaction persistence, and release.
+The commit tool carries proposal candidate dispositions, checks every proposal/identity hash against the merger assignment, re-derives plan readiness from the ledger, and owns lease, fencing, current-revision CAS, transaction persistence, transaction-bound effect projection, and release. If interruption occurs after the immutable transaction but before its effect projection, typed coordinator status/inventory reconstructs the full canonical chain and idempotently recovers only the assignment-valid projection; exact dispatch evidence remains mandatory.
 
 ## Done
 

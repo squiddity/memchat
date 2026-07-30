@@ -80,6 +80,8 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(workflow, /A partial durable merge is resumable, not an immediate terminal failure/);
   assert.match(reviewerRole, /White Rabbit's watch/);
   assert.match(reviewerRole, /new scoped review of the final revision/);
+  assert.match(reviewerRole, /missing or materially incomplete synopsis, timeline, chapter\/scene guide, salient-object entry, or cross-unit identity page is a `repair` finding, not `info`/);
+  assert.match(workflow, /identity page that omits major cross-unit actions\/state\/relationships or falsely says available units were unavailable/);
   assert.match(helperTools, /model-authored exact candidate partition/);
   assert.match(helperTools, /compact cross-phase ledger handoff/);
   assert.match(helperTools, /no status depends on an earlier service instance or coordinator conversation/);
@@ -90,7 +92,7 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(parentPreflight, /otherwise run \[brief acceptance\]/);
   assert.match(parentPreflight, /Do not run role-by-role conformance/);
   assert.match(acceptance, /does not require a named extension, programmatic adapter, exhaustive role certification/);
-  assert.match(acceptance, /at most one tiny nested child/);
+  assert.match(acceptance, /at most one tiny read-only nested child/);
   assert.match(acceptance, /Stop when the planned capabilities are demonstrated/);
   assert.match(acceptance, /optional maintainer conformance/);
   assert.match(recipes, /\.memchat\/mem-import\/facility-recipes/);
@@ -102,7 +104,9 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(adapter, /Recover only the current incomplete phase/);
   assert.match(adapter, /hostAdapter: "pi-herdr-subagents"/);
   assert.match(adapter, /content-free activity sidecar[\s\S]*latest cumulative activity sequence/);
-  assert.match(adapter, /call `subagent_done` directly[\s\S]*do not emit a separate final assistant message first/);
+  assert.match(adapter, /put the concise informative result inside `subagent_done`[\s\S]*make that call the final action[\s\S]*send nothing afterward/);
+  assert.match(adapter, /Do not duplicate, paraphrase, or split this contract across the dynamic launch task/);
+  assert.match(parentPreflight, /do not repeat completion wording in the dynamic launch envelope/);
   assert.match(adapter, /`agent` field[\s\S]*`name` is only a display label and never selects or verifies a profile/);
   assert.match(genericAdapter, /four sequential fresh phase coordinators/);
   assert.match(genericAdapter, /passes no prior coordinator prose between phases/);

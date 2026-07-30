@@ -12,8 +12,9 @@ After calling begin exactly once, the parent starts four sequential fresh bounde
 - coordinator mem-import tools, `subagent`, and extension-owned lifecycle controls;
 - explicit authenticated model, thinking, repository `cwd`, fresh context, and `autoExit: false`;
 - `extensionMode: "explicit"` and the absolute trusted path to `extensions/mem-import-tools.ts`;
-- the requested input/output scope;
-- an unambiguous completion instruction: after final typed verification, call `subagent_done` directly with the concise phase result; do not emit a separate final assistant message first.
+- the requested input/output scope.
+
+The selected named profile already supplies the completion contract for coordinators and workers: put the concise informative result inside `subagent_done`, make that call the final action, and send nothing afterward. Do not duplicate, paraphrase, or split this contract across the dynamic launch task.
 
 Explicit mode provides deterministic extension provenance by suppressing ambient extension discovery; it is not an OS sandbox and does not suppress all configuration or instructions. Descendants inherit explicit mode and the extension entry when those fields are omitted.
 
@@ -45,7 +46,7 @@ This is a known recipe, not a required mem-import backend or programmatic adapte
 - facility/tool: installed `subagent`;
 - phase coordinators: four sequential fresh contexts with `autoExit: false`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry;
 - workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries; named-profile launches must use `agent`, never display-only `name`, as the selector;
-- lifecycle additions: `caller_ping` and `subagent_done`; non-auto-exit coordinators call `subagent_done` directly with their result instead of stopping after a separate assistant summary;
+- lifecycle additions: `caller_ping` and `subagent_done`; every named coordinator and worker profile puts its informative result in `subagent_done`, calls it as the final action, and sends nothing afterward;
 - completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison, and content-free cumulative usage snapshots;
 - recovery: `subagent_interrupt` and profile-preserving `subagent_resume` when needed.
 

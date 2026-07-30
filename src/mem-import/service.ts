@@ -148,6 +148,25 @@ export type MemImportEffectInventoryResult = {
   continuationCursor?: string;
 };
 
+export type RecoveredTransactionEffect = {
+  outputRoot: string;
+  runId: string;
+  taskId: string;
+  role: "merger" | "repairer";
+  effect: "merge" | "repair";
+  path: string;
+  contentHash: string;
+  revision: number;
+  transactionCreatedAt: string;
+  transactionAuthorizedAt?: string;
+  transactionReceiptHash: string;
+  assignmentAuthorityHash?: string;
+  proposalHashes: string[];
+  identityProposalHashes?: string[];
+  checkpointId?: string;
+  actionIds?: string[];
+};
+
 export type EvidenceReadTotals = {
   calls: number;
   pages: number;
@@ -228,6 +247,26 @@ export type MemImportAssignmentRecord = {
   lifecycleOutcome: LifecycleOutcome;
   audit?: MemImportAssignmentAudit;
 };
+
+export function assignmentAuthorityHash(assignment: MemImportAssignmentRecord): string {
+  const authority = {
+    version: assignment.version,
+    kind: assignment.kind,
+    taskId: assignment.taskId,
+    role: assignment.role,
+    allowedUnitIds: assignment.allowedUnitIds,
+    planHash: assignment.planHash ?? null,
+    clusterId: assignment.clusterId ?? null,
+    reconciliationSetId: assignment.reconciliationSetId ?? null,
+    allowedCandidateIds: assignment.allowedCandidateIds ?? [],
+    allowedProposalHashes: assignment.allowedProposalHashes ?? [],
+    allowedIdentityProposalHashes: assignment.allowedIdentityProposalHashes ?? [],
+    allowedCheckpointIds: assignment.allowedCheckpointIds ?? [],
+    allowedActionIds: assignment.allowedActionIds ?? [],
+    capabilities: assignment.capabilities,
+  };
+  return createHash("sha256").update(JSON.stringify(authority)).digest("hex");
+}
 
 export type BeginRunResult = {
   runId: string;
@@ -1647,6 +1686,80 @@ export class MemImportService {
     });
   }
 
+  /** Validate transaction-owned effect authority without mutating projections. */
+  async validateRecoveredTransactionAuthority(options: RecoveredTransactionEffect): Promise<{ matching: boolean }> {
+    const validated = await this.validateRecoveredTransactionEffect(options);
+    if (!validated.matchingPath) assertRunMutable(validated.run);
+    return { matching: Boolean(validated.matchingPath) };
+  }
+
+  /** Rebuild the disposable effect-ledger projection from one fully validated
+   * immutable canonical transaction. Transaction reconstruction remains the
+   * caller's responsibility; this method independently validates run,
+   * assignment, role, and bounded assignment scope before writing. */
+  async recordRecoveredTransactionEffect(options: RecoveredTransactionEffect): Promise<{ created: boolean; path: string }> {
+    return this.withRunMutation(options.outputRoot, async () => {
+      const validated = await this.validateRecoveredTransactionEffect(options);
+      if (validated.matchingPath) return { created: false, path: validated.matchingPath };
+      assertRunMutable(validated.run);
+      const recoveredPath = `${validated.directory}/transaction-${String(options.revision).padStart(8, "0")}-${options.contentHash}.json`;
+      if (existsSync(recoveredPath)) throw new Error("Recovered transaction effect path conflicts with a different effect");
+      await writeJson(recoveredPath, {
+        version: 1,
+        kind: "mem-import-worker-effect",
+        runId: validated.run.runId,
+        taskId: validated.assignment.taskId,
+        effect: options.effect,
+        path: options.path,
+        contentHash: options.contentHash,
+        recordedAt: options.transactionCreatedAt,
+        recoveredFrom: { kind: "mem-import-merge-transaction", revision: options.revision },
+        transactionReceiptHash: options.transactionReceiptHash,
+      });
+      return { created: true, path: recoveredPath };
+    });
+  }
+
+  private async validateRecoveredTransactionEffect(options: RecoveredTransactionEffect): Promise<{ run: MemImportRunRecord; assignment: MemImportAssignmentRecord; directory: string; matchingPath?: string }> {
+    const run = await readRun(options.outputRoot);
+    assertRunScope(run, options.outputRoot, options.runId);
+    assertTaskId(options.taskId);
+    if (!Number.isInteger(options.revision) || options.revision < 1) throw new Error("Recovered transaction revision must be a positive integer");
+    if (!/^[a-f0-9]{64}$/.test(options.contentHash)) throw new Error("Recovered transaction contentHash must be a SHA-256 hex string");
+    requireNonEmpty(options.path, "transaction.path");
+    const transactionCreatedAt = asIsoDate(options.transactionCreatedAt, "transaction.createdAt");
+    const transactionAuthorizedAt = asIsoDate(options.transactionAuthorizedAt ?? options.transactionCreatedAt, "transaction.authorizedAt");
+    if (transactionAuthorizedAt.getTime() > transactionCreatedAt.getTime()) throw new Error("Recovered transaction authorization occurs after transaction creation");
+    if (!/^[a-f0-9]{64}$/.test(options.transactionReceiptHash)) throw new Error("Recovered transaction receipt hash must be a SHA-256 hex string");
+    if ((options.role === "merger") !== (options.effect === "merge")) throw new Error("Recovered transaction effect does not match its worker role");
+    const assignment = await readAssignment(run.outputRoot, options.taskId);
+    if (assignment.runId !== run.runId || assignment.outputRoot !== run.outputRoot || assignment.role !== options.role || !assignment.capabilities.includes("merge:write")) throw new Error("Recovered transaction actor does not match its assignment");
+    if (options.assignmentAuthorityHash !== undefined && options.assignmentAuthorityHash !== assignmentAuthorityHash(assignment)) throw new Error("Recovered transaction assignment authority hash does not match its actor assignment");
+    const authorizedMs = transactionAuthorizedAt.getTime();
+    if (authorizedMs < new Date(assignment.issuedAt).getTime() || authorizedMs > new Date(assignment.expiresAt).getTime() || (assignment.revokedAt && authorizedMs >= new Date(assignment.revokedAt).getTime()) || (assignment.supersededAt && authorizedMs >= new Date(assignment.supersededAt).getTime())) throw new Error("Recovered transaction falls outside its assignment lifecycle");
+    const proposalHashes = [...new Set(options.proposalHashes)];
+    if (proposalHashes.length !== options.proposalHashes.length || proposalHashes.some((value) => !/^[a-f0-9]{64}$/.test(value))) throw new Error("Recovered transaction proposal hashes are invalid");
+    if (assignment.allowedProposalHashes?.length && proposalHashes.some((value) => !assignment.allowedProposalHashes!.includes(value))) throw new Error("Recovered transaction proposal hash is outside its assignment");
+    const identityProposalHashes = [...new Set(options.identityProposalHashes ?? [])];
+    if (identityProposalHashes.length !== (options.identityProposalHashes?.length ?? 0) || identityProposalHashes.some((value) => !/^[a-f0-9]{64}$/.test(value))) throw new Error("Recovered transaction identity proposal hashes are invalid");
+    if (assignment.allowedIdentityProposalHashes?.length && identityProposalHashes.some((value) => !assignment.allowedIdentityProposalHashes!.includes(value))) throw new Error("Recovered transaction identity proposal hash is outside its assignment");
+    if (options.role === "repairer") {
+      if (!options.checkpointId || !assignment.allowedCheckpointIds?.includes(options.checkpointId)) throw new Error("Recovered repair transaction checkpoint is outside its assignment");
+      if (!options.actionIds?.length || options.actionIds.some((value) => !assignment.allowedActionIds?.includes(value))) throw new Error("Recovered repair transaction action is outside its assignment");
+    } else if (options.checkpointId || options.actionIds?.length) throw new Error("Recovered merger transaction cannot carry repair scope");
+    const directory = `${orchestrationDir(run.outputRoot)}/effects/${assignment.taskId}`;
+    const existingFiles = existsSync(directory) ? (await readdir(directory)).filter((name) => name.endsWith(".json")) : [];
+    for (const file of existingFiles) {
+      const value = JSON.parse(await readFile(`${directory}/${file}`, "utf-8")) as { version?: unknown; kind?: unknown; runId?: unknown; taskId?: unknown; effect?: unknown; path?: unknown; contentHash?: unknown; packetHash?: unknown; transactionReceiptHash?: unknown };
+      const existingKind = value.kind === "mem-import-packet-effect" ? "extraction" : value.kind === "mem-import-worker-effect" ? value.effect : undefined;
+      const existingHash = value.kind === "mem-import-packet-effect" ? value.packetHash : value.contentHash;
+      if (value.version !== 1 || value.runId !== run.runId || value.taskId !== assignment.taskId || typeof existingKind !== "string" || typeof existingHash !== "string" || !/^[a-f0-9]{64}$/.test(existingHash)) throw new Error(`Invalid worker effect record for task ${assignment.taskId}`);
+      if (existingKind === options.effect && existingHash === options.contentHash && (value.transactionReceiptHash === options.transactionReceiptHash || (value.transactionReceiptHash === undefined && value.path === options.path))) return { run, assignment, directory, matchingPath: `${directory}/${file}` };
+    }
+    if (!options.assignmentAuthorityHash) throw new Error("Legacy transaction lacks a recoverable effect; manual repair is required");
+    return { run, assignment, directory };
+  }
+
   async effectInventory(options: { outputRoot: string; runId: string; coordinatorGrant: string; continuationCursor?: string; maxItems?: number }): Promise<MemImportEffectInventoryResult> {
     const run = await this.authorizeCoordinator(options);
     const maxItems = options.maxItems ?? 20;
@@ -1711,6 +1824,7 @@ export class MemImportService {
       let assignment: MemImportAssignmentRecord;
       try { assignment = await readAssignment(outputRoot, taskId); }
       catch { diagnostics.push({ taskId, message: "Semantic effect has no valid assignment record." }); continue; }
+      if (assignment.revokedAt || assignment.supersededAt) { diagnostics.push({ taskId, message: `Semantic worker effect belongs to a ${assignment.revokedAt ? "revoked" : "superseded"} assignment.` }); continue; }
       const dispatchFile = dispatchPath(outputRoot, taskId);
       if (!existsSync(dispatchFile)) { diagnostics.push({ taskId, message: "Semantic worker effect lacks a correlated dispatch receipt." }); continue; }
       let dispatch: MemImportDispatchRecord;

@@ -165,6 +165,8 @@ export type StageEnvelope = {
   revision?: number;
   contentHash?: string;
   parentContentHash?: string;
+  /** Digest of transaction controls bound into canonical merge content. */
+  transactionControlHash?: string;
   unitId?: string;
   sourceId?: string;
   candidates?: ExtractionCandidate[];

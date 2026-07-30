@@ -64,16 +64,58 @@ Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not ac
 3. Resume assignment-scoped closure work before adversarial/multi-tenant execution, weakly trusted remote facilities, routine duplicate-worker concurrency, cross-boundary bootstrap handling, or any process/session-bound authorization claim; a replay or duplicate-effect incident also resumes it immediately.
 4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
 
-## New-session handoff (2026-07-27)
+## New-session handoff (2026-07-28)
 
-Start from memchat commit `0de2a02` and Pi/Herdr adapter commit `bca9903`; both feature branches were pushed and validated. U7 telemetry implementation is complete. The five UUID-only extractor receipts in the historical three-chapter run are intentionally unrecoverable because they predate the exact `runningChildId` + sanitized `sessionId` contract; do not add heuristic matching for them.
+Start from pushed memchat commit `75e663e` on `feat/world-import-model-led-subagents-u0`, then inspect the uncommitted working tree before editing. The pushed commit implements reviewer-action enforcement, narrative/salient-object guidance, projection-aware pre-final checks, merger accounting guidance, tests, and the successful strong-model evaluation report at `docs/evaluations/2026-07-28-alice-three-chapter-review-enforced-rerun.md`.
 
-Execute the remaining quality/evaluation work in this order:
+### Validated before the latest DeepSeek probe
 
-1. Decide and implement reviewer-action enforcement: a `repair` finding must either block finalization until a current post-repair review passes or have an explicit durable defer/accept decision. Do not let deterministic success silently discard it.
-2. Strengthen cluster planning and review guidance so substantive narrative imports produce a synopsis plus timeline/chapter-guide coverage and standalone artifacts for salient objects such as the White Rabbit's watch when evidence supports them.
-3. Rerun the same bounded three-chapter fixture in a fresh output root. Require every new Pi/Herdr dispatch/session record to persist `hostAdapter`, exact terminal `runningChildId`, and sanitized terminal `sessionId`. Verify authoritative `stages/import-run.json` and `world/log.md` agree, no resolvable session is unavailable, resume snapshots are not double-counted, the bank is not over-specified as a riverbank, and the narrative/object findings are resolved or explicitly deferred.
-4. Only after that rerun passes, execute U8's controlled full Alice A/B with the same source, model/thinking controls, profiles, and reviewer rubric.
+- Current `repair`/`critical` findings and actions block finalization. Once any review requests repair, a clean scoped post-repair review of the final revision is required.
+- The successful Alice Chapters I–III run `mir-d292df080c1829dba050ccb9` finalized revision 2 with 56/56 candidates, 39 artifacts, a synopsis, combined source-order timeline/chapter guide, standalone White Rabbit watch, a clean current post-repair review, and 18/18 sidecar-backed usage records with no duplicate child IDs.
+- `mem_check_run` emits the deterministic Markdown projection before checking it.
+- Merger guidance requires exact set reconciliation against receipt `consumedProposalHashes` and profile-preserving recovery of partial commits.
+- Build and the then-current 63-test mem-import suite passed.
+
+### Uncommitted completion/preflight work
+
+The working tree now also contains:
+
+- one centralized Herdr completion contract appended to every generated mem-import coordinator and worker profile: put the informative result inside `subagent_done`, make it the final action, and send/call nothing afterward;
+- dynamic launch guidance that explicitly forbids duplicating or paraphrasing that completion contract;
+- host-enforced `.pi/agents/facility-preflight-coordinator.md` and `facility-preflight-reader.md` profiles for testing named-profile nested isolation;
+- dispatch guidance clarifying that `requestedTools` and `observedTools` contain only semantic `assignment.tools`, never `caller_ping`, `subagent_done`, or coordinator tools; correct a payload error once and reserve `mem_import_fail` for a genuine unrecoverable capability/recovery failure;
+- generated Herdr/pi-subagents profile updates and profile/acceptance tests. Build passed and the mem-import suite passed with 64 tests before the later dispatch clarification; rerun the full suite before committing.
+
+The first generic DeepSeek Flash preflight was not representative: its unnamed nested child launched unrestricted with 59 tools. The new named-profile preflight passed exact host enforcement (`facility-preflight-reader`, `read` as the only content tool plus lifecycle tools), although the child still read a preflight Markdown file despite prose asking it to read nothing. Prefer host-enforced named profiles; treat behavioral prose as secondary.
+
+### Latest DeepSeek Flash import evidence
+
+Model: `openrouter/deepseek/deepseek-v4-flash`, high thinking, fixture `.memchat-agent-testing/fixtures/alice-chapters-1-3.epub`.
+
+1. Run `mir-a041327830dbd9e4aa14af71` failed after extraction because its coordinator confused lifecycle tools with semantic dispatch arrays and prematurely called `mem_import_fail`. This motivated the dispatch clarification above.
+2. Retry run `mir-a1cb08019d43638820f28f8a` completed extraction (49 candidates), proposal/reconciliation (16 proposals, 7 identity packets), and canonical merge (revision 1, 45 artifacts, 49/49 accounting). Review found and repaired two false cross-chapter provenance notes, advancing canonical state to revision 2.
+3. The retry correctly ended terminally failed with `merge-effect-missing`. Immutable transaction revision 1 names worker `merger-001` and consumed all proposals, and its exact completed dispatch is present, but `stages/orchestration/effects/merger-001` is absent and effect inventory has no merge effect. The repair effect cannot replace the missing original merge effect. The final coordinator was explicitly steered not to finalize this invalid audit state.
+4. All four DeepSeek phase-coordinator activity sidecars ended with `phase: done`, `latestEvent: subagent_done`, and no active agent/turn/tool. The final-action lifecycle contract therefore worked structurally. Result text still included meta-language such as “Let me now call `subagent_done`,” so phrasing is not yet clean even though the tool was last.
+5. DeepSeek semantic quality remained weaker than the strong-model baseline: revision-1 review found false “chapter not extracted” notes; the missing synopsis and incomplete cross-chapter Alice page were only informational, so the requested narrative quality bar was not enforced strongly enough by that reviewer.
+
+### Handoff implementation progress (2026-07-28)
+
+Completed in the current uncommitted working tree:
+
+1. New worker transactions bind deterministic semantic controls (actor task/role, assignment scope digest, proposals/identity packets, read set, stored operations, dispositions, conflict/repair scope, rationale, extraction and parent controls) into canonical `contentHash` through `transactionControlHash`. Runtime run IDs, timestamps, token hashes, and fences remain in the exact receipt/effect hash but are excluded from semantic hashing so fresh fixture materializations remain stable.
+2. Typed status/effect/check/finalization paths validate every receipt from revision 1 without trusting checkpoints; require kind/directory/filename/revision/parent/snapshot/control/hash correctness; reject unknown/non-worker actors and orphan/duplicate effects; validate every actor assignment and exact scope before mutation; replay missing canonical-head and identity/conflict projections; and materialize exactly one idempotent transaction effect per owning standalone or compendium run. Canonical writes recheck lease/CAS under the canonical mutation lock at the final persistence boundary. Reconciliation compares the complete active owner, avoids canonical/owner-run lock inversion, preflights all missing effects, writes effects before identity projection, and uses checkpoints only after bounded exact filename/content/receipt binding. A live unrelated writer lease defers reconciliation.
+3. Legacy transactions remain readable when their original exact-path effect exists. A pre-upgrade transaction with a missing unbound effect is explicitly manual-repair-required rather than guessed; the failed DeepSeek run remains valid failure evidence and is not rewritten.
+4. Fault/restart tests cover interrupted merge and repair effects, missing canonical/identity projections, compendium-prior-run recovery, idempotency, malformed run/actor/role/assignment/lifecycle/hash/parent controls, wrong receipt directory, missing pre-checkpoint history, corrupted snapshots, orphan effects, missing dispatch, active writer synchronization, and blocked finalization.
+5. The centralized Herdr completion contract now gives one direct-result example and forbids “I will call,” “Let me call,” and “Now calling” narration. Generated coordinator/worker profiles were regenerated; disposable named preflight profiles carry the same rule.
+6. Reviewer authority, workflow, and generated static reviewer profiles now make explicitly requested missing/materially incomplete synopsis, timeline, chapter/scene guide, salient-object, and cross-unit identity coverage `repair`, not `info`.
+7. `mem_import_record_session` is registered with a typed parent schema and routes to `MemImportU2Service.recordCoordinatorSession`; a source-contract test protects the registration. The currently running parent session loaded its catalog before that registration and cannot prove live exposure; verify it after restart.
+8. Acceptance expected hashes were deliberately updated for the new deterministic transaction-control binding. The Luna medium recovery audit's lease, synchronization, projection-order, checkpoint, effect-run, and revoked-dispatch findings were addressed; the DeepSeek Flash profile audit found no blockers. `npm run build` passes, `npm run test:mem-import` passes 69/69, and `git diff --check` passes at this checkpoint.
+
+Remaining work, in order:
+
+1. Review the final recovery/profile diff, force-add the intentionally ignored `.pi/agents/facility-preflight-{coordinator,reader}.md` files, rerun build/tests/diff checks after the audit fixes, then commit and push.
+2. Start a fresh parent session and confirm `mem_import_record_session` appears in the live tool catalog; do not use the direct service fallback in the next run.
+3. Rerun the same DeepSeek Flash three-chapter import. Require exact named-profile preflight, all four informative terminal `subagent_done` results without intent narration, complete canonical transaction/effect/dispatch correspondence, requested narrative surfaces, current clean post-repair review, complete telemetry, and terminal `finalized`. Do not begin U8 full-Alice A/B until this passes.
 
 ## Documentation authority map
 

@@ -393,14 +393,14 @@ export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
     name: "mem_import_effect_inventory",
     label: "Inspect Assignment Effects",
-    description: "Read bounded authoritative assignment, dispatch, retry-lineage, and immutable effect-hash summaries without worker prose or filesystem access.",
+    description: "Read bounded authoritative assignment, dispatch, retry-lineage, and immutable effect-hash summaries; verified canonical transactions deterministically recover missing merge/repair effect projections.",
     parameters: Type.Object({
       ...coordinatorSchema,
       continuationCursor: Type.Optional(Type.String({ minLength: 1 })),
       maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
     }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await service.effectInventory(params)); } catch (error) { return failure(error); }
+      try { return result(await u2.effectInventory(params)); } catch (error) { return failure(error); }
     },
   });
 

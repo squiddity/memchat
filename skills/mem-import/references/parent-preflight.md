@@ -51,6 +51,8 @@ Every phase launch also includes:
 - explicit model, thinking, repository cwd, and a fresh context;
 - the same selected facility for phase coordinator → worker launches.
 
+For `pi-herdr-subagents`, do not repeat completion wording in the dynamic launch envelope. The named profile owns one completion contract for both coordinators and workers: the informative result goes inside the final `subagent_done` call, with no message or tool call afterward.
+
 Wait for authoritative terminal lifecycle before launching the next phase. A phase's coordinator must assess typed durable inputs at startup and typed durable outputs at exit; the next fresh coordinator independently reassesses the ledger. On interruption, resume the current phase only when the adapter preserves its exact profile, or launch a fresh context for that same phase. Never resume a completed prior phase, skip an incomplete phase, or replay its prose into a later one.
 
 After every terminal phase result, call `mem_import_record_session` with the exact host-issued running-child ID, sanitized session filename stem, selected `hostAdapter`, phase, lifecycle outcome, and observed runtime fields. Copy schema-v1 terminal `usage` / `usageByModel` when present, but never estimate or reconstruct metrics. For the Pi/Herdr adapter, deterministic post-facto activity-sidecar retrieval by that recorded identity is authoritative and replaces live hints with the latest validated cumulative snapshot before cleanup. Record the review/finalization coordinator after it exits: this audit-only call is intentionally valid after terminal finalization and reruns retrieval to refresh the schema-v2 final audit.

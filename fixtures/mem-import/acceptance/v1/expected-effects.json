@@ -16,7 +16,7 @@
   },
   "reconciler": {
     "kind": "identity",
-    "contentHash": "8b748502a5a5970cecb03245c86fd84df7eca9836bf3cef3923c2b0d15faf0ae",
+    "contentHash": "1549e0c22c4d0a6283a6c18c705f1e4debf2a2e40cd674b5cca11ea7070ebfee",
     "decisionIds": ["fixture-ada-match"]
   },
   "merger": {
@@ -30,7 +30,7 @@
   },
   "repairer": {
     "kind": "repair",
-    "contentHash": "63374a75f79595beef237437b207d5002bdc4b31e1cd1faa6453ed003ee017c2",
+    "contentHash": "893d5fa295e2910af7a536e381d8a5b017dd7644935d9eed28f77ab9c2d796fe",
     "checkpointId": "fixture-repair-review",
     "actionIds": ["clarify-ada-key"],
     "artifactId": "ada"

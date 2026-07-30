@@ -11,7 +11,7 @@ When no recipe matches:
 1. Choose one installed facility and an invocation shape from its tool schema or known recipe.
 2. Launch one disposable child with explicit model, thinking, cwd, and a narrow tool list.
 3. Confirm launch, requested tool visibility, terminal identity, and outcome. If tool routing is uncertain, make at most one harmless/read-only mem-import call.
-4. If the run needs unproven coordinator → worker recursion, have that child launch at most one tiny nested child and stop. Do not schedule semantic work.
+4. If the run needs unproven coordinator → worker recursion, prefer the host-enforced `facility-preflight-coordinator` → `facility-preflight-reader` named-profile pair when available. It tests the same `agent`-selected isolation path used by real workers without reading files or performing semantic work. Otherwise have the child launch at most one tiny read-only nested child and stop. Do not schedule semantic work.
 5. Test interruption or resume only when the planned run needs it.
 6. Record the observations and discard the probe state.
 

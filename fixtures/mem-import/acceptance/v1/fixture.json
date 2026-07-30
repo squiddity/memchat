@@ -12,7 +12,7 @@
     "semantic/identity.json": "707a4e1dd14cf56349b8bb46b7b5bde2256ad49251bdcd5f7b7d6cff00f76cdb",
     "semantic/repair.json": "a22f724d5317a35cb5233ef91f133a37178f00658885d1ce78c15e001763756e",
     "calls.json": "75ac93c79547229d81a26d2a9b009628ee9fbe8be85ef993035d38c997024fc9",
-    "expected-effects.json": "a9194c2e57ed5510728f0dcada820128a73dd7bfe48876878359aa4a978e5758"
+    "expected-effects.json": "ea5b0355492f4b5cd6df56c657648d091e42f377d3255efa702e0af49a161b08"
   },
   "forbiddenRuntimeFields": [
     "coordinatorGrant",

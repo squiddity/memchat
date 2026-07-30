@@ -18,7 +18,7 @@ import {
 import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
 import type { MemImportCoordinatorSessionRecord, MemImportUsageEvidence, MemImportUsagePhase } from "./usage-telemetry.js";
 import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
-import { MemImportService, type AssignmentRole, type EvidenceReadTelemetrySummary, type MemImportAssignmentRecord, type MemImportCapability, type MemImportTerminalStatus } from "./service.js";
+import { assignmentAuthorityHash, MemImportService, type AssignmentRole, type EvidenceReadTelemetrySummary, type MemImportAssignmentRecord, type MemImportCapability, type MemImportRunRecord, type MemImportTerminalStatus, type RecoveredTransactionEffect } from "./service.js";
 import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
 import { MemImportClusterPlanService } from "./cluster-plan-service.js";
 
@@ -155,11 +155,27 @@ type StoredTransactionOperation =
 type StoredTransactionReceipt = {
   version: 1;
   kind: "mem-import-merge-transaction";
+  runId: string;
   revision: number;
   contentHash: string;
   parentContentHash: string | null;
+  extractionHash: string;
+  actor: MergeActor;
+  fence: number;
+  rationale: string;
+  proposalHashes: string[];
+  identityProposalHashes?: string[];
+  readSet: Array<{ artifactId: string; contentHash: string | null }>;
   operations: StoredTransactionOperation[];
   candidateDispositions?: NonNullable<StageEnvelope["candidateDispositions"]>;
+  checkpointId?: string;
+  actionIds?: string[];
+  createdAt: string;
+  authorizedAt?: string;
+  assignmentAuthorityHash?: string;
+  transactionControlHash?: string;
+  conflictOperations?: ConflictOperation[];
+  rebasedFrom?: { revision: number; contentHash: string | null };
 };
 
 type MergeCheckpoint = {
@@ -232,6 +248,36 @@ function semanticStage(stage: StageEnvelope): StageEnvelope {
   return semantic;
 }
 
+function worldSemanticStage(stage: StageEnvelope): StageEnvelope {
+  const { transactionControlHash: _transactionControlHash, ...world } = semanticStage(stage);
+  return world;
+}
+
+function transactionControlDigest(receipt: Omit<StoredTransactionReceipt, "contentHash" | "transactionControlHash">): string {
+  return hash({
+    version: receipt.version,
+    kind: receipt.kind,
+    revision: receipt.revision,
+    parentContentHash: receipt.parentContentHash,
+    extractionHash: receipt.extractionHash,
+    actor: receipt.actor,
+    assignmentAuthorityHash: receipt.assignmentAuthorityHash ?? null,
+    // Runtime run identity, authorization timestamps, and fence remain in the
+    // receipt/effect hash but are excluded here so semantically identical
+    // materializations retain the same canonical content hash.
+    rationale: receipt.rationale,
+    proposalHashes: receipt.proposalHashes,
+    identityProposalHashes: receipt.identityProposalHashes ?? [],
+    readSet: receipt.readSet,
+    operations: receipt.operations,
+    candidateDispositions: receipt.candidateDispositions ?? [],
+    conflictOperations: receipt.conflictOperations ?? [],
+    checkpointId: receipt.checkpointId ?? null,
+    actionIds: receipt.actionIds ?? [],
+    rebasedFrom: receipt.rebasedFrom ?? null,
+  });
+}
+
 function emptyStage(): StageEnvelope { return { version: 1, kind: "merge", artifacts: [], candidateDispositions: [], diagnostics: [] }; }
 
 function isExpired(lease: MergeLease, now: Date): boolean {
@@ -253,7 +299,15 @@ export class MemImportU2Service {
 
   async mergeState(options: CoordinatorAuthority): Promise<MergeState> {
     const run = await this.base.authorizeCoordinator(options);
-    return this.readMergeState(this.canonicalRoot(run));
+    const canonicalRoot = this.canonicalRoot(run);
+    if (!run.terminal) await this.reconcileTransactionWorkerEffects(run, canonicalRoot);
+    return this.readMergeState(canonicalRoot);
+  }
+
+  async effectInventory(options: CoordinatorAuthority & { continuationCursor?: string; maxItems?: number }) {
+    const run = await this.base.authorizeCoordinator(options);
+    if (!run.terminal) await this.reconcileTransactionWorkerEffects(run, this.canonicalRoot(run));
+    return this.base.effectInventory(options);
   }
 
   async mergeControls(options: CoordinatorAuthority): Promise<MergeControls> {
@@ -290,6 +344,7 @@ export class MemImportU2Service {
   async workStatus(options: CoordinatorAuthority): Promise<MemImportWorkStatus> {
     const run = await this.base.authorizeCoordinator(options);
     const canonicalRoot = await this.base.canonicalRootForRun(run.outputRoot);
+    if (!run.terminal) await this.reconcileTransactionWorkerEffects(run, canonicalRoot);
     const state = await this.readMergeState(canonicalRoot);
     const candidateKeys = new Set((await readExtractionStages(run.outputRoot)).flatMap((stage) => (stage.candidates ?? []).map((candidate) => `${stage.unitId}:${candidate.id}`)));
     const proposalsRoot = proposalDir(run.outputRoot, run.runId);
@@ -455,13 +510,14 @@ export class MemImportU2Service {
 
   private async applyWorkerBatchLocked(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
-    return this.applyAuthorizedWorkerBatch(assignment, options, MAX_SYNTHESIZED_CHANGES);
+    return this.applyAuthorizedWorkerBatch(assignment, options, MAX_SYNTHESIZED_CHANGES, options);
   }
 
   private async applyAuthorizedWorkerBatch(
     assignment: MemImportAssignmentRecord,
     options: { fence: number; expectedRevision: number; expectedContentHash: string | null; batch: MergeBatch },
     maxOperations: number,
+    workerAuthority: WorkerAuthority,
   ): Promise<MergeState> {
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
@@ -474,7 +530,7 @@ export class MemImportU2Service {
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch, maxOperations);
     const before = await this.readMergeState(canonicalRoot);
     this.assertReadSet(before.stage, batch.readSet);
-    const identityPackets = await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
+    await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
     const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
     const stage = this.applyBatch(before.stage, batch);
     const written = await this.writeMerge({
@@ -487,10 +543,17 @@ export class MemImportU2Service {
       expectedContentHash: before.contentHash,
       stage,
       rationale: batch.rationale,
-      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
+      beforePersist: async () => {
+        await this.base.authorizeWorker({ ...workerAuthority, capability: "merge:write", role: "merger" });
+        return this.now().toISOString();
+      },
+      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, assignmentAuthorityHash: assignmentAuthorityHash(assignment), ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
     });
-    await this.applyIdentityEffects(canonicalRoot, batch, identityPackets);
-    await this.base.recordWorkerEffect(assignment, { kind: "merge", path: this.relative(canonicalRoot, transactionPath(canonicalRoot, written.revision, written.contentHash!)), contentHash: written.contentHash! });
+    await this.reconcileTransactionWorkerEffects(
+      { runId: assignment.runId, outputRoot: assignment.outputRoot, ...(canonicalRoot !== assignment.outputRoot ? { compendiumRoot: canonicalRoot } : {}) },
+      canonicalRoot,
+      { runId: assignment.runId, owner: { kind: "worker", taskId: assignment.taskId, role: assignment.role } },
+    );
     return written;
   }
 
@@ -553,7 +616,7 @@ export class MemImportU2Service {
     const lease = await this.acquireLease(canonicalRoot, assignment.runId, owner);
     try {
       const current = await this.readMergeState(canonicalRoot);
-      return await this.applyAuthorizedWorkerBatch(assignment, { fence: lease.fence, expectedRevision: current.revision, expectedContentHash: current.contentHash, batch }, MAX_TOTAL_MERGE_CHANGES);
+      return await this.applyAuthorizedWorkerBatch(assignment, { fence: lease.fence, expectedRevision: current.revision, expectedContentHash: current.contentHash, batch }, MAX_TOTAL_MERGE_CHANGES, options);
     } finally {
       // The commit already authorized and captured its owner. Release directly so a
       // concurrent coordinator revocation cannot strand the lease in the cleanup path.
@@ -586,7 +649,7 @@ export class MemImportU2Service {
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
     const before = await this.readMergeState(canonicalRoot);
     this.assertReadSet(before.stage, batch.readSet);
-    const identityPackets = await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
+    await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
     const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
     const stage = this.applyBatch(before.stage, batch);
     const written = await this.writeMerge({
@@ -601,10 +664,17 @@ export class MemImportU2Service {
       rationale: batch.rationale,
       checkpointId: options.checkpointId,
       actionIds: options.actionIds,
-      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
+      beforePersist: async () => {
+        await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "repairer", checkpointId: options.checkpointId, actionIds: options.actionIds });
+        return this.now().toISOString();
+      },
+      transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, assignmentAuthorityHash: assignmentAuthorityHash(assignment), ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
     });
-    await this.applyIdentityEffects(canonicalRoot, batch, identityPackets);
-    await this.base.recordWorkerEffect(assignment, { kind: "repair", path: this.relative(canonicalRoot, transactionPath(canonicalRoot, written.revision, written.contentHash!)), contentHash: written.contentHash! });
+    await this.reconcileTransactionWorkerEffects(
+      { runId: assignment.runId, outputRoot: assignment.outputRoot, ...(canonicalRoot !== assignment.outputRoot ? { compendiumRoot: canonicalRoot } : {}) },
+      canonicalRoot,
+      { runId: assignment.runId, owner: { kind: "worker", taskId: assignment.taskId, role: assignment.role } },
+    );
     return written;
   }
 
@@ -679,9 +749,10 @@ export class MemImportU2Service {
     const dispatchRoots = run.compendiumRoot
       ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
       : [run.outputRoot];
+    const transactionDiagnostics = await this.transactionEffectDiagnostics(run, projectionRoot);
     const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
       .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
-    const diagnostics = [...identityDiagnostics, ...reviewDiagnostics, ...dispatchDiagnostics];
+    const diagnostics = [...identityDiagnostics, ...reviewDiagnostics, ...transactionDiagnostics, ...dispatchDiagnostics];
     return { ...checks, readiness: { passed: diagnostics.every((item) => item.level !== "error"), diagnostics } };
   }
 
@@ -704,6 +775,7 @@ export class MemImportU2Service {
     const dispatchRoots = run.compendiumRoot
       ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
       : [run.outputRoot];
+    const transactionDiagnostics = await this.transactionEffectDiagnostics(run, projectionRoot, { runId: run.runId, owner: { kind: "coordinator", taskId: options.taskId } });
     const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
       .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
     const diagnostics = [
@@ -714,6 +786,7 @@ export class MemImportU2Service {
       ...checks.deterministic.checks.flatMap((check) => check.diagnostics ?? []),
       ...identityDiagnostics,
       ...reviewDiagnostics,
+      ...transactionDiagnostics,
       ...dispatchDiagnostics,
     ];
     const errors = diagnostics.filter((item) => item.level === "error").length;
@@ -776,7 +849,11 @@ export class MemImportU2Service {
     });
   }
 
-  private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; transaction?: Pick<MergeBatch, "proposalHashes" | "identityProposalHashes" | "readSet" | "operations" | "candidateDispositions" | "conflictOperations"> & { rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
+  private async writeMerge(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; beforePersist?: () => Promise<string>; transaction?: Pick<MergeBatch, "proposalHashes" | "identityProposalHashes" | "readSet" | "operations" | "candidateDispositions" | "conflictOperations"> & { assignmentAuthorityHash?: string; rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
+    return this.base.withRunMutation(options.outputRoot, () => this.writeMergeLocked(options));
+  }
+
+  private async writeMergeLocked(options: { outputRoot: string; sourceRoot?: string; runId: string; actor: MergeActor; fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[]; beforePersist?: () => Promise<string>; transaction?: Pick<MergeBatch, "proposalHashes" | "identityProposalHashes" | "readSet" | "operations" | "candidateDispositions" | "conflictOperations"> & { assignmentAuthorityHash?: string; rebasedFrom?: { revision: number; contentHash: string | null } } }): Promise<MergeState> {
     assertId(options.actor.taskId, "taskId");
     requireNonEmpty(options.rationale, "rationale");
     await this.requireLease(options.outputRoot, options.runId, options.actor, options.fence);
@@ -789,44 +866,53 @@ export class MemImportU2Service {
     submitted.version = 1;
     submitted.kind = "merge";
     if (!Array.isArray(submitted.artifacts)) throw new Error("Merge stage must contain artifacts array");
-    await this.deriveArtifactProvenanceQuotes(options.sourceRoot ?? options.outputRoot, submitted, options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined);
-    const contentHash = hash(submitted);
+    const touchedArtifactIds = options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined;
+    await this.deriveArtifactProvenanceQuotes(options.sourceRoot ?? options.outputRoot, submitted, touchedArtifactIds);
     const meaningfulConflictChange = options.transaction?.conflictOperations?.length
       ? await this.hasMeaningfulConflictChange(options.outputRoot, options.transaction.conflictOperations)
       : false;
-    if (contentHash === before.contentHash && !meaningfulConflictChange) {
-      throw new Error("Merge transaction is a semantic no-op; no revision was created");
+    if (before.revision > 0 && hash(worldSemanticStage(submitted)) === hash(worldSemanticStage(before.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision was created");
+    const extractionHash = await this.extractionHash(options.sourceRoot ?? options.outputRoot);
+    const storedOperations = options.transaction ? await this.persistTransactionArtifacts(options.outputRoot, submitted, options.transaction.operations) : undefined;
+    const revision = before.revision + 1;
+    const authorizedAt = options.beforePersist ? await options.beforePersist() : undefined;
+    const createdAt = this.now().toISOString();
+    const actionIds = options.actionIds?.length ? [...new Set(options.actionIds)].sort() : undefined;
+    let transactionReceipt: StoredTransactionReceipt | undefined;
+    if (options.transaction) {
+      const controls: Omit<StoredTransactionReceipt, "contentHash" | "transactionControlHash"> = {
+        version: 1,
+        kind: "mem-import-merge-transaction",
+        runId: options.runId,
+        revision,
+        parentContentHash: before.contentHash,
+        extractionHash,
+        actor: options.actor,
+        fence: options.fence,
+        rationale: options.rationale,
+        proposalHashes: options.transaction.proposalHashes,
+        readSet: options.transaction.readSet,
+        operations: storedOperations!,
+        createdAt,
+        ...(authorizedAt ? { authorizedAt } : {}),
+        ...(options.transaction.assignmentAuthorityHash ? { assignmentAuthorityHash: options.transaction.assignmentAuthorityHash } : {}),
+        ...(options.transaction.identityProposalHashes?.length ? { identityProposalHashes: options.transaction.identityProposalHashes } : {}),
+        ...(options.transaction.candidateDispositions?.length ? { candidateDispositions: options.transaction.candidateDispositions as NonNullable<StageEnvelope["candidateDispositions"]> } : {}),
+        ...(options.transaction.conflictOperations?.length ? { conflictOperations: options.transaction.conflictOperations } : {}),
+        ...(options.checkpointId ? { checkpointId: options.checkpointId } : {}),
+        ...(actionIds ? { actionIds } : {}),
+        ...(options.transaction.rebasedFrom ? { rebasedFrom: options.transaction.rebasedFrom } : {}),
+      };
+      const transactionControlHash = transactionControlDigest(controls);
+      submitted.transactionControlHash = transactionControlHash;
+      transactionReceipt = { ...controls, contentHash: "", transactionControlHash };
     }
-    const stage: StageEnvelope = { ...submitted, revision: before.revision + 1, contentHash, ...(before.contentHash ? { parentContentHash: before.contentHash } : {}) };
+    const contentHash = hash(submitted);
+    const stage: StageEnvelope = { ...submitted, revision, contentHash, ...(before.contentHash ? { parentContentHash: before.contentHash } : {}) };
     const { validateStageEnvelope } = await import("../world-import/staging.js");
     validateStageEnvelope(stage, { requireArtifacts: true });
-    await this.assertLiteralArtifactProvenance(options.sourceRoot ?? options.outputRoot, stage, options.transaction ? new Set(options.transaction.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId)) : undefined);
-    const extractionHash = await this.extractionHash(options.sourceRoot ?? options.outputRoot);
-    const storedOperations = options.transaction
-      ? await this.persistTransactionArtifacts(options.outputRoot, stage, options.transaction.operations)
-      : undefined;
-    const receipt = options.transaction ? {
-      version: 1,
-      kind: "mem-import-merge-transaction",
-      runId: options.runId,
-      revision: stage.revision,
-      contentHash,
-      parentContentHash: before.contentHash,
-      extractionHash,
-      actor: options.actor,
-      fence: options.fence,
-      rationale: options.rationale,
-      proposalHashes: options.transaction.proposalHashes,
-      ...(options.transaction.identityProposalHashes?.length ? { identityProposalHashes: options.transaction.identityProposalHashes } : {}),
-      readSet: options.transaction.readSet,
-      operations: storedOperations!,
-      ...(options.transaction.candidateDispositions?.length ? { candidateDispositions: options.transaction.candidateDispositions } : {}),
-      ...(options.transaction.conflictOperations?.length ? { conflictOperations: options.transaction.conflictOperations } : {}),
-      ...(options.checkpointId ? { checkpointId: options.checkpointId } : {}),
-      ...(options.actionIds?.length ? { actionIds: [...new Set(options.actionIds)].sort() } : {}),
-      ...(options.transaction.rebasedFrom ? { rebasedFrom: options.transaction.rebasedFrom } : {}),
-      createdAt: this.now().toISOString(),
-    } : {
+    await this.assertLiteralArtifactProvenance(options.sourceRoot ?? options.outputRoot, stage, touchedArtifactIds);
+    const receipt = transactionReceipt ? { ...transactionReceipt, contentHash } : {
       version: 1,
       kind: "mem-import-merge-revision",
       runId: options.runId,
@@ -838,10 +924,15 @@ export class MemImportU2Service {
       fence: options.fence,
       rationale: options.rationale,
       ...(options.checkpointId ? { checkpointId: options.checkpointId } : {}),
-      ...(options.actionIds?.length ? { actionIds: [...new Set(options.actionIds)].sort() } : {}),
-      createdAt: this.now().toISOString(),
+      ...(actionIds ? { actionIds } : {}),
+      createdAt,
       stage,
     };
+    // Recheck ownership and CAS at the final pre-persistence boundary while the
+    // canonical mutation lock excludes lease recovery and competing writers.
+    await this.requireLease(options.outputRoot, options.runId, options.actor, options.fence);
+    const finalBefore = await this.readMergeState(options.outputRoot);
+    if (finalBefore.revision !== before.revision || finalBefore.contentHash !== before.contentHash) throw new Error("Canonical merge state changed before transaction persistence");
     const receiptFile = options.transaction ? transactionPath(options.outputRoot, stage.revision!, contentHash) : revisionPath(options.outputRoot, stage.revision!, contentHash);
     if (existsSync(receiptFile)) throw new Error("Merge revision receipt already exists; retry after reading current state");
     await writeJson(receiptFile, receipt);
@@ -857,6 +948,10 @@ export class MemImportU2Service {
   }
 
   private async acquireLease(outputRoot: string, runId: string, owner: MergeActor): Promise<MergeLeaseResult> {
+    return this.base.withRunMutation(outputRoot, () => this.acquireLeaseLocked(outputRoot, runId, owner));
+  }
+
+  private async acquireLeaseLocked(outputRoot: string, runId: string, owner: MergeActor): Promise<MergeLeaseResult> {
     const directory = leaseDir(outputRoot);
     await mkdir(join(orchestrationDir(outputRoot), "locks"), { recursive: true, mode: 0o700 });
     let previous: MergeLease | undefined;
@@ -881,6 +976,10 @@ export class MemImportU2Service {
   }
 
   private async heartbeatLease(outputRoot: string, runId: string, owner: MergeActor, fence: number): Promise<MergeLeaseResult> {
+    return this.base.withRunMutation(outputRoot, () => this.heartbeatLeaseLocked(outputRoot, runId, owner, fence));
+  }
+
+  private async heartbeatLeaseLocked(outputRoot: string, runId: string, owner: MergeActor, fence: number): Promise<MergeLeaseResult> {
     await this.requireLease(outputRoot, runId, owner, fence);
     const lease = await this.readLease(outputRoot);
     if (!lease) throw new Error("Merge lease disappeared before heartbeat");
@@ -891,6 +990,10 @@ export class MemImportU2Service {
   }
 
   private async releaseLease(outputRoot: string, runId: string, owner: MergeActor, fence: number): Promise<void> {
+    return this.base.withRunMutation(outputRoot, () => this.releaseLeaseLocked(outputRoot, runId, owner, fence));
+  }
+
+  private async releaseLeaseLocked(outputRoot: string, runId: string, owner: MergeActor, fence: number): Promise<void> {
     await this.requireLease(outputRoot, runId, owner, fence);
     await rm(leaseDir(outputRoot), { recursive: true, force: true });
     await this.recordEvent(outputRoot, "lease", { runId, action: "released", owner, fence });
@@ -956,6 +1059,167 @@ export class MemImportU2Service {
     catch { throw new Error("Invalid merge inventory continuation cursor"); }
     if (cursor.version !== 1 || typeof cursor.revision !== "number" || !Number.isInteger(cursor.revision) || cursor.revision < 0 || (cursor.contentHash !== null && typeof cursor.contentHash !== "string") || (cursor.group !== undefined && typeof cursor.group !== "string") || typeof cursor.afterId !== "string") throw new Error("Invalid merge inventory continuation cursor");
     return cursor as MergeInventoryCursor;
+  }
+
+  private async transactionEffectDiagnostics(run: { runId: string; outputRoot: string; compendiumRoot?: string; terminal?: unknown }, canonicalRoot: string, activeWriter?: { runId: string; owner: MergeActor }): Promise<Array<{ level: "error"; message: string; path: string }>> {
+    try {
+      if (!run.terminal) await this.reconcileTransactionWorkerEffects(run, canonicalRoot, activeWriter);
+      else await this.verifyCanonicalTransactionHistory(canonicalRoot, false);
+      return [];
+    } catch (error) {
+      return [{ level: "error", message: `Transaction/effect integrity: ${error instanceof Error ? error.message : String(error)}`, path: "stages/merge/transactions" }];
+    }
+  }
+
+  /** Verify the full immutable canonical chain, then materialize its disposable
+   * identity/effect projections without ever holding canonical and owner-run
+   * mutation locks at the same time. */
+  private async reconcileTransactionWorkerEffects(run: { runId: string; outputRoot: string; compendiumRoot?: string }, canonicalRoot: string, activeWriter?: { runId: string; owner: MergeActor }): Promise<void> {
+    const prepared = await this.base.withRunMutation(canonicalRoot, async () => {
+      await this.requireReconciliationLeaseAccess(canonicalRoot, activeWriter);
+      const state = await this.verifyCanonicalTransactionHistory(canonicalRoot);
+      const runRoots = new Map<string, string>();
+      if (run.compendiumRoot) {
+        const compendium = await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot);
+        for (const item of compendium.runs) runRoots.set(item.runId, item.runRoot);
+      } else runRoots.set(run.runId, run.outputRoot);
+      const transactions: Array<{ path: string; receipt: StoredTransactionReceipt; ownerRoot: string }> = [];
+      for (let revision = 1; revision <= state.revision; revision += 1) {
+        const stored = await this.readReceiptAtRevision(canonicalRoot, revision);
+        if (stored.kind !== "mem-import-merge-transaction") continue;
+        const receipt = stored as unknown as Partial<StoredTransactionReceipt>;
+        const file = `${String(revision).padStart(8, "0")}-${String(receipt.contentHash)}.json`;
+        const path = transactionPath(canonicalRoot, revision, String(receipt.contentHash));
+        if (receipt.version !== 1 || typeof receipt.runId !== "string" || typeof receipt.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(receipt.contentHash) || !receipt.actor || typeof receipt.actor !== "object" || receipt.actor.kind !== "worker" || typeof receipt.createdAt !== "string" || !Array.isArray(receipt.proposalHashes)) throw new Error(`Merge transaction ${file} has invalid recovery controls`);
+        const ownerRoot = runRoots.get(receipt.runId);
+        if (!ownerRoot) throw new Error(`Merge transaction ${file} belongs to an unknown compendium run`);
+        if (receipt.actor.role !== "merger" && receipt.actor.role !== "repairer") throw new Error(`Merge transaction ${file} has an invalid worker role`);
+        if (typeof receipt.actor.taskId !== "string") throw new Error(`Merge transaction ${file} has no worker task`);
+        transactions.push({ path, receipt: receipt as StoredTransactionReceipt, ownerRoot });
+      }
+      const recoveries: RecoveredTransactionEffect[] = transactions.map(({ path, receipt, ownerRoot }) => ({
+        outputRoot: ownerRoot,
+        runId: receipt.runId,
+        taskId: receipt.actor.taskId,
+        role: receipt.actor.role as "merger" | "repairer",
+        effect: receipt.actor.role === "merger" ? "merge" : "repair",
+        path: this.relative(canonicalRoot, path),
+        contentHash: receipt.contentHash,
+        revision: receipt.revision,
+        transactionCreatedAt: receipt.createdAt,
+        ...(receipt.authorizedAt ? { transactionAuthorizedAt: receipt.authorizedAt } : {}),
+        transactionReceiptHash: hash(receipt),
+        ...(receipt.assignmentAuthorityHash ? { assignmentAuthorityHash: receipt.assignmentAuthorityHash } : {}),
+        proposalHashes: receipt.proposalHashes,
+        ...(receipt.identityProposalHashes ? { identityProposalHashes: receipt.identityProposalHashes } : {}),
+        ...(receipt.checkpointId ? { checkpointId: receipt.checkpointId } : {}),
+        ...(receipt.actionIds ? { actionIds: receipt.actionIds } : {}),
+      }));
+      const missingRecoveries: RecoveredTransactionEffect[] = [];
+      for (const recovery of recoveries) if (!(await this.base.validateRecoveredTransactionAuthority(recovery)).matching) missingRecoveries.push(recovery);
+      if (activeWriter && missingRecoveries.some((recovery) => recovery.outputRoot !== run.outputRoot)) throw new Error("Foreign-run effect recovery is deferred until a coordinator read without a writer lease");
+      await this.assertTransactionEffectProjection(canonicalRoot, runRoots, transactions, true);
+      const identityProjection = await this.buildIdentityProjection(canonicalRoot, transactions);
+      return { revision: state.revision, contentHash: state.contentHash, runRoots, transactions, missingRecoveries, identityProjection };
+    });
+    // Owner-run writes happen after releasing the canonical lock, avoiding lock
+    // inversion with workers that enter through their run mutation lock.
+    for (const recovery of prepared.missingRecoveries) await this.base.recordRecoveredTransactionEffect(recovery);
+    await this.base.withRunMutation(canonicalRoot, async () => {
+      await this.requireReconciliationLeaseAccess(canonicalRoot, activeWriter);
+      const current = await this.verifyCanonicalTransactionHistory(canonicalRoot);
+      if (current.revision !== prepared.revision || current.contentHash !== prepared.contentHash) throw new Error("Canonical transaction history changed during effect reconciliation; retry the typed read");
+      await this.assertTransactionEffectProjection(canonicalRoot, prepared.runRoots, prepared.transactions);
+      await this.persistIdentityProjection(canonicalRoot, prepared.identityProjection);
+    });
+  }
+
+  private async requireReconciliationLeaseAccess(canonicalRoot: string, activeWriter?: { runId: string; owner: MergeActor }): Promise<void> {
+    const liveLease = await this.readLease(canonicalRoot);
+    if (!liveLease || isExpired(liveLease, this.now())) return;
+    if (!activeWriter || liveLease.runId !== activeWriter.runId || !leaseOwnerEquals(liveLease.owner, activeWriter.owner)) throw new Error("Canonical transaction reconciliation is deferred while another merge writer lease is active");
+  }
+
+  private async assertTransactionEffectProjection(canonicalRoot: string, runRoots: Map<string, string>, transactions: Array<{ path: string; receipt: StoredTransactionReceipt; ownerRoot: string }>, allowMissing = false): Promise<void> {
+    const expected = new Map<string, number>();
+    for (const { path, receipt, ownerRoot } of transactions) {
+      const kind = receipt.actor.role === "merger" ? "merge" : "repair";
+      const key = `${ownerRoot}\u0000${receipt.runId}\u0000${receipt.actor.taskId}\u0000${kind}\u0000${receipt.contentHash}\u0000${this.relative(canonicalRoot, path)}`;
+      expected.set(key, (expected.get(key) ?? 0) + 1);
+    }
+    const observed = new Map<string, number>();
+    for (const ownerRoot of new Set(runRoots.values())) {
+      const effectsRoot = join(ownerRoot, "stages", "orchestration", "effects");
+      if (!existsSync(effectsRoot)) continue;
+      for (const taskId of await readdir(effectsRoot)) {
+        const directory = join(effectsRoot, taskId);
+        for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
+          const value = JSON.parse(await readFile(join(directory, file), "utf-8")) as { version?: unknown; kind?: unknown; runId?: unknown; taskId?: unknown; effect?: unknown; path?: unknown; contentHash?: unknown };
+          if (value.kind !== "mem-import-worker-effect" || (value.effect !== "merge" && value.effect !== "repair")) continue;
+          if (value.version !== 1 || typeof value.runId !== "string" || value.taskId !== taskId || typeof value.path !== "string" || typeof value.contentHash !== "string") throw new Error(`Invalid canonical transaction effect ${taskId}/${file}`);
+          const key = `${ownerRoot}\u0000${value.runId}\u0000${taskId}\u0000${value.effect}\u0000${value.contentHash}\u0000${value.path}`;
+          if (!expected.has(key)) throw new Error(`Orphan canonical transaction effect ${taskId}/${file} has no matching immutable transaction`);
+          observed.set(key, (observed.get(key) ?? 0) + 1);
+        }
+      }
+    }
+    for (const [key, count] of expected) if (count !== 1 || (!allowMissing && observed.get(key) !== 1) || (observed.get(key) ?? 0) > 1) throw new Error("Canonical transaction must map to exactly one persisted worker effect");
+  }
+
+  private async buildIdentityProjection(canonicalRoot: string, transactions: Array<{ receipt: StoredTransactionReceipt; ownerRoot: string }>): Promise<CanonicalIdentityState> {
+    const expected: CanonicalIdentityState = { version: 1, kind: "mem-import-identity-state", owners: {}, conflicts: {} };
+    for (const { receipt, ownerRoot } of transactions.sort((left, right) => left.receipt.revision - right.receipt.revision)) {
+      for (const identityHash of receipt.identityProposalHashes ?? []) {
+        const packet = await this.identities.readIdentityProposal(ownerRoot, receipt.runId, identityHash);
+        for (const decision of packet.decisions) {
+          if (decision.disposition !== "create") continue;
+          const owner = expected.owners[decision.canonicalId!];
+          if (owner && (owner.proposalHash !== packet.contentHash || owner.decisionId !== decision.id)) throw new Error(`Canonical identity ${decision.canonicalId} has conflicting transaction owners`);
+          expected.owners[decision.canonicalId!] = { proposalHash: packet.contentHash, decisionId: decision.id, provisionalId: decision.provisionalId, createdAt: receipt.createdAt };
+        }
+      }
+      for (const operation of receipt.conflictOperations ?? []) {
+        if (operation.kind === "create") {
+          if (expected.conflicts[operation.conflictId]) throw new Error(`Conflict ${operation.conflictId} is created more than once in canonical history`);
+          expected.conflicts[operation.conflictId] = { status: "open", blocking: operation.blocking, summary: operation.summary, ...(operation.identityDecisionId ? { identityDecisionId: operation.identityDecisionId } : {}), updatedAt: receipt.createdAt };
+        } else {
+          const conflict = expected.conflicts[operation.conflictId];
+          if (!conflict) throw new Error(`Conflict ${operation.conflictId} is changed before it is created in canonical history`);
+          conflict.status = operation.kind === "resolve" ? "resolved" : "deferred";
+          conflict.updatedAt = receipt.createdAt;
+        }
+      }
+    }
+    return expected;
+  }
+
+  private async persistIdentityProjection(canonicalRoot: string, expected: CanonicalIdentityState): Promise<void> {
+    const current = await this.readIdentityState(canonicalRoot);
+    if (hash(current) !== hash(expected)) await writeJson(identityStatePath(canonicalRoot), expected);
+  }
+
+  private async verifyCanonicalTransactionHistory(outputRoot: string, recoverProjection = true): Promise<MergeState> {
+    let state = await this.readMergeState(outputRoot);
+    const receiptDirectories = [join(outputRoot, "stages", "merge", "revisions"), join(outputRoot, "stages", "merge", "transactions")];
+    let highestReceiptRevision = 0;
+    for (const directory of receiptDirectories) {
+      if (!existsSync(directory)) continue;
+      for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
+        const value = JSON.parse(await readFile(join(directory, file), "utf-8")) as { revision?: unknown };
+        if (!Number.isInteger(value.revision) || (value.revision as number) < 1) throw new Error(`Canonical receipt ${file} has an invalid revision`);
+        highestReceiptRevision = Math.max(highestReceiptRevision, value.revision as number);
+      }
+    }
+    if (highestReceiptRevision < state.revision) throw new Error(`Canonical receipt history ends at revision ${highestReceiptRevision}, but the projected merge stage is revision ${state.revision}`);
+    if (highestReceiptRevision === 0) return state;
+    const reconstructed = await this.reconstructRevision(outputRoot, highestReceiptRevision, false);
+    if (highestReceiptRevision > state.revision) {
+      if (!recoverProjection) throw new Error(`Canonical receipt history ends at revision ${highestReceiptRevision}, but the projected merge stage is revision ${state.revision}`);
+      await writeMergeStage(outputRoot, reconstructed.stage);
+      await this.refreshReviewValidity(outputRoot, reconstructed.stage);
+      state = reconstructed;
+    } else if (reconstructed.contentHash !== state.contentHash || hash(semanticStage(reconstructed.stage)) !== hash(semanticStage(state.stage))) throw new Error("Canonical transaction history does not reconstruct the projected merge stage");
+    return state;
   }
 
   private async readMergeState(outputRoot: string): Promise<MergeState> {
@@ -1089,32 +1353,6 @@ export class MemImportU2Service {
     });
   }
 
-  private async applyIdentityEffects(outputRoot: string, batch: MergeBatch, packets: StoredIdentityProposal[]): Promise<void> {
-    if (packets.length === 0 && !batch.conflictOperations?.length) return;
-    const state = await this.readIdentityState(outputRoot);
-    const now = this.now().toISOString();
-    for (const packet of packets) {
-      for (const decision of packet.decisions) {
-        if (decision.disposition !== "create") continue;
-        const owner = state.owners[decision.canonicalId!];
-        if (owner && (owner.proposalHash !== packet.contentHash || owner.decisionId !== decision.id)) throw new Error(`Canonical identity ${decision.canonicalId} is already owned by ${owner.proposalHash}:${owner.decisionId}`);
-        state.owners[decision.canonicalId!] = { proposalHash: packet.contentHash, decisionId: decision.id, provisionalId: decision.provisionalId, createdAt: now };
-      }
-    }
-    for (const operation of batch.conflictOperations ?? []) {
-      if (operation.kind === "create") {
-        if (state.conflicts[operation.conflictId]) throw new Error(`Conflict ${operation.conflictId} already exists`);
-        state.conflicts[operation.conflictId] = { status: "open", blocking: operation.blocking, summary: operation.summary, ...(operation.identityDecisionId ? { identityDecisionId: operation.identityDecisionId } : {}), updatedAt: now };
-      } else {
-        const conflict = state.conflicts[operation.conflictId];
-        if (!conflict) throw new Error(`Conflict ${operation.conflictId} does not exist`);
-        conflict.status = operation.kind === "resolve" ? "resolved" : "deferred";
-        conflict.updatedAt = now;
-      }
-    }
-    await writeJson(identityStatePath(outputRoot), state);
-  }
-
   private async identityDiagnostics(outputRoot: string): Promise<Array<{ level: "error"; message: string; path: string }>> {
     const state = await this.readIdentityState(outputRoot);
     return Object.entries(state.conflicts)
@@ -1229,17 +1467,24 @@ export class MemImportU2Service {
   }
 
   /** Replays immutable delta receipts from the nearest bounded checkpoint. */
-  private async reconstructRevision(outputRoot: string, targetRevision: number): Promise<MergeState> {
+  private async reconstructRevision(outputRoot: string, targetRevision: number, useCheckpoint = true): Promise<MergeState> {
     if (!Number.isInteger(targetRevision) || targetRevision < 1) throw new Error("Merge revision must be a positive integer");
-    let state = await this.readNearestCheckpoint(outputRoot, targetRevision) ?? { stage: emptyStage(), revision: 0, contentHash: null };
+    let state = useCheckpoint ? await this.readNearestCheckpoint(outputRoot, targetRevision) ?? { stage: emptyStage(), revision: 0, contentHash: null } : { stage: emptyStage(), revision: 0, contentHash: null };
     for (let revision = state.revision + 1; revision <= targetRevision; revision++) {
       const receipt = await this.readReceiptAtRevision(outputRoot, revision);
       if (receipt.parentContentHash !== state.contentHash) throw new Error(`Merge revision ${revision} does not link to the reconstructed parent`);
       if (receipt.kind === "mem-import-merge-revision") {
         if (!receipt.stage || typeof receipt.stage !== "object" || Array.isArray(receipt.stage)) throw new Error(`Merge revision ${revision} is missing its checkpoint stage`);
-        state = { stage: receipt.stage as StageEnvelope, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) };
+        const snapshot = receipt.stage as StageEnvelope;
+        if (snapshot.revision !== revision || snapshot.contentHash !== receipt.contentHash || (snapshot.parentContentHash ?? null) !== receipt.parentContentHash || hash(semanticStage(snapshot)) !== receipt.contentHash) throw new Error(`Merge revision ${revision} snapshot does not match its semantic content hash`);
+        state = { stage: snapshot, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) };
       } else if (receipt.kind === "mem-import-merge-transaction") {
-        const stage = await this.applyStoredTransaction(outputRoot, state.stage, receipt as StoredTransactionReceipt);
+        const transaction = receipt as unknown as StoredTransactionReceipt;
+        if (transaction.transactionControlHash) {
+          const { contentHash: _contentHash, transactionControlHash, ...controls } = transaction;
+          if (transactionControlDigest(controls) !== transactionControlHash) throw new Error(`Merge transaction ${revision} control digest is invalid`);
+        }
+        const stage = await this.applyStoredTransaction(outputRoot, state.stage, transaction);
         const calculated = hash(semanticStage(stage));
         if (calculated !== receipt.contentHash) throw new Error(`Merge transaction ${revision} does not reconstruct to its content hash`);
         state = { stage: { ...stage, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) }, revision, contentHash: receipt.contentHash as string, ...(receipt.parentContentHash ? { parentContentHash: receipt.parentContentHash as string } : {}) };
@@ -1252,15 +1497,20 @@ export class MemImportU2Service {
     const directory = join(outputRoot, "stages", "merge", "checkpoints");
     if (!existsSync(directory)) return undefined;
     const candidates = (await readdir(directory)).filter((name) => name.endsWith(".json"));
-    let best: MergeCheckpoint | undefined;
+    let best: { name: string; checkpoint: MergeCheckpoint } | undefined;
     for (const name of candidates) {
       const value = JSON.parse(await readFile(join(directory, name), "utf-8")) as Partial<MergeCheckpoint>;
       if (value.version !== 1 || value.kind !== "mem-import-merge-checkpoint" || !Number.isInteger(value.revision) || value.revision! > targetRevision || typeof value.contentHash !== "string" || !value.stage || typeof value.stage !== "object" || Array.isArray(value.stage)) continue;
-      if (!best || value.revision! > best.revision) best = value as MergeCheckpoint;
+      const expectedName = `${String(value.revision).padStart(8, "0")}-${value.contentHash}.json`;
+      if (name !== expectedName) throw new Error(`Merge checkpoint ${value.revision} filename does not match its content hash`);
+      if (!best || value.revision! > best.checkpoint.revision) best = { name, checkpoint: value as MergeCheckpoint };
     }
     if (!best) return undefined;
-    if (hash(semanticStage(best.stage)) !== best.contentHash) throw new Error(`Merge checkpoint ${best.revision} has invalid semantic content hash`);
-    return { stage: best.stage, revision: best.revision, contentHash: best.contentHash, ...(best.stage.parentContentHash ? { parentContentHash: best.stage.parentContentHash } : {}) };
+    const checkpoint = best.checkpoint;
+    if (checkpoint.stage.revision !== checkpoint.revision || checkpoint.stage.contentHash !== checkpoint.contentHash || hash(semanticStage(checkpoint.stage)) !== checkpoint.contentHash) throw new Error(`Merge checkpoint ${checkpoint.revision} has invalid semantic content hash`);
+    const receipt = await this.readReceiptAtRevision(outputRoot, checkpoint.revision);
+    if (receipt.contentHash !== checkpoint.contentHash) throw new Error(`Merge checkpoint ${checkpoint.revision} does not match its immutable receipt`);
+    return { stage: checkpoint.stage, revision: checkpoint.revision, contentHash: checkpoint.contentHash, ...(checkpoint.stage.parentContentHash ? { parentContentHash: checkpoint.stage.parentContentHash } : {}) };
   }
 
   private async readReceiptAtRevision(outputRoot: string, revision: number): Promise<Record<string, unknown>> {
@@ -1272,8 +1522,14 @@ export class MemImportU2Service {
       for (const name of await readdir(directory)) if (name.startsWith(prefix) && name.endsWith(".json")) matches.push(join(directory, name));
     }
     if (matches.length !== 1) throw new Error(`Expected exactly one immutable receipt for merge revision ${revision}`);
-    const receipt = JSON.parse(await readFile(matches[0]!, "utf-8")) as Record<string, unknown>;
-    if (receipt.revision !== revision || typeof receipt.contentHash !== "string" || (receipt.parentContentHash !== null && typeof receipt.parentContentHash !== "string")) throw new Error(`Merge revision ${revision} receipt is invalid`);
+    const receiptPath = matches[0]!;
+    const receipt = JSON.parse(await readFile(receiptPath, "utf-8")) as Record<string, unknown>;
+    if (receipt.version !== 1 || !["mem-import-merge-revision", "mem-import-merge-transaction"].includes(String(receipt.kind)) || receipt.revision !== revision || typeof receipt.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(receipt.contentHash) || (receipt.parentContentHash !== null && typeof receipt.parentContentHash !== "string")) throw new Error(`Merge revision ${revision} receipt is invalid`);
+    const expectedName = `${String(revision).padStart(8, "0")}-${receipt.contentHash}.json`;
+    if (receiptPath.slice(receiptPath.lastIndexOf("/") + 1) !== expectedName) throw new Error(`Merge revision ${revision} receipt filename does not match its content hash`);
+    const transactionDirectory = join(outputRoot, "stages", "merge", "transactions");
+    const revisionDirectory = join(outputRoot, "stages", "merge", "revisions");
+    if ((receipt.kind === "mem-import-merge-transaction" && !receiptPath.startsWith(`${transactionDirectory}/`)) || (receipt.kind === "mem-import-merge-revision" && !receiptPath.startsWith(`${revisionDirectory}/`))) throw new Error(`Merge revision ${revision} receipt kind is stored in the wrong directory`);
     return receipt;
   }
 
@@ -1292,7 +1548,7 @@ export class MemImportU2Service {
     }
     const dispositions = new Map((before.candidateDispositions ?? []).map((disposition) => [`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition]));
     for (const disposition of receipt.candidateDispositions ?? []) dispositions.set(`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition);
-    return { version: 1, kind: "merge", artifacts: [...artifacts.values()].sort((left, right) => left.id.localeCompare(right.id)), candidateDispositions: [...dispositions.values()], diagnostics: before.diagnostics ?? [] };
+    return { version: 1, kind: "merge", ...(receipt.transactionControlHash ? { transactionControlHash: receipt.transactionControlHash } : {}), artifacts: [...artifacts.values()].sort((left, right) => left.id.localeCompare(right.id)), candidateDispositions: [...dispositions.values()], diagnostics: before.diagnostics ?? [] };
   }
 
   private assertReviewReadSet(stage: StageEnvelope, readSet: ReviewPacket["readSet"]): void {
