@@ -150,6 +150,7 @@ test("facility preflight profiles enforce named read-only nested isolation", asy
   assert.deepEqual(csv(coordinator.fields.tools), ["subagent"]);
   assert.match(coordinator.body, /Set `agent` to `facility-preflight-reader`/);
   assert.match(coordinator.body, /Do not replace the named profile with a raw `tools` allowlist/);
+  assert.doesNotMatch(coordinator.body, /subagent_done|Completion contract:/);
 
   const reader = parseFlatProfile(await readFile(resolve(herdrRoot, "facility-preflight-reader.md"), "utf8"));
   assert.equal(reader.fields.spawning, "false");
@@ -157,19 +158,15 @@ test("facility preflight profiles enforce named read-only nested isolation", asy
   assert.deepEqual(csv(reader.fields.tools), ["read"]);
   assert.deepEqual(csv(reader.fields["deny-tools"]).filter((tool) => forbiddenWorkerTools.has(tool)).sort(), [...forbiddenWorkerTools].filter((tool) => tool !== "read").sort());
   assert.match(reader.body, /Do not read any file/);
-  assert.match(reader.body, /`subagent_done` must be your final action/);
+  assert.doesNotMatch(reader.body, /subagent_done|Completion contract:/);
 });
 
-test("pi-herdr-subagents profiles use one explicit final-action completion contract", async () => {
-  for (const profile of MEM_IMPORT_NAMED_PROFILES) {
-    const { body } = parseFlatProfile(await readFile(profilePath(profile, "pi-herdr-subagents"), "utf8"));
-    assert.equal((body.match(/Completion contract:/g) ?? []).length, 1);
-    assert.match(body, /call `subagent_done` exactly once with a concise direct result/);
-    assert.match(body, /Submitted the assigned packet; durable effect verified/);
-    assert.match(body, /never write ‘I will call’, ‘Let me call’, or ‘Now calling `subagent_done`’/);
-    assert.match(body, /`subagent_done` must be your final action/);
-    assert.match(body, /do not send another assistant message or call another tool/);
-    assert.ok(body.trimEnd().endsWith("another tool."), "the completion contract must be the profile's final instruction");
+test("named profiles leave task completion behavior to the subagent facility", async () => {
+  for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
+    for (const profile of MEM_IMPORT_NAMED_PROFILES) {
+      const { body } = parseFlatProfile(await readFile(profilePath(profile, adapter), "utf8"));
+      assert.doesNotMatch(body, /Completion contract:|when (?:this phase|your assigned work) is complete|summarizing what you accomplished/);
+    }
   }
 });
 
@@ -184,6 +181,10 @@ test("U6 proposer and merger profiles require demand-driven evidence reads", asy
     assert.match(merger, /byte-for-byte accepts require no source\/extraction reread/);
     assert.match(merger, /Read canonical bodies only for collision, replacement, synthesis, deletion, or stale read sets/);
     assert.match(merger, /reopen only exact source spans/);
+    assert.match(merger, /call `mem_merge_requirements` with exactly that subset before building the transaction/i);
+    assert.match(merger, /Prefer grouped `proposalAccepts`/);
+    assert.match(merger, /never put `proposalHash` on an upsert/);
+    assert.match(merger, /Call `mem_merge_validate`, fix every issue/);
   }
 });
 

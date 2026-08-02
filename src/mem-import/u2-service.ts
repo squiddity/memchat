@@ -12,6 +12,7 @@ import {
   readManifest,
   readMergeStage,
   readNormalizedUnit,
+  validateStageEnvelope,
   writeJson,
   writeMergeStage,
 } from "../world-import/staging.js";
@@ -135,6 +136,42 @@ export type MergeCommitChange =
   | { kind: "accept"; proposalHash: string; artifactId: string }
   | { kind: "upsert"; artifact: unknown }
   | { kind: "delete"; artifactId: string };
+
+export type MergeProposalAccept = { proposalHash: string; artifactIds: string[] };
+export type MergeCommitOptions = WorkerAuthority & {
+  proposalHashes: string[];
+  identityProposalHashes?: string[];
+  readSet: Array<{ artifactId: string; contentHash?: string | null }>;
+  /** Group unchanged accepts by proposal so each immutable hash is copied once. */
+  proposalAccepts?: MergeProposalAccept[];
+  /** Explicit accepts remain supported; use upsert/delete only for synthesized changes. */
+  changes?: MergeCommitChange[];
+  conflictOperations?: ConflictOperation[];
+  rationale: string;
+};
+
+export type MergeRequirements = {
+  revision: number;
+  contentHash: string | null;
+  proposalHashes: string[];
+  requiredIdentityProposalHashes: string[];
+  pendingIdentityProposalHashes: string[];
+  acceptedIdentityProposalHashes: string[];
+  identityCreates: Array<{ identityProposalHash: string; decisionId: string; canonicalId: string; requiredContentHash: null }>;
+  identityMatches: Array<{ identityProposalHash: string; decisionId: string; canonicalId: string; contentHash: string | null }>;
+  blockingConflicts: Array<{ identityProposalHash: string; decisionId: string; conflictId: string }>;
+  limits: { proposals: number; accepts: number; synthesizedChanges: number; totalChanges: number };
+};
+
+export type MergeValidationResult = {
+  valid: boolean;
+  revision: number;
+  contentHash: string | null;
+  acceptCount: number;
+  synthesizedCount: number;
+  expandedOperationCount: number;
+  issues: Array<{ category: "scope" | "batch" | "read-set" | "identity" | "application"; message: string }>;
+};
 
 export type MergeBatch = {
   proposalHashes: string[];
@@ -521,6 +558,7 @@ export class MemImportU2Service {
   ): Promise<MergeState> {
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
+    await this.assertProposalHashesUnconsumed(canonicalRoot, options.batch.proposalHashes);
     if (assignment.allowedProposalHashes?.length && options.batch.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge batch proposal hash is outside this assignment");
     if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && options.batch.identityProposalHashes?.some((identityHash) => !(assignment.allowedIdentityProposalHashes ?? []).includes(identityHash))) throw new Error("Merge batch identity proposal hash is outside this assignment");
     if (assignment.planHash) {
@@ -557,60 +595,93 @@ export class MemImportU2Service {
     return written;
   }
 
+  /** Read deterministic prerequisites derived from the assignment, canonical head, and immutable identity packets. */
+  async readWorkerMergeRequirements(options: WorkerAuthority & { proposalHashes: string[] }): Promise<MergeRequirements> {
+    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:read", role: "merger" });
+    if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > MAX_MERGE_PROPOSALS || options.proposalHashes.some((item) => !/^[a-f0-9]{64}$/.test(item)) || new Set(options.proposalHashes).size !== options.proposalHashes.length) throw new Error("Merge requirements require one to fifty unique SHA-256 proposal hashes");
+    if (assignment.allowedProposalHashes?.length && options.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge requirements proposal hash is outside this merger assignment");
+    if (assignment.planHash) await this.plans.requireReady(assignment.outputRoot, assignment.runId, assignment.planHash);
+    const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+    const current = await this.readMergeState(canonicalRoot);
+    const artifacts = new Map((current.stage.artifacts ?? []).map((artifact) => [artifact.id, hash(artifact)]));
+    const accepted = await this.readAcceptedIdentityProposalHashes(canonicalRoot);
+    const consumedProposals = await this.readConsumedProposalHashes(canonicalRoot);
+    const requiredIdentityProposalHashes = assignment.planHash
+      ? await this.plans.requiredMergeIdentityHashes(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes)
+      : [...(assignment.allowedIdentityProposalHashes ?? [])];
+    const pendingIdentityProposalHashes = requiredIdentityProposalHashes.filter((identityHash) => !accepted.has(identityHash));
+    const identityCreates: MergeRequirements["identityCreates"] = [];
+    const identityMatches: MergeRequirements["identityMatches"] = [];
+    const blockingConflicts: MergeRequirements["blockingConflicts"] = [];
+    for (const identityProposalHash of pendingIdentityProposalHashes) {
+      const packet = await this.identities.readIdentityProposal(assignment.outputRoot, assignment.runId, identityProposalHash);
+      const missingBoundProposals = packet.proposalHashes.filter((proposalHash) => !options.proposalHashes.includes(proposalHash));
+      if (missingBoundProposals.length) throw new Error(`Pending identity packet ${identityProposalHash} requires its complete proposal scope in one transaction; missing ${missingBoundProposals.join(", ")}`);
+      for (const decision of packet.decisions) {
+        if (decision.disposition === "create" && !accepted.has(identityProposalHash)) identityCreates.push({ identityProposalHash, decisionId: decision.id, canonicalId: decision.canonicalId!, requiredContentHash: null });
+        if (decision.disposition === "match") {
+          const contentHash = artifacts.get(decision.canonicalId!);
+          if (!contentHash) throw new Error(`Matched canonical identity ${decision.canonicalId} is absent from canonical state; reconcile it as a create or ambiguity`);
+          identityMatches.push({ identityProposalHash, decisionId: decision.id, canonicalId: decision.canonicalId!, contentHash });
+        }
+        if (decision.disposition === "ambiguous" && decision.blocking && decision.conflictId) blockingConflicts.push({ identityProposalHash, decisionId: decision.id, conflictId: decision.conflictId });
+      }
+    }
+    return {
+      revision: current.revision,
+      contentHash: current.contentHash,
+      proposalHashes: options.proposalHashes.filter((proposalHash) => !consumedProposals.has(proposalHash)),
+      requiredIdentityProposalHashes,
+      pendingIdentityProposalHashes,
+      acceptedIdentityProposalHashes: requiredIdentityProposalHashes.filter((identityHash) => accepted.has(identityHash)),
+      identityCreates,
+      identityMatches,
+      blockingConflicts,
+      limits: { proposals: MAX_MERGE_PROPOSALS, accepts: MAX_ACCEPT_CHANGES, synthesizedChanges: MAX_SYNTHESIZED_CHANGES, totalChanges: MAX_TOTAL_MERGE_CHANGES },
+    };
+  }
+
+  /** Validate a fully shaped commit without acquiring the writer lease or mutating canonical state. */
+  async validateWorkerCommit(options: MergeCommitOptions): Promise<MergeValidationResult> {
+    const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
+    const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+    const sourceRoots = canonicalRoot === assignment.outputRoot ? [assignment.outputRoot] : [assignment.outputRoot, canonicalRoot];
+    const current = await this.readMergeState(canonicalRoot);
+    const issues: MergeValidationResult["issues"] = [];
+    let batch: MergeBatch | undefined;
+    let acceptCount = 0;
+    let synthesizedCount = 0;
+    try {
+      ({ batch, acceptCount, synthesizedCount } = await this.prepareWorkerCommitBatch(assignment, options));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      issues.push({ category: /assignment|plan|identity packet|reconciliation set/i.test(message) ? "scope" : "batch", message });
+    }
+    if (batch) {
+      try { this.assertReadSet(current.stage, batch.readSet); } catch (error) { issues.push({ category: "read-set", message: error instanceof Error ? error.message : String(error) }); }
+      try { await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, current.stage, batch); } catch (error) { issues.push({ category: "identity", message: error instanceof Error ? error.message : String(error) }); }
+      try {
+        const applied = this.applyBatch(current.stage, batch);
+        const touched = new Set(batch.operations.map((operation) => operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId));
+        await this.deriveArtifactProvenanceQuotes(sourceRoots, applied, touched);
+        validateStageEnvelope(applied, { requireArtifacts: true });
+        await this.assertLiteralArtifactProvenance(sourceRoots, applied, touched);
+        const meaningfulConflictChange = batch.conflictOperations?.length ? await this.hasMeaningfulConflictChange(canonicalRoot, batch.conflictOperations) : false;
+        if (current.revision > 0 && hash(worldSemanticStage(applied)) === hash(worldSemanticStage(current.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision would be created");
+      } catch (error) { issues.push({ category: "application", message: error instanceof Error ? error.message : String(error) }); }
+    }
+    return { valid: issues.length === 0, revision: current.revision, contentHash: current.contentHash, acceptCount, synthesizedCount, expandedOperationCount: batch?.operations.length ?? 0, issues };
+  }
+
   /** Model-facing merger path. One bounded call resolves proposal references,
    * carries candidate accounting, and owns lease/CAS lifecycle internally. */
-  async commitWorkerBatch(options: WorkerAuthority & {
-    proposalHashes: string[];
-    identityProposalHashes?: string[];
-    readSet: Array<{ artifactId: string; contentHash?: string | null }>;
-    changes: MergeCommitChange[];
-    conflictOperations?: ConflictOperation[];
-    rationale: string;
-  }): Promise<MergeState> {
+  async commitWorkerBatch(options: MergeCommitOptions): Promise<MergeState> {
     return this.base.withRunMutation(options.outputRoot, () => this.commitWorkerBatchLocked(options));
   }
 
-  private async commitWorkerBatchLocked(options: WorkerAuthority & {
-    proposalHashes: string[];
-    identityProposalHashes?: string[];
-    readSet: Array<{ artifactId: string; contentHash?: string | null }>;
-    changes: MergeCommitChange[];
-    conflictOperations?: ConflictOperation[];
-    rationale: string;
-  }): Promise<MergeState> {
+  private async commitWorkerBatchLocked(options: MergeCommitOptions): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", role: "merger" });
-    if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > MAX_MERGE_PROPOSALS) throw new Error(`Merge commit proposalHashes must contain one to ${MAX_MERGE_PROPOSALS} hashes`);
-    if (assignment.allowedProposalHashes?.length && options.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge commit proposal hash is outside this merger assignment");
-    if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && options.identityProposalHashes?.some((identityHash) => !(assignment.allowedIdentityProposalHashes ?? []).includes(identityHash))) throw new Error("Merge commit identity proposal hash is outside this merger assignment");
-    if (assignment.planHash) {
-      await this.plans.requireReady(assignment.outputRoot, assignment.runId, assignment.planHash);
-      await this.plans.assertMergeIdentityCoverage(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes, options.identityProposalHashes);
-    }
-    if (!Array.isArray(options.changes) || options.changes.length === 0 || options.changes.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge commit changes must contain one to ${MAX_TOTAL_MERGE_CHANGES} entries`);
-    const acceptCount = options.changes.filter((change) => change.kind === "accept").length;
-    const synthesizedCount = options.changes.length - acceptCount;
-    if (acceptCount > MAX_ACCEPT_CHANGES) throw new Error(`Merge commit changes accepts exceed the ${MAX_ACCEPT_CHANGES}-entry lightweight limit`);
-    if (synthesizedCount > MAX_SYNTHESIZED_CHANGES) throw new Error(`Merge commit changes upsert/delete entries exceed the ${MAX_SYNTHESIZED_CHANGES}-entry synthesis limit`);
-    const proposals = new Map<string, Awaited<ReturnType<MemImportU2Service["readProposal"]>>>();
-    for (const proposalHash of options.proposalHashes) proposals.set(proposalHash, await this.readProposal(assignment.outputRoot, assignment.runId, proposalHash));
-    const operations: MergeBatch["operations"] = options.changes.map((change) => {
-      if (change.kind !== "accept") return structuredClone(change);
-      if (!options.proposalHashes.includes(change.proposalHash)) throw new Error(`Accepted proposal ${change.proposalHash} is not declared by this commit`);
-      const proposal = proposals.get(change.proposalHash)!;
-      const artifact = proposal.artifacts.find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === change.artifactId);
-      if (!artifact) throw new Error(`Proposal ${change.proposalHash} has no artifact ${change.artifactId}`);
-      return { kind: "upsert", artifact: structuredClone(artifact) };
-    });
-    const candidateDispositions = [...proposals.values()].flatMap((proposal) => proposal.candidateDispositions ?? []);
-    const batch: MergeBatch = {
-      proposalHashes: options.proposalHashes,
-      ...(options.identityProposalHashes?.length ? { identityProposalHashes: options.identityProposalHashes } : {}),
-      readSet: options.readSet.map((item) => ({ artifactId: item.artifactId, contentHash: item.contentHash ?? null })),
-      operations,
-      candidateDispositions,
-      ...(options.conflictOperations?.length ? { conflictOperations: options.conflictOperations } : {}),
-      rationale: options.rationale,
-    };
+    const { batch } = await this.prepareWorkerCommitBatch(assignment, options);
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const owner: MergeActor = { kind: "worker", taskId: assignment.taskId, role: assignment.role };
     const lease = await this.acquireLease(canonicalRoot, assignment.runId, owner);
@@ -624,14 +695,60 @@ export class MemImportU2Service {
     }
   }
 
-  async commitWorkerBatchReceipt(options: WorkerAuthority & {
-    proposalHashes: string[];
-    identityProposalHashes?: string[];
-    readSet: Array<{ artifactId: string; contentHash?: string | null }>;
-    changes: MergeCommitChange[];
-    conflictOperations?: ConflictOperation[];
-    rationale: string;
-  }): Promise<MergeMutationReceipt> {
+  private async prepareWorkerCommitBatch(assignment: MemImportAssignmentRecord, options: MergeCommitOptions): Promise<{ batch: MergeBatch; acceptCount: number; synthesizedCount: number }> {
+    if (!Array.isArray(options.proposalHashes) || options.proposalHashes.length === 0 || options.proposalHashes.length > MAX_MERGE_PROPOSALS || options.proposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error(`Merge commit proposalHashes must contain one to ${MAX_MERGE_PROPOSALS} SHA-256 hashes`);
+    if (new Set(options.proposalHashes).size !== options.proposalHashes.length) throw new Error("Merge commit proposalHashes must be unique");
+    if (options.identityProposalHashes !== undefined && (!Array.isArray(options.identityProposalHashes) || options.identityProposalHashes.some((item) => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item)) || new Set(options.identityProposalHashes).size !== options.identityProposalHashes.length)) throw new Error("Merge commit identityProposalHashes must contain unique SHA-256 hashes");
+    if (assignment.allowedProposalHashes?.length && options.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge commit proposal hash is outside this merger assignment");
+    if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && options.identityProposalHashes?.some((identityHash) => !(assignment.allowedIdentityProposalHashes ?? []).includes(identityHash))) throw new Error("Merge commit identity proposal hash is outside this merger assignment");
+    if (assignment.planHash) {
+      await this.plans.requireReady(assignment.outputRoot, assignment.runId, assignment.planHash);
+      await this.plans.assertMergeIdentityCoverage(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes, options.identityProposalHashes);
+      const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
+      const acceptedIdentityHashes = await this.readAcceptedIdentityProposalHashes(canonicalRoot);
+      const requiredIdentityHashes = await this.plans.requiredMergeIdentityHashes(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes);
+      for (const identityHash of requiredIdentityHashes.filter((item) => !acceptedIdentityHashes.has(item))) {
+        const packet = await this.identities.readIdentityProposal(assignment.outputRoot, assignment.runId, identityHash);
+        const missingBoundProposals = packet.proposalHashes.filter((proposalHash) => !options.proposalHashes.includes(proposalHash));
+        if (missingBoundProposals.length) throw new Error(`Pending identity packet ${identityHash} requires its complete proposal scope in one transaction; missing ${missingBoundProposals.join(", ")}`);
+      }
+    }
+    await this.assertProposalHashesUnconsumed(await this.base.canonicalRootForRun(assignment.outputRoot), options.proposalHashes);
+    const groupedAccepts = (options.proposalAccepts ?? []).flatMap((entry) => entry.artifactIds.map((artifactId): MergeCommitChange => ({ kind: "accept", proposalHash: entry.proposalHash, artifactId })));
+    const changes = [...groupedAccepts, ...(options.changes ?? [])];
+    if (changes.length === 0 || changes.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge commit changes must contain one to ${MAX_TOTAL_MERGE_CHANGES} expanded entries`);
+    const acceptCount = changes.filter((change) => change.kind === "accept").length;
+    const synthesizedCount = changes.length - acceptCount;
+    if (acceptCount > MAX_ACCEPT_CHANGES) throw new Error(`Merge commit changes accepts exceed the ${MAX_ACCEPT_CHANGES}-entry lightweight limit`);
+    if (synthesizedCount > MAX_SYNTHESIZED_CHANGES) throw new Error(`Merge commit changes upsert/delete entries exceed the ${MAX_SYNTHESIZED_CHANGES}-entry synthesis limit`);
+    const proposals = new Map<string, Awaited<ReturnType<MemImportU2Service["readProposal"]>>>();
+    for (const proposalHash of options.proposalHashes) proposals.set(proposalHash, await this.readProposal(assignment.outputRoot, assignment.runId, proposalHash));
+    const operations: MergeBatch["operations"] = changes.map((change) => {
+      if (change.kind !== "accept") return structuredClone(change);
+      if (!options.proposalHashes.includes(change.proposalHash)) throw new Error(`Accepted proposal ${change.proposalHash} is not declared by this commit`);
+      const proposal = proposals.get(change.proposalHash)!;
+      const artifact = proposal.artifacts.find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === change.artifactId);
+      if (!artifact) throw new Error(`Proposal ${change.proposalHash} has no artifact ${change.artifactId}`);
+      return { kind: "upsert", artifact: structuredClone(artifact) };
+    });
+    const proposalArtifactIds = new Set([...proposals.values()].flatMap((proposal) => proposal.artifacts.map((artifact) => artifact && typeof artifact === "object" ? String((artifact as { id?: unknown }).id ?? "") : "")).filter(Boolean));
+    const touchedArtifactIds = new Set(operations.map((operation) => operation.kind === "upsert" ? String((operation.artifact as { id?: unknown }).id ?? "") : operation.artifactId));
+    const missingArtifactIds = [...proposalArtifactIds].filter((artifactId) => !touchedArtifactIds.has(artifactId));
+    if (missingArtifactIds.length) throw new Error(`Merge commit does not account for declared proposal artifacts: ${missingArtifactIds.sort().join(", ")}`);
+    const candidateDispositions = [...proposals.values()].flatMap((proposal) => proposal.candidateDispositions ?? []);
+    const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, {
+      proposalHashes: options.proposalHashes,
+      ...(options.identityProposalHashes?.length ? { identityProposalHashes: options.identityProposalHashes } : {}),
+      readSet: options.readSet.map((item) => ({ artifactId: item.artifactId, contentHash: item.contentHash ?? null })),
+      operations,
+      candidateDispositions,
+      ...(options.conflictOperations?.length ? { conflictOperations: options.conflictOperations } : {}),
+      rationale: options.rationale,
+    }, MAX_TOTAL_MERGE_CHANGES);
+    return { batch, acceptCount, synthesizedCount };
+  }
+
+  async commitWorkerBatchReceipt(options: MergeCommitOptions): Promise<MergeMutationReceipt> {
     const state = await this.commitWorkerBatch(options);
     return toMergeMutationReceipt(state, options.proposalHashes);
   }
@@ -873,7 +990,9 @@ export class MemImportU2Service {
       : false;
     if (before.revision > 0 && hash(worldSemanticStage(submitted)) === hash(worldSemanticStage(before.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision was created");
     const extractionHash = await this.extractionHash(options.sourceRoot ?? options.outputRoot);
-    const storedOperations = options.transaction ? await this.persistTransactionArtifacts(options.outputRoot, submitted, options.transaction.operations) : undefined;
+    // Compute immutable artifact references before validation, but do not write blobs
+    // until every structural/provenance check and the final CAS have succeeded.
+    const storedOperations = options.transaction ? await this.persistTransactionArtifacts(options.outputRoot, submitted, options.transaction.operations, false) : undefined;
     const revision = before.revision + 1;
     const authorizedAt = options.beforePersist ? await options.beforePersist() : undefined;
     const createdAt = this.now().toISOString();
@@ -909,7 +1028,6 @@ export class MemImportU2Service {
     }
     const contentHash = hash(submitted);
     const stage: StageEnvelope = { ...submitted, revision, contentHash, ...(before.contentHash ? { parentContentHash: before.contentHash } : {}) };
-    const { validateStageEnvelope } = await import("../world-import/staging.js");
     validateStageEnvelope(stage, { requireArtifacts: true });
     await this.assertLiteralArtifactProvenance(options.sourceRoot ?? options.outputRoot, stage, touchedArtifactIds);
     const receipt = transactionReceipt ? { ...transactionReceipt, contentHash } : {
@@ -935,6 +1053,10 @@ export class MemImportU2Service {
     if (finalBefore.revision !== before.revision || finalBefore.contentHash !== before.contentHash) throw new Error("Canonical merge state changed before transaction persistence");
     const receiptFile = options.transaction ? transactionPath(options.outputRoot, stage.revision!, contentHash) : revisionPath(options.outputRoot, stage.revision!, contentHash);
     if (existsSync(receiptFile)) throw new Error("Merge revision receipt already exists; retry after reading current state");
+    if (options.transaction) {
+      const persistedOperations = await this.persistTransactionArtifacts(options.outputRoot, submitted, options.transaction.operations, true);
+      if (hash(persistedOperations) !== hash(storedOperations)) throw new Error("Transaction artifact references changed after validation");
+    }
     await writeJson(receiptFile, receipt);
     if (options.transaction && stage.revision! % TRANSACTION_CHECKPOINT_INTERVAL === 0) {
       const checkpoint: MergeCheckpoint = { version: 1, kind: "mem-import-merge-checkpoint", revision: stage.revision!, contentHash, stage };
@@ -1254,6 +1376,15 @@ export class MemImportU2Service {
     const touched = new Set<string>();
     for (const operation of value.operations) {
       if (!operation || typeof operation !== "object" || !["upsert", "delete"].includes(String((operation as { kind?: unknown }).kind))) throw new Error("Merge batch operations must be upsert or delete");
+      const operationKeys = Object.keys(operation).sort();
+      const expectedOperationKeys = operation.kind === "upsert" ? ["artifact", "kind"] : ["artifactId", "kind"];
+      if (operationKeys.length !== expectedOperationKeys.length || operationKeys.some((key, index) => key !== expectedOperationKeys[index])) throw new Error(`Merge batch ${operation.kind} operation has unsupported fields`);
+      if (operation.kind === "upsert") {
+        if (!operation.artifact || typeof operation.artifact !== "object" || Array.isArray(operation.artifact)) throw new Error("Merge batch upsert requires an artifact object");
+        const allowedArtifactKeys = new Set(["id", "group", "type", "title", "description", "resource", "tags", "timestamp", "sections", "provenance", "related", "metadata"]);
+        const unsupportedArtifactKeys = Object.keys(operation.artifact as Record<string, unknown>).filter((key) => !allowedArtifactKeys.has(key));
+        if (unsupportedArtifactKeys.length) throw new Error(`Merge batch upsert artifact has unsupported fields: ${unsupportedArtifactKeys.sort().join(", ")}`);
+      }
       const id = operation.kind === "upsert" && operation.artifact && typeof operation.artifact === "object" ? (operation.artifact as { id?: unknown }).id : operation.kind === "delete" ? operation.artifactId : undefined;
       if (typeof id !== "string") throw new Error("Merge batch operation must name an artifact id");
       assertId(id, "batch artifact id");
@@ -1290,6 +1421,13 @@ export class MemImportU2Service {
       return [];
     }
     const packets = await Promise.all(batch.identityProposalHashes.map((identityHash) => this.identities.readIdentityProposal(outputRoot, runId, identityHash)));
+    const acceptedIdentityHashes = await this.readAcceptedIdentityProposalHashes(canonicalRoot);
+    const declaredProposalHashes = new Set(batch.proposalHashes);
+    for (const packet of packets) {
+      if (acceptedIdentityHashes.has(packet.contentHash)) throw new Error(`Identity proposal ${packet.contentHash} was already accepted`);
+      const missingProposalHashes = packet.proposalHashes.filter((proposalHash) => !declaredProposalHashes.has(proposalHash));
+      if (missingProposalHashes.length) throw new Error(`Identity proposal ${packet.contentHash} requires its complete proposal scope in the same batch; missing ${missingProposalHashes.join(", ")}`);
+    }
     const operations = new Map(batch.operations.map((operation) => [operation.kind === "upsert" ? (operation.artifact as { id: string }).id : operation.artifactId, operation]));
     const existing = new Set((stage.artifacts ?? []).map((artifact) => artifact.id));
     const decisions = new Map<string, IdentityDecision>();
@@ -1310,7 +1448,14 @@ export class MemImportU2Service {
           if (!operation || operation.kind !== "upsert") throw new Error(`Created canonical identity ${decision.canonicalId} requires an upsert in the same batch`);
           if (existing.has(decision.canonicalId!)) throw new Error(`Created canonical identity ${decision.canonicalId} already exists; reconcile it as a match or conflict`);
         }
-        if (decision.disposition === "match" && !existing.has(decision.canonicalId!) && !operations.has(decision.canonicalId!)) throw new Error(`Matched canonical identity ${decision.canonicalId} is absent from the declared read set`);
+        if (decision.disposition === "match") {
+          const canonicalId = decision.canonicalId!;
+          const canonicalArtifact = (stage.artifacts ?? []).find((artifact) => artifact.id === canonicalId);
+          if (!canonicalArtifact) throw new Error(`Matched canonical identity ${canonicalId} is absent from canonical state; reconcile it as a create or ambiguity`);
+          const expectedContentHash = hash(canonicalArtifact);
+          const observed = batch.readSet.find((item) => item.artifactId === canonicalId);
+          if (!observed || observed.contentHash !== expectedContentHash) throw new Error(`Matched canonical identity ${canonicalId} requires its exact canonical hash in the read set`);
+        }
       }
     }
     const identityState = await this.readIdentityState(canonicalRoot);
@@ -1333,6 +1478,34 @@ export class MemImportU2Service {
       }
     }
     return packets;
+  }
+
+  private async assertProposalHashesUnconsumed(outputRoot: string, proposalHashes: string[]): Promise<void> {
+    const consumed = await this.readConsumedProposalHashes(outputRoot);
+    const repeated = proposalHashes.filter((proposalHash) => consumed.has(proposalHash));
+    if (repeated.length) throw new Error(`Merge commit proposal hashes were already consumed: ${repeated.join(", ")}`);
+  }
+
+  private async readConsumedProposalHashes(outputRoot: string): Promise<Set<string>> {
+    const consumed = new Set<string>();
+    const directory = join(outputRoot, "stages", "merge", "transactions");
+    if (!existsSync(directory)) return consumed;
+    for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
+      const receipt = JSON.parse(await readFile(join(directory, file), "utf-8")) as { proposalHashes?: unknown };
+      if (Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string") consumed.add(proposalHash);
+    }
+    return consumed;
+  }
+
+  private async readAcceptedIdentityProposalHashes(outputRoot: string): Promise<Set<string>> {
+    const accepted = new Set<string>();
+    const directory = join(outputRoot, "stages", "merge", "transactions");
+    if (!existsSync(directory)) return accepted;
+    for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
+      const receipt = JSON.parse(await readFile(join(directory, file), "utf-8")) as { identityProposalHashes?: unknown };
+      if (Array.isArray(receipt.identityProposalHashes)) for (const identityHash of receipt.identityProposalHashes) if (typeof identityHash === "string") accepted.add(identityHash);
+    }
+    return accepted;
   }
 
   private async readIdentityState(outputRoot: string): Promise<CanonicalIdentityState> {
@@ -1362,6 +1535,7 @@ export class MemImportU2Service {
   }
 
   private async readProposal(outputRoot: string, runId: string, proposalHash: string): Promise<{ artifacts: unknown[]; candidateDispositions?: unknown[] }> {
+    if (!/^[a-f0-9]{64}$/.test(proposalHash)) throw new Error("Declared proposal hash must be a lowercase SHA-256 hash");
     const directory = proposalDir(outputRoot, runId);
     if (!existsSync(directory)) throw new Error(`Declared proposal ${proposalHash} does not exist`);
     const file = (await readdir(directory)).find((name) => name.endsWith(`-${proposalHash}.json`));
@@ -1390,6 +1564,9 @@ export class MemImportU2Service {
     for (const disposition of batch.candidateDispositions as NonNullable<StageEnvelope["candidateDispositions"]> ?? []) {
       dispositions.set(`${disposition.unitId ?? ""}:${disposition.candidateId}`, disposition);
     }
+    for (const disposition of dispositions.values()) {
+      if ((disposition.disposition === "represented" || disposition.disposition === "merged") && (!disposition.artifactId || !artifacts.has(disposition.artifactId))) throw new Error(`Canonical candidate disposition ${disposition.unitId ?? ""}:${disposition.candidateId} targets missing artifact ${disposition.artifactId ?? "(absent)"}`);
+    }
     return {
       version: 1,
       kind: "merge",
@@ -1399,14 +1576,22 @@ export class MemImportU2Service {
     };
   }
 
+  private async readNormalizedUnitFromRoots(outputRoots: string | string[], unitId: string): Promise<Awaited<ReturnType<typeof readNormalizedUnit>>> {
+    let lastError: unknown;
+    for (const outputRoot of [...new Set(Array.isArray(outputRoots) ? outputRoots : [outputRoots])]) {
+      try { return await readNormalizedUnit(outputRoot, unitId); } catch (error) { lastError = error; }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`Normalized unit ${unitId} is unavailable`);
+  }
+
   /** Derive durable artifact quotes from model-selected anchors to avoid Unicode transcription drift. */
-  private async deriveArtifactProvenanceQuotes(outputRoot: string, stage: StageEnvelope, artifactIds?: Set<string>): Promise<void> {
+  private async deriveArtifactProvenanceQuotes(outputRoots: string | string[], stage: StageEnvelope, artifactIds?: Set<string>): Promise<void> {
     for (const artifact of stage.artifacts ?? []) {
       if (artifactIds && !artifactIds.has(artifact.id)) continue;
       for (const ref of artifact.provenance ?? []) {
         const mutable = ref as unknown as Record<string, unknown>;
         if (typeof mutable.unitId !== "string" || typeof mutable.sourceId !== "string" || typeof mutable.startAnchor !== "string" || typeof mutable.endAnchor !== "string") continue;
-        const unit = await readNormalizedUnit(outputRoot, mutable.unitId);
+        const unit = await this.readNormalizedUnitFromRoots(outputRoots, mutable.unitId);
         if (unit.sourceId !== mutable.sourceId) continue;
         const start = unit.blocks.findIndex((block) => block.anchor === mutable.startAnchor);
         const end = unit.blocks.findIndex((block) => block.anchor === mutable.endAnchor);
@@ -1416,11 +1601,11 @@ export class MemImportU2Service {
     }
   }
 
-  private async assertLiteralArtifactProvenance(outputRoot: string, stage: StageEnvelope, artifactIds?: Set<string>): Promise<void> {
+  private async assertLiteralArtifactProvenance(outputRoots: string | string[], stage: StageEnvelope, artifactIds?: Set<string>): Promise<void> {
     for (const artifact of stage.artifacts ?? []) {
       if (artifactIds && !artifactIds.has(artifact.id)) continue;
       for (const [index, ref] of artifact.provenance.entries()) {
-        const unit = await readNormalizedUnit(outputRoot, ref.unitId);
+        const unit = await this.readNormalizedUnitFromRoots(outputRoots, ref.unitId);
         if (unit.sourceId !== ref.sourceId) throw new Error(`Artifact ${artifact.id} provenance[${index}] sourceId does not match normalized source`);
         const start = unit.blocks.findIndex((block) => block.anchor === ref.startAnchor);
         const end = unit.blocks.findIndex((block) => block.anchor === ref.endAnchor);
@@ -1445,7 +1630,7 @@ export class MemImportU2Service {
     return existsSync(revisionPath(outputRoot, revision, contentHash)) || existsSync(transactionPath(outputRoot, revision, contentHash));
   }
 
-  private async persistTransactionArtifacts(outputRoot: string, stage: StageEnvelope, operations: MergeBatch["operations"]): Promise<StoredTransactionOperation[]> {
+  private async persistTransactionArtifacts(outputRoot: string, stage: StageEnvelope, operations: MergeBatch["operations"], persist = true): Promise<StoredTransactionOperation[]> {
     const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
     return Promise.all(operations.map(async (operation): Promise<StoredTransactionOperation> => {
       if (operation.kind === "delete") return { kind: "delete", artifactId: operation.artifactId };
@@ -1454,7 +1639,7 @@ export class MemImportU2Service {
       if (!artifact) throw new Error(`Canonical artifact ${id} disappeared while recording transaction`);
       const artifactRef = hash(artifact);
       const path = artifactBlobPath(outputRoot, artifactRef);
-      if (!existsSync(path)) await writeJson(path, artifact);
+      if (persist && !existsSync(path)) await writeJson(path, artifact);
       return { kind: "upsert", artifactRef };
     }));
   }

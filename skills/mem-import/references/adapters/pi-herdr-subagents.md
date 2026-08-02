@@ -14,9 +14,7 @@ After calling begin exactly once, the parent starts four sequential fresh bounde
 - `extensionMode: "explicit"` and the absolute trusted path to `extensions/mem-import-tools.ts`;
 - the requested input/output scope.
 
-The selected named profile already supplies the completion contract for coordinators and workers: put the concise informative result inside `subagent_done`, make that call the final action, and send nothing afterward. Do not duplicate, paraphrase, or split this contract across the dynamic launch task.
-
-Explicit mode provides deterministic extension provenance by suppressing ambient extension discovery; it is not an OS sandbox and does not suppress all configuration or instructions. Descendants inherit explicit mode and the extension entry when those fields are omitted.
+Explicit mode suppresses ambient extension discovery; descendants inherit it and the extension entry when omitted. It is not an OS sandbox.
 
 Never pass prior coordinator prose or copied status into the next launch. Keep coordinator authority in the live task only; do not place it in a recipe, artifact, or summary.
 
@@ -46,7 +44,7 @@ This is a known recipe, not a required mem-import backend or programmatic adapte
 - facility/tool: installed `subagent`;
 - phase coordinators: four sequential fresh contexts with `autoExit: false`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry;
 - workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries; named-profile launches must use `agent`, never display-only `name`, as the selector;
-- lifecycle additions: `caller_ping` and `subagent_done`; every named coordinator and worker profile puts its informative result in `subagent_done`, calls it as the final action, and sends nothing afterward;
+- lifecycle controls: facility-owned;
 - completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison, and content-free cumulative usage snapshots;
 - recovery: `subagent_interrupt` and profile-preserving `subagent_resume` when needed.
 

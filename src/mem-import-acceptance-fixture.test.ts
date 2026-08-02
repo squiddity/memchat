@@ -63,7 +63,7 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(parentPreflight, /launch call's `agent` field selects that profile/);
   assert.match(parentPreflight, /Do not omit `agent`/);
   assert.match(parentPreflight, /resume the current phase only/);
-  assert.match(parentPreflight, /mem_import_record_session[\s\S]*host-issued running-child ID[\s\S]*session filename stem[\s\S]*post-facto activity-sidecar retrieval/);
+  assert.match(parentPreflight, /mem_import_record_session[\s\S]*host-issued running-child ID[\s\S]*session filename stem[\s\S]*recording eagerly resolves deterministic activity-sidecar evidence[\s\S]*exact complete session stem/);
   assert.match(parentPreflight, /review\/finalization coordinator after it exits[\s\S]*valid after terminal finalization/);
   assert.match(workflow, /At startup[\s\S]*typed read tools/);
   assert.match(workflow, /At exit[\s\S]*typed reads again/);
@@ -104,9 +104,9 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(adapter, /Recover only the current incomplete phase/);
   assert.match(adapter, /hostAdapter: "pi-herdr-subagents"/);
   assert.match(adapter, /content-free activity sidecar[\s\S]*latest cumulative activity sequence/);
-  assert.match(adapter, /put the concise informative result inside `subagent_done`[\s\S]*make that call the final action[\s\S]*send nothing afterward/);
-  assert.match(adapter, /Do not duplicate, paraphrase, or split this contract across the dynamic launch task/);
-  assert.match(parentPreflight, /do not repeat completion wording in the dynamic launch envelope/);
+  assert.match(adapter, /lifecycle controls: facility-owned/);
+  assert.doesNotMatch(adapter, /coordinator first sends|worker puts its concise result|Do not duplicate, paraphrase, or split these contracts/);
+  assert.match(parentPreflight, /Task-completion instructions belong to the selected facility, not mem-import profiles or launch envelopes/);
   assert.match(adapter, /`agent` field[\s\S]*`name` is only a display label and never selects or verifies a profile/);
   assert.match(genericAdapter, /four sequential fresh phase coordinators/);
   assert.match(genericAdapter, /passes no prior coordinator prose between phases/);

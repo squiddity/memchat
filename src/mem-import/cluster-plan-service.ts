@@ -280,11 +280,19 @@ export class MemImportClusterPlanService {
     return status;
   }
 
-  async assertMergeIdentityCoverage(outputRoot: string, runId: string, planHash: string, proposalHashes: string[], identityProposalHashes: string[] = []): Promise<void> {
+  async requiredMergeIdentityHashes(outputRoot: string, runId: string, planHash: string, proposalHashes: string[]): Promise<string[]> {
     const status = await this.requireReady(outputRoot, runId, planHash);
     const plan = status.plan!;
     const proposalByCluster = new Map(status.entries.filter((entry): entry is Extract<ClusterPlanStatusEntry, { kind: "cluster" }> => entry.kind === "cluster" && entry.status === "proposed").map((entry) => [entry.clusterId, entry.proposalHash!]));
     const identityBySet = new Map(status.entries.filter((entry): entry is Extract<ClusterPlanStatusEntry, { kind: "reconciliation-set" }> => entry.kind === "reconciliation-set" && entry.status === "completed").map((entry) => [entry.reconciliationSetId, entry.identityProposalHash!]));
+    const declaredProposals = new Set(proposalHashes);
+    return [...new Set(plan.reconciliationSets
+      .filter((set) => set.clusterIds.map((clusterId) => proposalByCluster.get(clusterId)!).filter(Boolean).some((proposalHash) => declaredProposals.has(proposalHash)))
+      .map((set) => identityBySet.get(set.id)!))];
+  }
+
+  async assertMergeIdentityCoverage(outputRoot: string, runId: string, planHash: string, proposalHashes: string[], identityProposalHashes: string[] = []): Promise<void> {
+    const requiredIdentityHashes = await this.requiredMergeIdentityHashes(outputRoot, runId, planHash, proposalHashes);
     const acceptedIdentityHashes = new Set<string>();
     const canonicalRoot = await this.base.canonicalRootForRun(outputRoot);
     const transactionsRoot = join(canonicalRoot, "stages", "merge", "transactions");
@@ -293,13 +301,9 @@ export class MemImportClusterPlanService {
       const transaction = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { identityProposalHashes?: unknown };
       if (Array.isArray(transaction.identityProposalHashes)) for (const value of transaction.identityProposalHashes) if (typeof value === "string") acceptedIdentityHashes.add(value);
     }
-    const declaredProposals = new Set(proposalHashes);
     const declaredIdentities = new Set(identityProposalHashes);
-    for (const set of plan.reconciliationSets) {
-      const relatedProposals = set.clusterIds.map((clusterId) => proposalByCluster.get(clusterId)!).filter(Boolean);
-      if (!relatedProposals.some((proposalHash) => declaredProposals.has(proposalHash))) continue;
-      const requiredIdentityHash = identityBySet.get(set.id)!;
-      if (!acceptedIdentityHashes.has(requiredIdentityHash) && !declaredIdentities.has(requiredIdentityHash)) throw new Error(`Merge work for reconciliation set ${set.id} requires identity packet ${requiredIdentityHash} in the same batch or an earlier accepted transaction`);
+    for (const requiredIdentityHash of requiredIdentityHashes) {
+      if (!acceptedIdentityHashes.has(requiredIdentityHash) && !declaredIdentities.has(requiredIdentityHash)) throw new Error(`Merge work for the selected proposal scope requires identity packet ${requiredIdentityHash} in the same batch or an earlier accepted transaction`);
     }
   }
 

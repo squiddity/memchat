@@ -9,7 +9,7 @@ import { MEM_IMPORT_ROLE_TOOLS, MemImportService, type AssignmentRole } from "./
 import { MemImportU2Service, toMergeMutationReceipt } from "./mem-import/u2-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportCompendiumService, projectCompendium } from "./mem-import/compendium-service.js";
-import { MemImportIdentityService, canonicalHash } from "./mem-import/identity-service.js";
+import { MemImportIdentityService, assertAtomicIdentityScope, canonicalHash } from "./mem-import/identity-service.js";
 import { MemImportClusterPlanService } from "./mem-import/cluster-plan-service.js";
 import { aggregateUsageTelemetry } from "./mem-import/usage-telemetry.js";
 import { PiHerdrUsageResolver, piHerdrChildId } from "./mem-import/pi-herdr-usage-resolver.js";
@@ -23,6 +23,13 @@ async function tempDir(): Promise<string> {
 function serializedModelToolResultSize(value: unknown): number {
   return JSON.stringify({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }], details: value }).length;
 }
+
+test("identity packet admission enforces weighted atomic merge boundaries", () => {
+  const artifacts = (count: number) => new Set(Array.from({ length: count }, (_value, index) => `artifact-${index + 1}`));
+  assert.doesNotThrow(() => assertAtomicIdentityScope(50, artifacts(62), new Set()));
+  assert.throws(() => assertAtomicIdentityScope(51, artifacts(51), new Set()), /at most 50/);
+  assert.throws(() => assertAtomicIdentityScope(1, artifacts(13), new Set(Array.from({ length: 13 }, (_value, index) => `renamed-${index + 1}`))), /at least 13 synthesized/);
+});
 
 function usageEvidence(inputTokens: number, outputTokens: number, provider = "test-provider", model = "test-model") {
   const usage = {
@@ -232,6 +239,17 @@ test("mem-import compendium integration projects two work runs through finalizat
     const proposal = await proposals.submitWorkerProposal({ ...proposer, packet: { version: 1, kind: "mem-import-proposal", id: `${workId}-shard`, inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash, candidateIds: ["person"] }], artifacts: [artifact], candidateDispositions: [{ unitId: unit.unitId, candidateId: "person", disposition: "represented", artifactId }], rationale: `Propose ${person} from ${workId}.` } });
     const merger = await base.assignWorker({ outputRoot: run.outputRoot, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: `${workId}-merge`, role: "merger" });
     await recordDispatch(base, run, merger.taskId, "merger");
+    if (workId === "book-one") {
+      const sharedManifest = join(compendiumRoot, "sources", "manifest.json");
+      const sharedLocator = join(compendiumRoot, "stages", "source-locator.json");
+      const beforeManifest = existsSync(sharedManifest) ? await readFile(sharedManifest, "utf-8") : null;
+      const beforeLocator = existsSync(sharedLocator) ? await readFile(sharedLocator, "utf-8") : null;
+      const malformed = await u2.validateWorkerCommit({ ...merger, proposalHashes: [proposal.contentHash], readSet: [{ artifactId, contentHash: null }], changes: [{ kind: "upsert", artifact: { ...artifact, proposalHash: proposal.contentHash } } as any], rationale: "Reject malformed compendium payload without projecting shared sources." });
+      assert.equal(malformed.valid, false);
+      assert.match(malformed.issues[0]!.message, /unsupported fields: proposalHash/);
+      assert.equal(existsSync(sharedManifest) ? await readFile(sharedManifest, "utf-8") : null, beforeManifest);
+      assert.equal(existsSync(sharedLocator) ? await readFile(sharedLocator, "utf-8") : null, beforeLocator);
+    }
     const state = await u2.mergeState(run);
     const existing = state.stage.artifacts?.find((item) => item.id === artifactId);
     // The model-owned edition update explicitly preserves prior evidence so coverage remains cumulative.
@@ -528,6 +546,41 @@ test("usage telemetry persists subagent-result snapshots and aggregates by role,
   }), /control-free string/);
 });
 
+test("Pi/Herdr dispatch and coordinator recording eagerly return authoritative sidecar usage", async () => {
+  const root = await tempDir();
+  const sessionsRoot = join(root, "sessions");
+  const workspace = join(sessionsRoot, "workspace");
+  const activityDir = join(workspace, "artifacts", "parent", "subagent-activity");
+  await mkdir(activityDir, { recursive: true });
+  const resolver = new PiHerdrUsageResolver(sessionsRoot);
+  const service = new MemImportService(undefined, resolver);
+  const { run, units } = await setup(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "eager-sidecar-extractor", unitIds: [units[0]!.unitId] });
+  const startedAt = Date.UTC(2026, 6, 25, 0, 0, 0);
+  async function seed(childId: string, sessionId: string, inputTokens: number) {
+    const evidence = usageEvidence(inputTokens, 2);
+    await writeFile(join(workspace, `${sessionId}.jsonl`), "", "utf-8");
+    await writeFile(join(activityDir, `${childId}.json`), JSON.stringify({
+      version: 1, runningChildId: childId, createdAt: startedAt, updatedAt: startedAt + inputTokens, sequence: inputTokens,
+      latestEvent: "agent_end", phase: "done", agentActive: false, turnActive: false, providerActive: false, toolActive: false,
+      usage: evidence.usage, usageByModel: evidence.usageByModel,
+    }), "utf-8");
+  }
+  const workerSessionId = "2026-07-25T00-00-00-000Z_deadbeef-session";
+  await seed("deadbeef", workerSessionId, 11);
+  const dispatch = await service.recordWorkerDispatch({ ...run, taskId: extractor.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: workerSessionId, requestedTools: extractor.tools, observedTools: extractor.tools, outcome: "completed" });
+  assert.equal(dispatch.usageEvidence.status, "available");
+  assert.equal(dispatch.usageEvidence.status === "available" ? dispatch.usageEvidence.usage.inputTokens : null, 11);
+  assert.equal(dispatch.activitySequence, 11);
+
+  const coordinatorSessionId = "2026-07-25T00-01-00-000Z_cafebabe-session";
+  await seed("cafebabe", coordinatorSessionId, 17);
+  const coordinator = await service.recordCoordinatorSession({ ...run, phase: "extraction", facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "cafebabe", hostSessionId: coordinatorSessionId, outcome: "completed" });
+  assert.equal(coordinator.usageEvidence.status, "available");
+  assert.equal(coordinator.usageEvidence.status === "available" ? coordinator.usageEvidence.usage.inputTokens : null, 17);
+  assert.equal(coordinator.activitySequence, 17);
+});
+
 test("Pi/Herdr post-facto usage retrieval validates sidecars, keeps latest resume snapshot, and deduplicates child identities", async () => {
   assert.equal(piHerdrChildId("019f9a1b-4c6f-74c2-b685-a7100fdd0031"), undefined, "a host session UUID must not be truncated into a child identity");
   assert.equal(piHerdrChildId("e2127f29-b75f7964-8542d9a0-1fa8"), "e2127f29");
@@ -543,6 +596,8 @@ test("Pi/Herdr post-facto usage retrieval validates sidecars, keeps latest resum
   const generic = await service.assignWorker({ ...run, taskId: "generic-live", role: "repairer", checkpointIds: ["checkpoint"], actionIds: ["action"] });
 
   await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostTaskId: "deadbeef", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" }), /hostAdapter is required/);
+  await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" }), /complete sanitized session filename stem/);
+  await assert.rejects(service.recordCoordinatorSession({ ...run, phase: "extraction", facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef", outcome: "completed" }), /complete sanitized session filename stem/);
   await service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" });
   await service.recordWorkerDispatch({ ...run, taskId: duplicate.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session", requestedTools: duplicate.tools, observedTools: duplicate.tools, outcome: "completed" });
   await service.recordWorkerDispatch({ ...run, taskId: missing.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "cafebabe", hostSessionId: "2026-07-25T00-02-00-000Z_cafebabe-session", requestedTools: missing.tools, observedTools: missing.tools, outcome: "completed" });
@@ -798,6 +853,11 @@ test("mem-import persists immutable scoped shard proposals against exact extract
     proposals.submitWorkerProposalBody({ ...proposer, artifacts: packet.artifacts, candidateDispositions: [], rationale: packet.rationale }),
     /must account for every assigned candidate/,
   );
+  const oversizedArtifacts = Array.from({ length: 63 }, (_value, index) => ({ ...packet.artifacts[0]!, id: `ada-${index + 1}`, title: `Ada ${index + 1}` }));
+  await assert.rejects(
+    proposals.submitWorkerProposalBody({ ...proposer, artifacts: oversizedArtifacts, candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada-1" }], rationale: "Reject a proposal too large for one atomic merge." }),
+    /at most 62 entries/,
+  );
   const persisted = await proposals.submitWorkerProposalBody({
     ...proposer,
     artifacts: packet.artifacts,
@@ -819,6 +879,16 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const beforeStatus = await u2.workStatus(run);
   assert.equal(beforeStatus.unconsumedProposalCount, 1);
   assert.equal(beforeStatus.unaccountedCandidateCount, 1);
+  const missingProposalValidation = await u2.validateWorkerCommit({
+    ...merger,
+    proposalHashes: ["f".repeat(64)],
+    readSet: [{ artifactId: "missing", contentHash: null }],
+    proposalAccepts: [{ proposalHash: "f".repeat(64), artifactIds: ["missing"] }],
+    rationale: "Reject a well-shaped but nonexistent proposal hash.",
+  });
+  assert.equal(missingProposalValidation.valid, false);
+  assert.match(missingProposalValidation.issues[0]!.message, /does not exist/);
+  assert.equal((await u2.mergeControls(run)).revision, 0);
   const mergeReceipt = await u2.commitWorkerBatchReceipt({
     ...merger,
     proposalHashes: [persisted.contentHash],
@@ -846,15 +916,24 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const canonicalArtifact = await u2.readMergeArtifactForWorker({ ...merger, artifactId: "ada" });
   assert.equal(canonicalArtifact.artifact?.title, "Ada");
   assert.equal(canonicalArtifact.artifactContentHash, canonicalInventory.entries[0]!.artifactContentHash);
+  const repeatedValidation = await u2.validateWorkerCommit({
+    ...merger,
+    proposalHashes: [persisted.contentHash],
+    readSet: [{ artifactId: "ada", contentHash: canonicalArtifact.artifactContentHash }],
+    changes: [{ kind: "upsert", artifact: { ...packet.artifacts[0]!, title: "Ada Again" } }],
+    rationale: "A consumed proposal must not support another synthesized revision.",
+  });
+  assert.equal(repeatedValidation.valid, false);
+  assert.ok(repeatedValidation.issues.some((issue) => /already consumed/.test(issue.message)));
   await assert.rejects(
     u2.commitWorkerBatchReceipt({
       ...merger,
       proposalHashes: [persisted.contentHash],
       readSet: [{ artifactId: "ada", contentHash: canonicalArtifact.artifactContentHash }],
-      changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }],
-      rationale: "A repeated unchanged accept must not create another revision.",
+      changes: [{ kind: "upsert", artifact: { ...packet.artifacts[0]!, title: "Ada Again" } }],
+      rationale: "A consumed proposal must not create another revision.",
     }),
-    /semantic no-op/,
+    /already consumed/,
   );
   assert.equal((await readdir(join(output, "stages", "merge", "transactions"))).length, 1);
   assert.equal((await u2.mergeState(run)).revision, 1);
@@ -949,8 +1028,8 @@ test("mem-import persists immutable scoped shard proposals against exact extract
   const transactionFiles = await readdir(join(output, "stages", "merge", "transactions"));
   assert.equal(transactionFiles.length, 2);
   await assert.rejects(
-    u2.commitWorkerBatch({ ...merger, proposalHashes: [persisted.contentHash], readSet: [{ artifactId: "ada", contentHash: merged.contentHash }], changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }], rationale: "A global merge hash is not an artifact read token." }),
-    /Stale merge read set/,
+    u2.commitWorkerBatch({ ...merger, proposalHashes: [persisted.contentHash], readSet: [{ artifactId: "ada", contentHash: merged.contentHash }], changes: [{ kind: "accept", proposalHash: persisted.contentHash, artifactId: "ada" }], rationale: "A consumed proposal cannot be retried with a global merge hash." }),
+    /already consumed/,
   );
   await assert.rejects(
     proposals.submitWorkerProposal({ ...proposer, packet: { ...packet, id: "wrong-candidate", inputs: [{ ...packet.inputs[0]!, candidateIds: ["not-assigned"] }] } }),
@@ -1801,6 +1880,24 @@ test("mem-import persists identity ambiguity, blocks finalization, and requires 
   assert.deepEqual(identityInventory.entries.map((entry) => entry.identityProposalHash), [ambiguity.contentHash]);
   const identityRead = await identities.readWorkerIdentity({ ...merger, identityProposalHash: ambiguity.contentHash, maxDecisions: 1 });
   assert.equal(identityRead.decisions[0]!.disposition, "ambiguous");
+  const ghostReconciler = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-ghost-match", role: "reconciler", proposalHashes: [proposal.contentHash] });
+  const ghostMatch = await identities.submitWorkerIdentity({ ...ghostReconciler, packet: {
+    version: 1, kind: "mem-import-identity", id: "ghost-match", proposalHashes: [proposal.contentHash], baselineRevision: 0, baselineContentHash: null,
+    decisions: [{ id: "ghost-match-decision", provisionalId: "book-one-ghost", disposition: "match", canonicalId: "ghost", rationale: "Exercise rejection of a match to absent canon." }],
+    rationale: "A missing canonical identity must not be created through match semantics.",
+  } });
+  const ghostMerger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-ghost-merge", role: "merger" });
+  const ghostValidation = await u2.validateWorkerCommit({
+    ...ghostMerger,
+    proposalHashes: [proposal.contentHash],
+    identityProposalHashes: [ghostMatch.contentHash],
+    readSet: [{ artifactId: "ada", contentHash: null }, { artifactId: "ghost", contentHash: null }],
+    proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada"] }],
+    changes: [{ kind: "upsert", artifact: { ...artifact, id: "ghost", title: "Ghost" } }],
+    rationale: "Reject match semantics that would create an absent canonical identity.",
+  });
+  assert.equal(ghostValidation.valid, false);
+  assert.ok(ghostValidation.issues.some((issue) => /Matched canonical identity ghost is absent/.test(issue.message)));
   const lease = await u2.acquireWorkerLease(merger);
   const first = await u2.applyWorkerBatch({ ...merger, fence: lease.fence, expectedRevision: 0, expectedContentHash: null, batch: {
     proposalHashes: [proposal.contentHash], identityProposalHashes: [ambiguity.contentHash], readSet: [{ artifactId: "ada", contentHash: null }], operations: [{ kind: "upsert", artifact }],
@@ -1820,18 +1917,21 @@ test("mem-import persists identity ambiguity, blocks finalization, and requires 
   assert.equal(blocked.finalized, false);
   await u2.releaseCoordinatorLease({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-finalize", fence: finalLease.fence });
 
-  const reconciler2 = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-match", role: "reconciler", proposalHashes: [proposal.contentHash] });
+  const resolutionProposer = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-resolution-propose", role: "proposer", unitIds: [unit.unitId] });
+  const resolutionProposal = await proposals.submitWorkerProposal({ ...resolutionProposer, packet: { version: 1, kind: "mem-import-proposal", id: "identity-resolution-shard", inputs: [{ unitId: unit.unitId, packetHash: extracted.packetHash }], artifacts: [artifact], candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: "ada" }], rationale: "Support the later explicit identity resolution without reusing consumed evidence." } });
+  const reconciler2 = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-match", role: "reconciler", proposalHashes: [resolutionProposal.contentHash] });
   const match = await identities.submitWorkerIdentity({ ...reconciler2, packet: {
-    version: 1, kind: "mem-import-identity", id: "ada-match", proposalHashes: [proposal.contentHash], baselineRevision: first.revision, baselineContentHash: first.contentHash,
+    version: 1, kind: "mem-import-identity", id: "ada-match", proposalHashes: [resolutionProposal.contentHash], baselineRevision: first.revision, baselineContentHash: first.contentHash,
     decisions: [{ id: "ada-match-decision", provisionalId: "book-one-ada", disposition: "match", canonicalId: "ada", rationale: "The reviewer accepted the existing Ada canonical identity." }],
     rationale: "Record the explicit model-owned identity resolution.",
   } });
-  const resolveLease = await u2.acquireWorkerLease(merger);
-  await u2.applyWorkerBatch({ ...merger, fence: resolveLease.fence, expectedRevision: first.revision, expectedContentHash: first.contentHash, batch: {
-    proposalHashes: [proposal.contentHash], identityProposalHashes: [match.contentHash], readSet: [{ artifactId: "ada", contentHash: canonicalHash(first.stage.artifacts![0]) }], operations: [{ kind: "upsert", artifact }],
+  const resolutionMerger = await service.assignWorker({ outputRoot: output, runId: run.runId, coordinatorGrant: run.coordinatorGrant, taskId: "identity-resolution-merge", role: "merger" });
+  const resolveLease = await u2.acquireWorkerLease(resolutionMerger);
+  await u2.applyWorkerBatch({ ...resolutionMerger, fence: resolveLease.fence, expectedRevision: first.revision, expectedContentHash: first.contentHash, batch: {
+    proposalHashes: [resolutionProposal.contentHash], identityProposalHashes: [match.contentHash], readSet: [{ artifactId: "ada", contentHash: canonicalHash(first.stage.artifacts![0]) }], operations: [{ kind: "upsert", artifact }],
     conflictOperations: [{ kind: "resolve", conflictId: "ada-identity-conflict" }], rationale: "Resolve the Ada identity conflict against the retained canonical artifact.",
   } });
-  await u2.releaseWorkerLease({ ...merger, fence: resolveLease.fence });
+  await u2.releaseWorkerLease({ ...resolutionMerger, fence: resolveLease.fence });
   const resolvedState = JSON.parse(await readFile(join(output, "stages", "identity", "state.json"), "utf-8")) as { conflicts: Record<string, { status: string }> };
   assert.equal(resolvedState.conflicts["ada-identity-conflict"]!.status, "resolved");
 });
@@ -2096,6 +2196,8 @@ test("mem-import large-work inventories stay bounded at 500 units, 5,000 candida
 
 test("mem-import model-facing mutation tools use compact receipt methods", async () => {
   const extensionSource = await readFile(join(process.cwd(), "extensions", "mem-import-tools.ts"), "utf-8");
+  assert.match(extensionSource, /mem_merge_requirements[\s\S]*?readWorkerMergeRequirements\(params\)/);
+  assert.match(extensionSource, /mem_merge_validate[\s\S]*?validateWorkerCommit\(params\)/);
   assert.match(extensionSource, /mem_merge_commit[\s\S]*?commitWorkerBatchReceipt\(params\)/);
   assert.match(extensionSource, /mem_merge_apply_repair_batch[\s\S]*?applyWorkerRepairBatchReceipt\(params\)/);
   assert.match(extensionSource, /mem_import_merge_state[\s\S]*?mergeControls\(params\)/);
@@ -2106,7 +2208,7 @@ test("mem-import model-facing mutation tools use compact receipt methods", async
   assert.doesNotMatch(extensionSource, /return result\(await u2\.applyWorkerRepairBatch\(params\)\)/);
   for (const toolName of [
     "mem_source_read_unit", "mem_extraction_read", "mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read",
-    "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_merge_inventory", "mem_merge_read_artifact",
+    "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_merge_inventory", "mem_merge_read_artifact", "mem_merge_requirements",
   ]) assert.match(extensionSource, new RegExp(`trackedEvidenceRead\\(\\"${toolName}\\"`));
 });
 
@@ -2146,6 +2248,101 @@ test("a child process independently rejects a forged cross-process extractor gra
   });
   assert.equal(forged.status, 1);
   assert.match(forged.stderr, /Invalid assignment grant/);
+});
+
+test("identity packets require their complete proposal evidence scope in one batch", async () => {
+  const { run, units } = await setup();
+  const service = new MemImportService();
+  const proposals = new MemImportProposalService(service);
+  const identities = new MemImportIdentityService(service);
+  const u2 = new MemImportU2Service(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "identity-scope-extract", unitIds: units.map((unit) => unit.unitId) });
+  for (const unit of units) await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const proposalHashes: string[] = [];
+  for (const [index, unit] of units.entries()) {
+    const artifactId = `scope-entity-${index + 1}`;
+    const proposer = await service.assignWorker({ ...run, taskId: `identity-scope-proposer-${index + 1}`, role: "proposer", unitIds: [unit.unitId] });
+    const proposal = await proposals.submitWorkerProposalBody({
+      ...proposer,
+      artifacts: [{ id: artifactId, group: "people", title: `Scope Entity ${index + 1}`, description: "Synthetic identity-scope evidence.", sections: [{ heading: "Summary", body: "This artifact tests atomic identity evidence scope." }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] }],
+      candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId }],
+      rationale: "Create one half of a cross-proposal identity scope.",
+    });
+    proposalHashes.push(proposal.contentHash);
+  }
+  const reconciler = await service.assignWorker({ ...run, taskId: "identity-scope-reconciler", role: "reconciler", proposalHashes });
+  const identity = await identities.submitWorkerIdentity({ ...reconciler, packet: {
+    version: 1, kind: "mem-import-identity", id: "identity-scope-packet", proposalHashes, baselineRevision: 0, baselineContentHash: null,
+    decisions: [{ id: "identity-scope-ambiguous", provisionalId: "identity-scope", disposition: "ambiguous", blocking: false, rationale: "No canonical identity decision is needed for this scope test." }],
+    rationale: "Bind both proposals into one indivisible identity evidence packet.",
+  } });
+  const merger = await service.assignWorker({ ...run, taskId: "identity-scope-merger", role: "merger" });
+  const validation = await u2.validateWorkerCommit({
+    ...merger,
+    proposalHashes: [proposalHashes[0]!],
+    identityProposalHashes: [identity.contentHash],
+    readSet: [{ artifactId: "scope-entity-1", contentHash: null }],
+    proposalAccepts: [{ proposalHash: proposalHashes[0]!, artifactIds: ["scope-entity-1"] }],
+    rationale: "Reject partial acceptance of a multi-proposal identity packet.",
+  });
+  assert.equal(validation.valid, false);
+  assert.ok(validation.issues.some((issue) => /complete proposal scope.*missing/.test(issue.message)));
+});
+
+test("merge requirements scope identity packets to one planned transaction subset", async () => {
+  const { run, units } = await setup();
+  const service = new MemImportService();
+  const plans = new MemImportClusterPlanService(service);
+  const proposals = new MemImportProposalService(service);
+  const identities = new MemImportIdentityService(service);
+  const u2 = new MemImportU2Service(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "subset-extract", unitIds: units.map((unit) => unit.unitId) });
+  for (const [index, unit] of units.entries()) {
+    const stage = validStage(unit);
+    stage.candidates![0]!.title = `Entity ${index + 1}`;
+    await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage });
+  }
+  const inventory = await plans.candidateInventory({ ...run, maxItems: 100 });
+  const candidateIds = inventory.candidates.map((candidate) => `${candidate.unitId}:${candidate.candidateId}`);
+  const plan = await plans.submit({
+    ...run,
+    snapshotHash: inventory.snapshotHash,
+    baselineRevision: inventory.baselineRevision,
+    baselineContentHash: inventory.baselineContentHash,
+    plan: {
+      id: "two-transaction-plan",
+      clusters: candidateIds.map((candidateId, index) => ({ id: `cluster-${index + 1}`, label: `Entity ${index + 1}`, kind: "identity" as const, candidateIds: [candidateId], rationale: "Keep this bounded identity independent." })),
+      reconciliationSets: candidateIds.map((_candidateId, index) => ({ id: `set-${index + 1}`, clusterIds: [`cluster-${index + 1}`], rationale: "Reconcile only this transaction's cluster." })),
+      rationale: "Keep two independent planned transactions and identity packets scoped.",
+    },
+  });
+  const proposalHashes: string[] = [];
+  const identityHashes: string[] = [];
+  for (const [index, unit] of units.entries()) {
+    const proposer = await service.assignWorker({ ...run, taskId: `subset-proposer-${index + 1}`, role: "proposer", planHash: plan.planHash, clusterId: `cluster-${index + 1}` });
+    const artifactId = `entity-${index + 1}`;
+    const proposal = await proposals.submitWorkerProposalBody({
+      ...proposer,
+      artifacts: [{ id: artifactId, group: "people", title: `Entity ${index + 1}`, description: `Independent entity ${index + 1}.`, sections: [{ heading: "Summary", body: `Entity ${index + 1} remains transaction-scoped.` }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] }],
+      candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId }],
+      rationale: "Create one bounded transaction proposal.",
+    });
+    proposalHashes.push(proposal.contentHash);
+    await recordDispatch(service, run, proposer.taskId, "proposer");
+    const reconciler = await service.assignWorker({ ...run, taskId: `subset-reconciler-${index + 1}`, role: "reconciler", planHash: plan.planHash, reconciliationSetId: `set-${index + 1}` });
+    const identity = await identities.submitWorkerIdentity({ ...reconciler, packet: { version: 1, kind: "mem-import-identity", id: `identity-${index + 1}`, decisions: [{ id: `create-${index + 1}`, provisionalId: artifactId, disposition: "create", canonicalId: artifactId, rationale: "Create only this transaction's canonical identity." }], rationale: "Keep identity prerequisites transaction-scoped." } });
+    identityHashes.push(identity.contentHash);
+    await recordDispatch(service, run, reconciler.taskId, "reconciler");
+  }
+  const merger = await service.assignWorker({ ...run, taskId: "subset-merger", role: "merger", planHash: plan.planHash });
+  assert.deepEqual(merger.proposalHashes, proposalHashes);
+  assert.deepEqual(merger.identityProposalHashes, identityHashes);
+  const first = await u2.readWorkerMergeRequirements({ ...merger, proposalHashes: [proposalHashes[0]!] });
+  assert.deepEqual(first.requiredIdentityProposalHashes, [identityHashes[0]]);
+  assert.deepEqual(first.identityCreates.map((item) => item.canonicalId), ["entity-1"]);
+  const second = await u2.readWorkerMergeRequirements({ ...merger, proposalHashes: [proposalHashes[1]!] });
+  assert.deepEqual(second.requiredIdentityProposalHashes, [identityHashes[1]]);
+  assert.deepEqual(second.identityCreates.map((item) => item.canonicalId), ["entity-2"]);
 });
 
 test("identity-aware cluster plans bind cross-unit work, retries, reconciliation, and merge readiness", async () => {
@@ -2216,9 +2413,14 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
     sections: [{ heading: "Summary", body: "Ada is the recurring guard observed across the corpus." }],
     provenance: units.map((unit) => ({ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! })),
   };
+  const proposedWatch = {
+    id: "fresh-watch", group: "things" as const, title: "Watch", description: "A newly canonical watch accompanies Ada.",
+    sections: [{ heading: "Summary", body: "The watch is retained as a separate salient object." }],
+    provenance: [{ sourceId: units[0]!.sourceId, unitId: units[0]!.unitId, startAnchor: units[0]!.anchors[0]!, endAnchor: units[0]!.anchors[0]! }],
+  };
   const proposal = await proposals.submitWorkerProposalBody({
     ...proposer,
-    artifacts: [proposedAda],
+    artifacts: [proposedAda, proposedWatch],
     candidateDispositions: units.map((unit) => ({ unitId: unit.unitId, candidateId: "local-candidate", disposition: "merged", artifactId: "ada" })),
     rationale: "Synthesize the model-owned cross-unit Ada identity cluster.",
   });
@@ -2241,7 +2443,10 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
   assert.deepEqual(reconciler.proposalHashes, [proposal.contentHash]);
   const identity = await identities.submitWorkerIdentity({ ...reconciler, packet: {
     version: 1, kind: "mem-import-identity", id: "ada-planned-match",
-    decisions: [{ id: "ada-match", provisionalId: "ada", disposition: "match", canonicalId: "ada", rationale: "The cross-unit evidence supports canonical Ada." }],
+    decisions: [
+      { id: "ada-match", provisionalId: "ada", disposition: "match", canonicalId: "ada", rationale: "The cross-unit evidence supports canonical Ada." },
+      { id: "watch-create", provisionalId: "fresh-watch", disposition: "create", canonicalId: "fresh-watch", rationale: "The proposal introduces a distinct salient watch." },
+    ],
     rationale: "Reconcile the planned recurring cluster with existing canon.",
   } });
   const storedIdentity = JSON.parse(await readFile(join(output, identity.path), "utf-8")) as { planHash: string; reconciliationSetId: string; proposalHashes: string[]; baselineRevision: number; canonicalDependencies: unknown[] };
@@ -2268,10 +2473,50 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
   const merger = await service.assignWorker({ ...run, taskId: "plan-merger", role: "merger", planHash: submittedPlan.planHash });
   assert.deepEqual(merger.proposalHashes, [proposal.contentHash]);
   assert.deepEqual(merger.identityProposalHashes, [identity.contentHash]);
+  const requirements = await u2.readWorkerMergeRequirements({ ...merger, proposalHashes: [proposal.contentHash] });
+  assert.equal(requirements.revision, unrelatedRevision.revision);
+  assert.deepEqual(requirements.proposalHashes, [proposal.contentHash]);
+  assert.deepEqual(requirements.requiredIdentityProposalHashes, [identity.contentHash]);
+  assert.deepEqual(requirements.pendingIdentityProposalHashes, [identity.contentHash]);
+  assert.deepEqual(requirements.acceptedIdentityProposalHashes, []);
+  assert.deepEqual(requirements.identityCreates, [{ identityProposalHash: identity.contentHash, decisionId: "watch-create", canonicalId: "fresh-watch", requiredContentHash: null }]);
+  assert.deepEqual(requirements.identityMatches, [{ identityProposalHash: identity.contentHash, decisionId: "ada-match", canonicalId: "ada", contentHash: dependencyHash }]);
+  assert.deepEqual(requirements.limits, { proposals: 50, accepts: 50, synthesizedChanges: 12, totalChanges: 62 });
+
+  for (const malformedHash of ["abc", "A".repeat(64)]) {
+    const malformedHashValidation = await u2.validateWorkerCommit({ ...merger, proposalHashes: [malformedHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }], proposalAccepts: [{ proposalHash: malformedHash, artifactIds: ["ada"] }], rationale: "Reject malformed proposal hashes before proposal lookup." });
+    assert.equal(malformedHashValidation.valid, false);
+    assert.match(malformedHashValidation.issues[0]!.message, /SHA-256/);
+  }
+  const missingIdentityValidation = await u2.validateWorkerCommit({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: undefined, readSet: [{ artifactId: "ada", contentHash: dependencyHash }, { artifactId: "fresh-watch", contentHash: null }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada", "fresh-watch"] }], rationale: "Validate the intentionally incomplete identity-aware merge." });
+  assert.equal(missingIdentityValidation.valid, false);
+  assert.match(missingIdentityValidation.issues[0]!.message, /requires identity packet/);
+  assert.equal((await u2.mergeControls(run)).revision, unrelatedRevision.revision, "validation must not mutate canonical state");
   await assert.rejects(u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: undefined, readSet: [{ artifactId: "ada", contentHash: dependencyHash }], changes: [{ kind: "accept", proposalHash: proposal.contentHash, artifactId: "ada" }], rationale: "Reject planned merge work that omits its required identity packet." }), /requires identity packet/);
   await assert.rejects(u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: ["f".repeat(64)], readSet: [{ artifactId: "ada", contentHash: dependencyHash }], changes: [{ kind: "accept", proposalHash: proposal.contentHash, artifactId: "ada" }], rationale: "Reject an identity packet outside the planned merger assignment." }), /outside this merger assignment/);
-  const merged = await u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }], changes: [{ kind: "accept", proposalHash: proposal.contentHash, artifactId: "ada" }], rationale: "Accept the ready identity-aware plan after an unrelated canonical revision." });
+  const partial = await u2.validateWorkerCommit({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada"] }], rationale: "Reject partial grouped proposal consumption." });
+  assert.equal(partial.valid, false);
+  assert.match(partial.issues[0]!.message, /does not account for declared proposal artifacts: fresh-watch/);
+  const missingCreateUpsert = await u2.validateWorkerCommit({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }, { artifactId: "fresh-watch", contentHash: null }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada"] }], changes: [{ kind: "delete", artifactId: "fresh-watch" }], rationale: "Reject an identity create without its required same-batch upsert." });
+  assert.equal(missingCreateUpsert.valid, false);
+  assert.ok(missingCreateUpsert.issues.some((issue) => /requires an upsert in the same batch/.test(issue.message)));
+  const malformedUpsert = await u2.validateWorkerCommit({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }, { artifactId: "fresh-watch", contentHash: null }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada"] }], changes: [{ kind: "upsert", artifact: { ...proposedWatch, proposalHash: proposal.contentHash } } as any], rationale: "Reject merge control fields embedded in an upsert artifact." });
+  assert.equal(malformedUpsert.valid, false);
+  assert.match(malformedUpsert.issues[0]!.message, /unsupported fields: proposalHash/);
+  await assert.rejects(u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }, { artifactId: "fresh-watch", contentHash: null }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada"] }], changes: [{ kind: "upsert", artifact: { ...proposedWatch, proposalHash: proposal.contentHash } } as any], rationale: "Reject malformed direct commit payloads before persistence." }), /unsupported fields: proposalHash/);
+  assert.equal(existsSync(join(output, "stages", "merge", "artifacts")), false, "failed validation and commit must not persist artifact blobs");
+  const valid = await u2.validateWorkerCommit({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }, { artifactId: "fresh-watch", contentHash: null }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada", "fresh-watch"] }], rationale: "Validate grouped acceptance for the ready identity-aware plan." });
+  assert.deepEqual(valid.issues, []);
+  assert.equal(valid.valid, true);
+  assert.equal(valid.acceptCount, 2);
+  assert.equal(valid.synthesizedCount, 0);
+  const merged = await u2.commitWorkerBatchReceipt({ ...merger, proposalHashes: [proposal.contentHash], identityProposalHashes: [identity.contentHash], readSet: [{ artifactId: "ada", contentHash: dependencyHash }, { artifactId: "fresh-watch", contentHash: null }], proposalAccepts: [{ proposalHash: proposal.contentHash, artifactIds: ["ada", "fresh-watch"] }], rationale: "Accept the ready identity-aware plan after an unrelated canonical revision." });
   assert.equal(merged.revision, unrelatedRevision.revision + 1);
+  const afterRequirements = await u2.readWorkerMergeRequirements({ ...merger, proposalHashes: [proposal.contentHash] });
+  assert.deepEqual(afterRequirements.proposalHashes, []);
+  assert.deepEqual(afterRequirements.pendingIdentityProposalHashes, []);
+  assert.deepEqual(afterRequirements.acceptedIdentityProposalHashes, [identity.contentHash]);
+  assert.deepEqual(afterRequirements.identityCreates, []);
 
   await u2.fail({ ...run, reasonCode: "terminal-plan-test", message: "Verify the cluster-plan mutation guard after completing the focused fixture." });
   await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: planBody }), /run is terminal/);

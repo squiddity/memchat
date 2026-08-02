@@ -117,6 +117,21 @@ Remaining work, in order:
 2. Start a fresh parent session and confirm `mem_import_record_session` appears in the live tool catalog; do not use the direct service fallback in the next run.
 3. Rerun the same DeepSeek Flash three-chapter import. Require exact named-profile preflight, all four informative terminal `subagent_done` results without intent narration, complete canonical transaction/effect/dispatch correspondence, requested narrative surfaces, current clean post-repair review, complete telemetry, and terminal `finalized`. Do not begin U8 full-Alice A/B until this passes.
 
+## Handoff continuation (2026-07-31)
+
+A fresh parent session confirmed `mem_import_record_session` is present in the live tool catalog. A Luna/high Alice Chapters I–III recovery run (`mir-ac60981d9be35f2c6b01c512`) completed extraction with 72 candidates, produced 9 plan-scoped proposals plus one identity packet, and merged revision 1 with 54 artifacts, 72/72 canonical accounting, exact dispatch/effect correspondence, and no blocking conflict. At the user's request, the run was then marked terminally failed before review/finalization so merger ergonomics could be improved; it is diagnostic evidence, not a successful evaluation.
+
+The merger made four preventable rejected commit attempts before succeeding: omitted same-batch upserts for identity creates, omitted the plan-required identity packet, an upsert carrying the unsupported `proposalHash` field, and two mistyped proposal hashes. The resulting implementation work adds:
+
+- `mem_merge_requirements`, which accepts one intended proposal subset and returns only that transaction's pending proposal/identity prerequisites, identity creates and matches, blocking conflicts, canonical controls, and batch limits without semantic inference;
+- `mem_merge_validate`, which runs the shared scope/batch/read-set/identity/application path without acquiring the writer lease or mutating canonical state;
+- grouped `proposalAccepts`, complete declared-proposal artifact coverage, strict lowercase SHA-256 checks, exact match read-set enforcement, and explicit rejection of control fields embedded in upserts;
+- pre-validation transaction-reference calculation without artifact-blob writes, with persistence deferred until structural/provenance validation and final CAS succeed;
+- merger role/profile guidance requiring requirements → validation → commit and exact receipt-set reconciliation;
+- removal of mem-import-owned completion wording from named profiles and launch guidance, leaving auto-exit/manual completion behavior to the selected subagent facility.
+
+The final fresh validation passes: `npm run test:mem-import` is 72/72, `npm run build` succeeds, and `git diff --check` is clean. The next semantic evaluation should start as a fresh run rather than resume the intentionally stopped run.
+
 ## Documentation authority map
 
 - `skills/mem-import/SKILL.md`: short role branch and corpus coordinator behavior.

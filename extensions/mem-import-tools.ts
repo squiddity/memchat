@@ -242,18 +242,38 @@ const mergeBatchSchema = Type.Object({
 const mergeCommitChangeSchema = Type.Union([
   Type.Object({
     kind: Type.Literal("accept"),
-    proposalHash: Type.String({ pattern: "^[a-f0-9]{64}$", description: "Proposal containing the artifact." }),
+    proposalHash: Type.String({ pattern: "^[a-f0-9]{64}$", description: "Proposal containing the artifact. Prefer proposalAccepts when accepting several artifacts from one proposal." }),
     artifactId: Type.String({ minLength: 1, description: "Artifact ID to accept byte-for-byte from that proposal." }),
   }, { additionalProperties: false }),
   Type.Object({
     kind: Type.Literal("upsert"),
     artifact: artifactSchema,
-  }, { additionalProperties: false, description: "Intentional synthesized replacement supported by declared proposals." }),
+  }, { additionalProperties: false, description: "Intentional synthesized replacement supported by declared proposals. Do not add proposalHash; supporting hashes belong in proposalHashes." }),
   Type.Object({
     kind: Type.Literal("delete"),
     artifactId: Type.String({ minLength: 1 }),
   }, { additionalProperties: false }),
 ]);
+
+const mergeProposalAcceptSchema = Type.Object({
+  proposalHash: Type.String({ pattern: "^[a-f0-9]{64}$", description: "Copy this hash once from mem_proposal_inventory." }),
+  artifactIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 50, description: "Unchanged artifacts to accept byte-for-byte from this proposal." }),
+}, { additionalProperties: false });
+
+const mergeConflictOperationsSchema = Type.Array(Type.Union([
+  Type.Object({ kind: Type.Literal("create"), conflictId: Type.String({ minLength: 1 }), blocking: Type.Boolean(), summary: Type.String({ minLength: 1 }), identityDecisionId: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }),
+  Type.Object({ kind: Type.Union([Type.Literal("resolve"), Type.Literal("defer")]), conflictId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+]), { maxItems: 100 });
+
+const mergeCommitFields = {
+  proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 50, description: "Immutable proposals supporting this batch. Copy each exact hash once from mem_proposal_inventory." }),
+  identityProposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { maxItems: 100, description: "Include every pending required hash returned by mem_merge_requirements." })),
+  readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Optional(Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()])) }, { additionalProperties: false }), { minItems: 1, maxItems: 100, description: "Copy artifactContentHash from canonical reads. For an observed-absent target, use null or omit contentHash; omission is normalized to null and still fails stale if the artifact exists." }),
+  proposalAccepts: Type.Optional(Type.Array(mergeProposalAcceptSchema, { maxItems: 50, description: "Group unchanged accepts by proposal to avoid repeating hashes. Expanded accepts share the 50-entry lightweight limit." })),
+  changes: Type.Optional(Type.Array(mergeCommitChangeSchema, { maxItems: 62, description: "Explicit accepts plus synthesized upsert/delete changes. At least one proposalAccept or change is required; at most 50 expanded accepts and 12 synthesized changes." })),
+  conflictOperations: Type.Optional(mergeConflictOperationsSchema),
+  rationale: Type.String({ minLength: 1, description: "Concise auditable rationale, not hidden reasoning." }),
+};
 
 const canonicalDependencySchema = Type.Object({
   artifactId: Type.String({ minLength: 1, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }),
@@ -647,7 +667,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Submit one bounded semantic shard. The service derives packet identity and extraction hashes, requires exactly one disposition for every assigned candidate, derives quotes, and persists an immutable proposal.",
     parameters: Type.Object({
       ...workerSchema,
-      artifacts: Type.Array(artifactSchema, { maxItems: 100, description: "Complete provisional artifacts synthesized from this assigned shard." }),
+      artifacts: Type.Array(artifactSchema, { maxItems: 62, description: "Complete provisional artifacts synthesized from this assigned shard. The atomic merge bound is 62 artifacts." }),
       candidateDispositions: Type.Array(candidateDispositionSchema, { maxItems: 100, description: "Exactly one accounting decision for every assigned extraction candidate." }),
       rationale: Type.String({ minLength: 1, description: "Concise auditable rationale, not hidden reasoning." }),
       diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
@@ -772,21 +792,30 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_merge_requirements",
+    label: "Read Merge Requirements",
+    description: "Read deterministic precommit requirements for one intended proposal subset: pending proposal/identity hashes, identity creates requiring same-batch upserts, match read-set controls, blocking conflicts, and batch limits. This does not choose semantics or mutate state.",
+    parameters: Type.Object({ ...workerSchema, proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 50, description: "Exact intended proposal subset for the next transaction." }) }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await trackedEvidenceRead("mem_merge_requirements", params, () => u2.readWorkerMergeRequirements(params))); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_merge_validate",
+    label: "Validate Bounded Merge",
+    description: "Validate a fully shaped proposal-backed commit against current scope, read sets, identity requirements, and canonical application without acquiring the writer lease or mutating state. Fix every returned issue before commit.",
+    parameters: Type.Object({ ...workerSchema, ...mergeCommitFields }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await u2.validateWorkerCommit(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_merge_commit",
     label: "Commit Bounded Merge",
-    description: "Commit one proposal-backed batch and return a compact transaction receipt. Accept proposal artifacts by reference when unchanged. The service carries proposal candidate accounting and owns lease, fence, and current-revision CAS internally.",
-    parameters: Type.Object({
-      ...workerSchema,
-      proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 50, description: "Immutable proposals supporting this batch." }),
-      identityProposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { maxItems: 100 })),
-      readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Optional(Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()])) }, { additionalProperties: false }), { minItems: 1, maxItems: 100, description: "Copy artifactContentHash from canonical reads. For an observed-absent target, use null or omit contentHash; omission is normalized to null and still fails stale if the artifact exists." }),
-      changes: Type.Array(mergeCommitChangeSchema, { minItems: 1, maxItems: 62, description: "Weighted batch: at most 50 lightweight accepts and at most 12 synthesized upsert/delete changes." }),
-      conflictOperations: Type.Optional(Type.Array(Type.Union([
-        Type.Object({ kind: Type.Literal("create"), conflictId: Type.String({ minLength: 1 }), blocking: Type.Boolean(), summary: Type.String({ minLength: 1 }), identityDecisionId: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }),
-        Type.Object({ kind: Type.Union([Type.Literal("resolve"), Type.Literal("defer")]), conflictId: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-      ]), { maxItems: 100 })),
-      rationale: Type.String({ minLength: 1, description: "Concise auditable rationale, not hidden reasoning." }),
-    }, { additionalProperties: false }),
+    description: "Commit one validated proposal-backed batch and return a compact transaction receipt. Prefer grouped proposalAccepts for unchanged artifacts; reserve changes.upsert/delete for synthesis. The service carries proposal candidate accounting and owns lease, fence, and current-revision CAS internally.",
+    parameters: Type.Object({ ...workerSchema, ...mergeCommitFields }, { additionalProperties: false }),
     async execute(_id, params) {
       try { return result(await u2.commitWorkerBatchReceipt(params)); } catch (error) { return failure(error); }
     },

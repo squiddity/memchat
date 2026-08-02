@@ -115,7 +115,6 @@ export const MEM_IMPORT_NAMED_PROFILES: readonly MemImportNamedProfile[] = [
 
 const DENIED_GENERIC_TOOLS = ["bash", "read", "write", "edit"];
 const DENIED_WORKER_LAUNCH_TOOLS = ["subagent", "subagent_interrupt", "subagents_list", "subagent_resume"];
-const HERDR_COMPLETION_CONTRACT = "Completion contract: when your assigned work is complete or terminally failed, call `subagent_done` exactly once with a concise direct result such as ‘Submitted the assigned packet; durable effect verified.’ Do not narrate intent inside that result: never write ‘I will call’, ‘Let me call’, or ‘Now calling `subagent_done`’. `subagent_done` must be your final action: after calling it, do not send another assistant message or call another tool.";
 
 export function memImportProfileTools(profile: MemImportNamedProfile, adapter: MemImportProfileAdapter): readonly string[] {
   if (profile.kind === "worker") return MEM_IMPORT_ROLE_TOOLS[profile.role!];
@@ -185,8 +184,6 @@ export function renderMemImportNamedProfile(profile: MemImportNamedProfile, adap
       "---",
       "",
       memImportProfileBody(profile),
-      "",
-      HERDR_COMPLETION_CONTRACT,
       "",
     ].join("\n");
   }

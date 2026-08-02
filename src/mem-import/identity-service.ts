@@ -7,6 +7,14 @@ import { MemImportService } from "./service.js";
 
 type WorkerAuthority = { outputRoot: string; runId: string; taskId: string; grant: string };
 
+export function assertAtomicIdentityScope(proposalHashCount: number, proposalArtifactIds: ReadonlySet<string>, createCanonicalIds: ReadonlySet<string>): void {
+  if (proposalHashCount > 50) throw new Error(`Identity proposal binds ${proposalHashCount} proposals; one atomic merge supports at most 50`);
+  const externalCreateIds = new Set([...createCanonicalIds].filter((canonicalId) => !proposalArtifactIds.has(canonicalId)));
+  const minimumSynthesizedChanges = externalCreateIds.size + Math.max(0, proposalArtifactIds.size - 50);
+  const minimumOperations = proposalArtifactIds.size + externalCreateIds.size;
+  if (minimumSynthesizedChanges > 12 || minimumOperations > 62) throw new Error(`Identity proposal requires at least ${minimumSynthesizedChanges} synthesized and ${minimumOperations} total atomic operations; merge limits are 12 synthesized and 62 total`);
+}
+
 export type IdentityDecision = {
   id: string;
   provisionalId: string;
@@ -178,6 +186,10 @@ export class MemImportIdentityService {
       if (decision.alternatives !== undefined && (!Array.isArray(decision.alternatives) || decision.alternatives.length > 25 || decision.alternatives.some((item) => !item || typeof item.canonicalId !== "string"))) throw new Error("Identity alternatives must be a bounded canonicalId array");
       if (typeof decision.rationale !== "string" || !decision.rationale.trim()) throw new Error("Identity decision rationale must be non-empty");
     }
+    const proposalArtifactIds = new Set<string>();
+    for (const proposalHash of packet.proposalHashes) for (const artifactId of await this.proposalArtifactIds(outputRoot, runId, proposalHash)) proposalArtifactIds.add(artifactId);
+    const createCanonicalIds = new Set(packet.decisions.filter((decision) => decision.disposition === "create" && decision.canonicalId).map((decision) => decision.canonicalId!));
+    assertAtomicIdentityScope(packet.proposalHashes.length, proposalArtifactIds, createCanonicalIds);
     return packet;
   }
 
@@ -195,10 +207,17 @@ export class MemImportIdentityService {
   }
 
   private async assertProposalExists(outputRoot: string, runId: string, contentHash: string): Promise<void> {
+    await this.proposalArtifactIds(outputRoot, runId, contentHash);
+  }
+
+  private async proposalArtifactIds(outputRoot: string, runId: string, contentHash: string): Promise<string[]> {
     const directory = join(outputRoot, "stages", "runs", runId, "proposals");
     if (!existsSync(directory)) throw new Error(`Declared shard proposal ${contentHash} does not exist`);
     const file = (await readdir(directory)).find((name) => name.endsWith(`-${contentHash}.json`));
     if (!file) throw new Error(`Declared shard proposal ${contentHash} does not exist`);
+    const packet = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; contentHash?: unknown; artifacts?: unknown };
+    if (packet.runId !== runId || packet.contentHash !== contentHash || !Array.isArray(packet.artifacts)) throw new Error(`Declared shard proposal ${contentHash} is invalid`);
+    return packet.artifacts.map((artifact) => artifact && typeof artifact === "object" && typeof (artifact as { id?: unknown }).id === "string" ? (artifact as { id: string }).id : "").filter(Boolean);
   }
 
   private relative(outputRoot: string, path: string): string { return path.startsWith(`${outputRoot}/`) ? path.slice(outputRoot.length + 1) : path; }

@@ -8,6 +8,8 @@ import { MemImportService } from "./service.js";
 
 type WorkerAuthority = { outputRoot: string; runId: string; taskId: string; grant: string };
 
+const MAX_ATOMIC_PROPOSAL_ARTIFACTS = 62;
+
 export type ProposalInput = {
   unitId: string;
   packetHash: string;
@@ -208,7 +210,7 @@ export class MemImportProposalService {
       if (packet.planHash !== planHash || packet.clusterId !== clusterId) throw new Error("Proposal packet planHash/clusterId must match its planned assignment");
     } else if (packet.planHash !== undefined || packet.clusterId !== undefined) throw new Error("Unplanned proposal packets must not claim a cluster-plan binding");
     if (!Array.isArray(packet.inputs) || packet.inputs.length === 0) throw new Error("Proposal packet requires at least one input extraction packet");
-    if (!Array.isArray(packet.artifacts)) throw new Error("Proposal packet artifacts must be an array");
+    if (!Array.isArray(packet.artifacts) || packet.artifacts.length > MAX_ATOMIC_PROPOSAL_ARTIFACTS) throw new Error(`Proposal packet artifacts must be an array with at most ${MAX_ATOMIC_PROPOSAL_ARTIFACTS} entries so one proposal remains atomically mergeable`);
     if (typeof packet.rationale !== "string" || !packet.rationale.trim()) throw new Error("Proposal packet rationale must be non-empty");
 
     const inputUnitIds = new Set<string>();

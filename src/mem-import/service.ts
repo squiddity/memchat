@@ -77,7 +77,7 @@ export const MEM_IMPORT_ROLE_TOOLS: Record<AssignmentRole, string[]> = {
   extractor: ["mem_source_read_unit", "mem_extraction_status", "mem_extraction_read", "mem_extraction_validate", "mem_extraction_submit"],
   proposer: ["mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_proposal_submit"],
   reconciler: ["mem_proposal_inventory", "mem_proposal_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_identity_submit"],
-  merger: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_merge_commit"],
+  merger: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_merge_requirements", "mem_merge_validate", "mem_merge_commit"],
   reviewer: ["mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_inventory_worker", "mem_extraction_read_worker", "mem_review_submit"],
   repairer: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_read_worker", "mem_merge_acquire_lease", "mem_merge_heartbeat_lease", "mem_merge_apply_repair_batch", "mem_merge_release_lease"],
 };
@@ -95,6 +95,7 @@ export const MEM_IMPORT_EVIDENCE_READ_CAPABILITIES: Record<string, MemImportCapa
   mem_identity_read: "merge:read",
   mem_merge_inventory: "merge:read",
   mem_merge_read_artifact: "merge:read",
+  mem_merge_requirements: "merge:read",
 };
 
 export type MemImportDispatchRecord = {
@@ -584,6 +585,13 @@ function assertHostTaskId(hostTaskId: string): void {
   requireNonEmpty(hostTaskId, "hostTaskId");
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(hostTaskId)) {
     throw new Error("hostTaskId must be a sanitized opaque identifier, not a path");
+  }
+}
+
+function assertAdapterSessionId(facility: DispatchFacility, hostAdapter: string | undefined, hostSessionId: string | undefined): void {
+  if (facility !== "subagent" || hostAdapter !== PI_HERDR_USAGE_ADAPTER || hostSessionId === undefined) return;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[a-f0-9]{8}-.+$/.test(hostSessionId)) {
+    throw new Error("pi-herdr-subagents hostSessionId must be the complete sanitized session filename stem; truncated child IDs are invalid");
   }
 }
 
@@ -1380,6 +1388,27 @@ export class MemImportService {
     };
   }
 
+  private async authoritativeUsageFields(options: {
+    key: string;
+    facility: DispatchFacility;
+    hostAdapter?: string;
+    hostTaskId: string;
+    hostSessionId?: string;
+    fallback: MemImportUsageEvidence;
+  }): Promise<Pick<MemImportDispatchRecord, "usageEvidence" | "usageAdapter" | "hostChildId" | "hostScopeId" | "activitySequence" | "activityUpdatedAt">> {
+    if (!this.usageResolver || options.facility !== "subagent" || options.hostAdapter !== this.usageResolver.adapter) return { usageEvidence: options.fallback };
+    const resolution = (await this.usageResolver.resolve([{ key: options.key, hostTaskId: options.hostTaskId, ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}) }])).get(options.key);
+    if (!resolution) return { usageEvidence: options.fallback };
+    return {
+      usageEvidence: validateUsageEvidence(resolution.evidence),
+      usageAdapter: resolution.adapter,
+      ...(resolution.hostChildId ? { hostChildId: resolution.hostChildId } : {}),
+      ...(resolution.hostScopeId ? { hostScopeId: resolution.hostScopeId } : {}),
+      ...(resolution.activitySequence !== undefined ? { activitySequence: resolution.activitySequence } : {}),
+      ...(resolution.activityUpdatedAt ? { activityUpdatedAt: resolution.activityUpdatedAt } : {}),
+    };
+  }
+
   async recordWorkerDispatch(options: {
     outputRoot: string;
     runId: string;
@@ -1426,6 +1455,7 @@ export class MemImportService {
     if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid dispatch outcome");
     assertHostTaskId(options.hostTaskId);
     if (options.hostSessionId) assertHostTaskId(options.hostSessionId);
+    assertAdapterSessionId(options.facility, options.hostAdapter, options.hostSessionId);
     if (this.usageResolver && options.facility === "subagent" && !options.hostAdapter) throw new Error("hostAdapter is required for subagent telemetry correlation");
     if (assignment.audit?.adapter && options.hostAdapter && options.hostAdapter !== assignment.audit.adapter) throw new Error("Dispatch hostAdapter does not match the assignment adapter");
     if (!Array.isArray(options.requestedTools) || !Array.isArray(options.observedTools) || options.requestedTools.some((tool) => typeof tool !== "string" || !tool.trim()) || options.observedTools.some((tool) => typeof tool !== "string" || !tool.trim())) throw new Error("Dispatch tool lists must contain non-empty names");
@@ -1437,13 +1467,20 @@ export class MemImportService {
       requestedThinking: normalizeRuntimeLabel(options.requestedThinking, "requestedThinking"),
       observedThinking: normalizeRuntimeLabel(options.observedThinking, "observedThinking"),
     };
-    const usageEvidence = validateUsageEvidence(options.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" });
+    const usageFields = await this.authoritativeUsageFields({
+      key: `worker:${assignment.taskId}`,
+      facility: options.facility,
+      hostAdapter: options.hostAdapter,
+      hostTaskId: options.hostTaskId,
+      ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}),
+      fallback: validateUsageEvidence(options.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" }),
+    });
     const record: MemImportDispatchRecord = {
       version: 1, kind: "mem-import-worker-dispatch", runId: run.runId, taskId: assignment.taskId, role: assignment.role,
       facility: options.facility, ...(options.hostAdapter ? { hostAdapter: normalizeRuntimeLabel(options.hostAdapter, "hostAdapter") } : {}), hostTaskId: options.hostTaskId, ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}), requestedTools: [...options.requestedTools].sort(), observedTools: [...options.observedTools].sort(), outcome: options.outcome,
       ...(runtime.requestedModel ? { requestedModel: runtime.requestedModel } : {}), ...(runtime.observedModel ? { observedModel: runtime.observedModel } : {}),
       ...(runtime.requestedThinking ? { requestedThinking: runtime.requestedThinking } : {}), ...(runtime.observedThinking ? { observedThinking: runtime.observedThinking } : {}),
-      usageEvidence,
+      ...usageFields,
       recordedAt: this.now().toISOString(),
     };
     await writeJson(dispatchPath(run.outputRoot, assignment.taskId), record);
@@ -1482,6 +1519,7 @@ export class MemImportService {
       if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid coordinator outcome");
       assertHostTaskId(options.hostTaskId);
       if (options.hostSessionId) assertHostTaskId(options.hostSessionId);
+      assertAdapterSessionId(options.facility, options.hostAdapter, options.hostSessionId);
       if (this.usageResolver && options.facility === "subagent" && !options.hostAdapter) throw new Error("hostAdapter is required for subagent telemetry correlation");
       const runtime = {
         requestedModel: normalizeRuntimeLabel(options.requestedModel, "requestedModel"),
@@ -1489,6 +1527,14 @@ export class MemImportService {
         requestedThinking: normalizeRuntimeLabel(options.requestedThinking, "requestedThinking"),
         observedThinking: normalizeRuntimeLabel(options.observedThinking, "observedThinking"),
       };
+      const usageFields = await this.authoritativeUsageFields({
+        key: `coordinator:${options.hostTaskId}`,
+        facility: options.facility,
+        hostAdapter: options.hostAdapter,
+        hostTaskId: options.hostTaskId,
+        ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}),
+        fallback: validateUsageEvidence(options.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" }),
+      });
       const record: MemImportCoordinatorSessionRecord = {
         version: 1,
         kind: "mem-import-coordinator-session",
@@ -1504,7 +1550,7 @@ export class MemImportService {
         ...(runtime.observedModel ? { observedModel: runtime.observedModel } : {}),
         ...(runtime.requestedThinking ? { requestedThinking: runtime.requestedThinking } : {}),
         ...(runtime.observedThinking ? { observedThinking: runtime.observedThinking } : {}),
-        usageEvidence: validateUsageEvidence(options.usageEvidence ?? { version: 1, status: "unavailable", reason: "host-result-missing" }),
+        ...usageFields,
         recordedAt: this.now().toISOString(),
       };
       await writeJson(coordinatorSessionPath(run.outputRoot, record.phase, record.hostTaskId), record);
