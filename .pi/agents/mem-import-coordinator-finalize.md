@@ -9,7 +9,7 @@ session-mode: standalone
 spawning: true
 allowed-child-agents: mem-import-reviewer, mem-import-repairer
 deny-tools: bash, read, write, edit
-auto-exit: false
+auto-exit: true
 interactive: true
 ---
 

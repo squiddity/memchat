@@ -10,7 +10,7 @@ After calling begin exactly once, the parent starts four sequential fresh bounde
 
 - the mem-import skill, exact phase name, small run/scope envelope, and coordinator role guidance;
 - coordinator mem-import tools, `subagent`, and extension-owned lifecycle controls;
-- explicit authenticated model, thinking, repository `cwd`, fresh context, and `autoExit: false`;
+- explicit authenticated model, thinking, repository `cwd`, fresh context, and `autoExit: true`; the facility defers automatic shutdown until tracked descendants finish and their results are delivered;
 - `extensionMode: "explicit"` and the absolute trusted path to `extensions/mem-import-tools.ts`;
 - the requested input/output scope.
 
@@ -42,7 +42,7 @@ The widget's **available** list is active; **denied** is policy, not the tools r
 This is a known recipe, not a required mem-import backend or programmatic adapter:
 
 - facility/tool: installed `subagent`;
-- phase coordinators: four sequential fresh contexts with `autoExit: false`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry;
+- phase coordinators: four sequential fresh contexts with `autoExit: true`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry; tracked descendants defer shutdown until their results are delivered;
 - workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries; named-profile launches must use `agent`, never display-only `name`, as the selector;
 - lifecycle controls: facility-owned;
 - completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison, and content-free cumulative usage snapshots;

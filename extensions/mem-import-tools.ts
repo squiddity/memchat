@@ -356,6 +356,21 @@ export default function memImportTools(pi: ExtensionAPI) {
   });
 
   registerMemImportTool(pi, {
+    name: "mem_import_recover",
+    label: "Recover Mem Import",
+    description: "Reactivate a failed run at its durable ledger checkpoint. Rotates coordinator authority, invalidates prior worker grants, preserves verified semantic artifacts and canonical transactions, and records recovery lineage.",
+    parameters: Type.Object({
+      outputRoot: coordinatorSchema.outputRoot,
+      runId: coordinatorSchema.runId,
+      coordinatorGrant: coordinatorSchema.coordinatorGrant,
+      reason: Type.String({ minLength: 1, maxLength: 1000 }),
+    }),
+    async execute(_id, params) {
+      try { return result(await u2.recoverFailedRun(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
     name: "mem_import_begin_compendium",
     label: "Begin Compendium Run",
     description: "Create a new run under a persistent compendium root. Compendium identity and work identity are durable; semantic merge remains model-owned.",
@@ -506,7 +521,23 @@ export default function memImportTools(pi: ExtensionAPI) {
       usageEvidence: Type.Optional(usageEvidenceSchema),
     }),
     async execute(_id, params) {
-      try { return result(await service.recordWorkerDispatch(params)); } catch (error) { return failure(error); }
+      try {
+        const record = await service.recordWorkerDispatch(params);
+        return result({
+          version: record.version,
+          kind: record.kind,
+          runId: record.runId,
+          taskId: record.taskId,
+          role: record.role,
+          facility: record.facility,
+          outcome: record.outcome,
+          hostTaskId: record.hostTaskId,
+          exactToolMatch: true,
+          usageStatus: record.usageEvidence.status,
+          ...(record.activitySequence !== undefined ? { activitySequence: record.activitySequence } : {}),
+          recordedAt: record.recordedAt,
+        });
+      } catch (error) { return failure(error); }
     },
   });
 

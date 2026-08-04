@@ -4,7 +4,7 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { extractionStagePath, mergedCandidatesPath, readManifest, readMergeStage, writeJson } from "../world-import/staging.js";
 import type { StageEnvelope } from "../world-import/types.js";
-import { canonicalHash, assertMemImportId } from "./identity-service.js";
+import { canonicalHash, assertAtomicIdentityScope, assertMemImportId } from "./identity-service.js";
 import { MemImportService } from "./service.js";
 
 type CoordinatorAuthority = { outputRoot: string; runId: string; coordinatorGrant: string };
@@ -270,7 +270,26 @@ export class MemImportClusterPlanService {
     const proposalByCluster = new Map(status.entries.filter((entry): entry is Extract<ClusterPlanStatusEntry, { kind: "cluster" }> => entry.kind === "cluster" && entry.status === "proposed").map((entry) => [entry.clusterId, entry.proposalHash!]));
     const missing = set.clusterIds.filter((clusterId) => !proposalByCluster.has(clusterId));
     if (missing.length) throw new Error(`Reconciliation set ${set.id} is not assignable until its clusters are proposed: ${missing.join(", ")}`);
-    return { proposalHashes: set.clusterIds.map((clusterId) => proposalByCluster.get(clusterId)!), baselineRevision: plan.baselineRevision, baselineContentHash: plan.baselineContentHash, ...(set.canonicalDependencies !== undefined ? { canonicalDependencies: structuredClone(set.canonicalDependencies) } : {}) };
+    const proposalHashes = set.clusterIds.map((clusterId) => proposalByCluster.get(clusterId)!);
+    const proposalArtifactIds = new Set<string>();
+    for (const proposalHash of proposalHashes) {
+      const directory = join(outputRoot, "stages", "runs", runId, "proposals");
+      const file = (existsSync(directory) ? await readdir(directory) : []).find((name) => name.endsWith(`-${proposalHash}.json`));
+      if (!file) throw new Error(`Reconciliation set ${set.id} references missing proposal ${proposalHash}`);
+      const packet = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; contentHash?: unknown; artifacts?: unknown };
+      if (packet.runId !== runId || packet.contentHash !== proposalHash || !Array.isArray(packet.artifacts)) throw new Error(`Reconciliation set ${set.id} references invalid proposal ${proposalHash}`);
+      for (const artifact of packet.artifacts) {
+        const artifactId = artifact && typeof artifact === "object" ? (artifact as { id?: unknown }).id : undefined;
+        if (typeof artifactId === "string" && artifactId) proposalArtifactIds.add(artifactId);
+      }
+    }
+    try {
+      assertAtomicIdentityScope(proposalHashes.length, proposalArtifactIds, new Set());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Reconciliation set ${set.id} is structurally unassignable: ${message}. Split identity questions into smaller disjoint sets in the cluster plan; one set cannot be submitted in batches.`);
+    }
+    return { proposalHashes, baselineRevision: plan.baselineRevision, baselineContentHash: plan.baselineContentHash, ...(set.canonicalDependencies !== undefined ? { canonicalDependencies: structuredClone(set.canonicalDependencies) } : {}) };
   }
 
   async requireReady(outputRoot: string, runId: string, planHash: string): Promise<FullPlanStatus> {
@@ -298,8 +317,8 @@ export class MemImportClusterPlanService {
     const transactionsRoot = join(canonicalRoot, "stages", "merge", "transactions");
     for (const file of existsSync(transactionsRoot) ? await readdir(transactionsRoot) : []) {
       if (!file.endsWith(".json")) continue;
-      const transaction = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { identityProposalHashes?: unknown };
-      if (Array.isArray(transaction.identityProposalHashes)) for (const value of transaction.identityProposalHashes) if (typeof value === "string") acceptedIdentityHashes.add(value);
+      const transaction = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { runId?: unknown; identityProposalHashes?: unknown };
+      if (transaction.runId === runId && Array.isArray(transaction.identityProposalHashes)) for (const value of transaction.identityProposalHashes) if (typeof value === "string") acceptedIdentityHashes.add(value);
     }
     const declaredIdentities = new Set(identityProposalHashes);
     for (const requiredIdentityHash of requiredIdentityHashes) {

@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { hostname } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { normalizeSources } from "../world-import/normalize.js";
 import { readSlice } from "../world-import/spans.js";
@@ -205,11 +205,19 @@ export type MemImportRunRecord = {
   coordinatorTokenHash: string;
   createdAt: string;
   normalizedAt?: string;
+  /** Rotated on failed-run recovery so every previously issued worker grant becomes stale. */
+  authorizationEpoch?: number;
   terminal?: {
     status: MemImportTerminalStatus;
     at: string;
     reason?: string;
   };
+  recoveryHistory?: Array<{
+    failedAt: string;
+    failureReason?: string;
+    recoveredAt: string;
+    reason: string;
+  }>;
   /** Present for runs allocated under a persistent compendium; canonical state lives there. */
   compendiumRoot?: string;
   audit?: { parent?: MemImportActorAudit };
@@ -246,6 +254,8 @@ export type MemImportAssignmentRecord = {
   supersedesTaskIds?: string[];
   retriesTaskId?: string;
   lifecycleOutcome: LifecycleOutcome;
+  /** Must equal the run authorization epoch for live worker calls. */
+  authorizationEpoch?: number;
   audit?: MemImportAssignmentAudit;
 };
 
@@ -644,10 +654,14 @@ function parseRunRecord(value: unknown): MemImportRunRecord {
     || typeof value.coordinatorTokenHash !== "string"
     || typeof value.createdAt !== "string"
     || (value.normalizedAt !== undefined && typeof value.normalizedAt !== "string")
+    || (value.authorizationEpoch !== undefined && (!Number.isSafeInteger(value.authorizationEpoch) || Number(value.authorizationEpoch) < 0))
     || (value.terminal !== undefined && (!isRecord(value.terminal)
       || !["failed", "finalized"].includes(String(value.terminal.status))
       || typeof value.terminal.at !== "string"
       || (value.terminal.reason !== undefined && typeof value.terminal.reason !== "string")))
+    || (value.recoveryHistory !== undefined && (!Array.isArray(value.recoveryHistory) || value.recoveryHistory.some((entry) => !isRecord(entry)
+      || typeof entry.failedAt !== "string" || typeof entry.recoveredAt !== "string" || typeof entry.reason !== "string"
+      || (entry.failureReason !== undefined && typeof entry.failureReason !== "string"))))
     || (value.compendiumRoot !== undefined && typeof value.compendiumRoot !== "string")) {
     throw new Error("Invalid mem-import run record");
   }
@@ -684,6 +698,7 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || (value.supersededByTaskId !== undefined && typeof value.supersededByTaskId !== "string")
     || (value.supersedesTaskIds !== undefined && (!Array.isArray(value.supersedesTaskIds) || !value.supersedesTaskIds.every((item) => typeof item === "string")))
     || (value.retriesTaskId !== undefined && typeof value.retriesTaskId !== "string")
+    || (value.authorizationEpoch !== undefined && (!Number.isSafeInteger(value.authorizationEpoch) || Number(value.authorizationEpoch) < 0))
     || (value.lifecycleOutcome !== undefined && !["assigned", "submitted", "revoked", "superseded", "completed"].includes(String(value.lifecycleOutcome)))) {
     throw new Error("Invalid mem-import assignment record");
   }
@@ -715,8 +730,11 @@ function assertRunScope(run: MemImportRunRecord, outputRoot: string, runId: stri
   if (run.runId !== runId) throw new Error("runId does not match the active output-root run");
 }
 
-function isLiveAssignment(assignment: MemImportAssignmentRecord, now: Date): boolean {
-  return !assignment.revokedAt && !assignment.supersededAt && asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() > now.getTime();
+function isLiveAssignment(assignment: MemImportAssignmentRecord, now: Date, authorizationEpoch = assignment.authorizationEpoch ?? 0): boolean {
+  return (assignment.authorizationEpoch ?? 0) === authorizationEpoch
+    && !assignment.revokedAt
+    && !assignment.supersededAt
+    && asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime() > now.getTime();
 }
 
 function assertRunMutable(run: MemImportRunRecord): void {
@@ -817,6 +835,32 @@ export class MemImportService {
     };
     await writeJson(runPath(outputRoot), record);
     return { runId: record.runId, outputRoot, coordinatorGrant };
+  }
+
+  async recoverFailedRun(options: { outputRoot: string; runId: string; coordinatorGrant: string; reason: string }): Promise<BeginRunResult & { authorizationEpoch: number; recoveredAt: string }> {
+    return this.withRunMutation(options.outputRoot, async () => {
+      const run = await this.authorizeCoordinator(options);
+      if (run.terminal?.status !== "failed") throw new Error("Only a failed mem-import run can be recovered");
+      if (typeof options.reason !== "string" || !options.reason.trim()) throw new Error("reason must be non-empty");
+      const recoveredAt = this.now().toISOString();
+      const coordinatorGrant = newToken();
+      const authorizationEpoch = (run.authorizationEpoch ?? 0) + 1;
+      const { terminal, ...active } = run;
+      const next: MemImportRunRecord = {
+        ...active,
+        coordinatorTokenHash: hashToken(coordinatorGrant),
+        authorizationEpoch,
+        recoveryHistory: [...(run.recoveryHistory ?? []), {
+          failedAt: terminal.at,
+          ...(terminal.reason ? { failureReason: terminal.reason } : {}),
+          recoveredAt,
+          reason: options.reason.slice(0, 1000),
+        }],
+      };
+      await writeJson(runPath(run.outputRoot), next);
+      await writeAuthorizationEvent(run.outputRoot, { runId: run.runId, action: "recover", authorizationEpoch, recoveredAt, outcome: "allowed" });
+      return { runId: run.runId, outputRoot: run.outputRoot, coordinatorGrant, authorizationEpoch, recoveredAt };
+    });
   }
 
   async canonicalRootForRun(outputRootInput: string): Promise<string> {
@@ -1050,6 +1094,7 @@ export class MemImportService {
       issuedAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
       lifecycleOutcome: "assigned",
+      authorizationEpoch: run.authorizationEpoch ?? 0,
       ...(supersedesTaskIds.length > 0 ? { supersedesTaskIds } : {}),
       ...(options.retriesTaskId ? { retriesTaskId: options.retriesTaskId } : {}),
       audit: { ...(audit ?? {}), profile: MEM_IMPORT_ROLE_TO_PROFILE.extractor },
@@ -1061,7 +1106,7 @@ export class MemImportService {
       if (options.retriesTaskId && !existing.some((item) => item.taskId === options.retriesTaskId && item.runId === run.runId)) {
         throw new Error(`retriesTaskId does not name an assignment in this run: ${options.retriesTaskId}`);
       }
-      const liveOverlaps = existing.filter((item) => item.role === "extractor" && isLiveAssignment(item, issuedAt) && item.allowedUnitIds.some((unitId) => unitIds.includes(unitId)));
+      const liveOverlaps = existing.filter((item) => item.role === "extractor" && isLiveAssignment(item, issuedAt, run.authorizationEpoch ?? 0) && item.allowedUnitIds.some((unitId) => unitIds.includes(unitId)));
       const unapproved = liveOverlaps.filter((item) => !supersedesTaskIds.includes(item.taskId));
       if (unapproved.length > 0) throw new Error(`Unit(s) already have live extractor assignment(s): ${unapproved.map((item) => item.taskId).join(", ")}; revoke them or explicitly supersede them`);
       const unknownSupersession = supersedesTaskIds.filter((taskId) => !liveOverlaps.some((item) => item.taskId === taskId));
@@ -1170,8 +1215,16 @@ export class MemImportService {
       } else {
         if (options.clusterId || options.reconciliationSetId || options.unitIds?.length || options.candidateIds?.length || options.proposalHashes?.length) throw new Error("Planned merger assignments derive proposal and identity scope from the ready cluster plan");
         const ready = await plans.requireReady(run.outputRoot, run.runId, planHash);
-        proposalHashes = ready.proposalHashes;
-        identityProposalHashes = ready.identityProposalHashes;
+        const consumedProposalHashes = new Set<string>();
+        const transactionsRoot = join(await this.canonicalRootForRun(run.outputRoot), "stages", "merge", "transactions");
+        for (const file of existsSync(transactionsRoot) ? await readdir(transactionsRoot) : []) {
+          if (!file.endsWith(".json")) continue;
+          const transaction = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { runId?: unknown; proposalHashes?: unknown };
+          if (transaction.runId === run.runId && Array.isArray(transaction.proposalHashes)) for (const proposalHash of transaction.proposalHashes) if (typeof proposalHash === "string") consumedProposalHashes.add(proposalHash);
+        }
+        proposalHashes = ready.proposalHashes.filter((proposalHash) => !consumedProposalHashes.has(proposalHash));
+        if (proposalHashes.length === 0) throw new Error("Planned merger assignment has no unconsumed proposals");
+        identityProposalHashes = await plans.requiredMergeIdentityHashes(run.outputRoot, run.runId, planHash, proposalHashes);
       }
     } else if (options.planHash || options.clusterId || options.reconciliationSetId || options.retriesTaskId) {
       throw new Error("Cluster-plan assignment fields require an active plan and a proposer, reconciler, or merger role");
@@ -1227,7 +1280,7 @@ export class MemImportService {
         const effectsDirectory = `${orchestrationDir(run.outputRoot)}/effects/${item.taskId}`;
         const hasEffect = existsSync(effectsDirectory) && (await readdir(effectsDirectory)).some((name) => name.endsWith(".json"));
         if (hasEffect) throw new Error(`Planned scope already has an effective assignment (${item.taskId})`);
-        if (isLiveAssignment(item, issuedAt)) throw new Error(`Planned scope already has a live assignment (${item.taskId}); revoke it or record a failed dispatch before retrying`);
+        if (isLiveAssignment(item, issuedAt, run.authorizationEpoch ?? 0)) throw new Error(`Planned scope already has a live assignment (${item.taskId}); revoke it or record a failed dispatch before retrying`);
       }
       if (prior.length > 0 && !options.retriesTaskId) throw new Error("A fresh retry of a prior planned scope requires retriesTaskId");
       if (options.retriesTaskId) {
@@ -1266,6 +1319,7 @@ export class MemImportService {
       issuedAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
       lifecycleOutcome: "assigned",
+      authorizationEpoch: run.authorizationEpoch ?? 0,
       ...(options.retriesTaskId ? { retriesTaskId: options.retriesTaskId } : {}),
       audit: { ...(sanitizeAudit(options.audit) ?? {}), profile: MEM_IMPORT_ROLE_TO_PROFILE[options.role] },
     };
@@ -1907,6 +1961,7 @@ export class MemImportService {
     const [run, assignment] = await Promise.all([readRun(outputRoot), readAssignment(outputRoot, options.taskId)]);
     assertRunScope(run, outputRoot, options.runId);
     if (assignment.outputRoot !== outputRoot || assignment.runId !== run.runId) throw new Error("Assignment scope does not match the active run");
+    if ((assignment.authorizationEpoch ?? 0) !== (run.authorizationEpoch ?? 0)) throw new Error(`Assignment ${assignment.taskId} belongs to a prior run authorization epoch`);
     if (options.role && assignment.role !== options.role) throw new Error(`Assignment role is not ${options.role}`);
     if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");
     return assignment;
@@ -1932,6 +1987,7 @@ export class MemImportService {
       assertRunScope(run, outputRoot, options.runId);
       if (assignment.version !== MEM_IMPORT_RUN_VERSION || assignment.kind !== "mem-import-assignment") throw new Error("Invalid mem-import assignment record");
       if (assignment.outputRoot !== outputRoot || assignment.runId !== run.runId) throw new Error("Assignment scope does not match the active run");
+      if ((assignment.authorizationEpoch ?? 0) !== (run.authorizationEpoch ?? 0)) throw new Error(`Assignment ${assignment.taskId} belongs to a prior run authorization epoch`);
       if (MUTATING_WORKER_CAPABILITIES.has(options.capability)) assertRunMutable(run);
       if (options.role && assignment.role !== options.role) throw new Error(`Assignment role is not ${options.role}`);
       if (!tokenMatches(options.grant, assignment.tokenHash)) throw new Error("Invalid assignment grant");

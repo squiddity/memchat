@@ -1,5 +1,7 @@
 # Three-chapter Alice mem-import evaluation — 2026-07-25
 
+> **2026-08-03 update:** The controlled full-corpus execution milestone is now complete, including same-run recovery and terminal finalization. See [the full Alice milestone report](2026-08-03-alice-full-mem-import-milestone.md). The recommendations below remain historical inputs to that work.
+
 ## Scope
 
 This bounded evaluation imported Chapters I–III from `.memchat-agent-testing/fixtures/alice-chapters-1-3.epub` through the four fresh mem-import coordinator phases. It evaluates the compact U4–U7 protocol; it is not an installation-acceptance receipt or the full U8 A/B.

@@ -334,6 +334,21 @@ export class MemImportU2Service {
     this.plans = new MemImportClusterPlanService(base, now);
   }
 
+  async recoverFailedRun(options: CoordinatorAuthority & { reason: string }): Promise<{ runId: string; outputRoot: string; coordinatorGrant: string; authorizationEpoch: number; recoveredAt: string }> {
+    const failedRun = await this.base.authorizeCoordinator(options);
+    if (failedRun.terminal?.status !== "failed") throw new Error("Only a failed mem-import run can be recovered");
+    const canonicalRoot = this.canonicalRoot(failedRun);
+    return this.base.withRunMutation(canonicalRoot, async () => {
+      const recovered = await this.base.recoverFailedRun(options);
+      if (existsSync(leasePath(canonicalRoot))) {
+        const lease = JSON.parse(await readFile(leasePath(canonicalRoot), "utf-8")) as { runId?: unknown };
+        if (lease.runId === failedRun.runId) await rm(leaseDir(canonicalRoot), { recursive: true, force: true });
+      }
+      await this.updateAudit(failedRun.outputRoot, failedRun.runId, undefined, { status: "running", error: undefined, finalization: undefined, finalizedAt: undefined });
+      return recovered;
+    });
+  }
+
   async mergeState(options: CoordinatorAuthority): Promise<MergeState> {
     const run = await this.base.authorizeCoordinator(options);
     const canonicalRoot = this.canonicalRoot(run);
@@ -413,8 +428,8 @@ export class MemImportU2Service {
     const consumed = new Set<string>();
     const transactionsRoot = join(canonicalRoot, "stages", "merge", "transactions");
     for (const file of existsSync(transactionsRoot) ? await readdir(transactionsRoot) : []) {
-      const receipt = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { proposalHashes?: unknown };
-      if (Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string" && proposalHashes.has(proposalHash)) consumed.add(proposalHash);
+      const receipt = JSON.parse(await readFile(join(transactionsRoot, file), "utf-8")) as { runId?: unknown; proposalHashes?: unknown };
+      if (receipt.runId === run.runId && Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string" && proposalHashes.has(proposalHash)) consumed.add(proposalHash);
     }
     const accountedKeys = new Set((state.stage.candidateDispositions ?? []).map((item) => `${item.unitId}:${item.candidateId}`).filter((key) => candidateKeys.has(key)));
     let openConflictCount = 0;
@@ -558,7 +573,7 @@ export class MemImportU2Service {
   ): Promise<MergeState> {
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
-    await this.assertProposalHashesUnconsumed(canonicalRoot, options.batch.proposalHashes);
+    await this.assertProposalHashesUnconsumed(canonicalRoot, assignment.runId, options.batch.proposalHashes);
     if (assignment.allowedProposalHashes?.length && options.batch.proposalHashes.some((proposalHash) => !assignment.allowedProposalHashes!.includes(proposalHash))) throw new Error("Merge batch proposal hash is outside this assignment");
     if ((assignment.planHash || assignment.allowedIdentityProposalHashes?.length) && options.batch.identityProposalHashes?.some((identityHash) => !(assignment.allowedIdentityProposalHashes ?? []).includes(identityHash))) throw new Error("Merge batch identity proposal hash is outside this assignment");
     if (assignment.planHash) {
@@ -604,8 +619,8 @@ export class MemImportU2Service {
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const current = await this.readMergeState(canonicalRoot);
     const artifacts = new Map((current.stage.artifacts ?? []).map((artifact) => [artifact.id, hash(artifact)]));
-    const accepted = await this.readAcceptedIdentityProposalHashes(canonicalRoot);
-    const consumedProposals = await this.readConsumedProposalHashes(canonicalRoot);
+    const accepted = await this.readAcceptedIdentityProposalHashes(canonicalRoot, assignment.runId);
+    const consumedProposals = await this.readConsumedProposalHashes(canonicalRoot, assignment.runId);
     const requiredIdentityProposalHashes = assignment.planHash
       ? await this.plans.requiredMergeIdentityHashes(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes)
       : [...(assignment.allowedIdentityProposalHashes ?? [])];
@@ -705,7 +720,7 @@ export class MemImportU2Service {
       await this.plans.requireReady(assignment.outputRoot, assignment.runId, assignment.planHash);
       await this.plans.assertMergeIdentityCoverage(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes, options.identityProposalHashes);
       const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
-      const acceptedIdentityHashes = await this.readAcceptedIdentityProposalHashes(canonicalRoot);
+      const acceptedIdentityHashes = await this.readAcceptedIdentityProposalHashes(canonicalRoot, assignment.runId);
       const requiredIdentityHashes = await this.plans.requiredMergeIdentityHashes(assignment.outputRoot, assignment.runId, assignment.planHash, options.proposalHashes);
       for (const identityHash of requiredIdentityHashes.filter((item) => !acceptedIdentityHashes.has(item))) {
         const packet = await this.identities.readIdentityProposal(assignment.outputRoot, assignment.runId, identityHash);
@@ -713,7 +728,7 @@ export class MemImportU2Service {
         if (missingBoundProposals.length) throw new Error(`Pending identity packet ${identityHash} requires its complete proposal scope in one transaction; missing ${missingBoundProposals.join(", ")}`);
       }
     }
-    await this.assertProposalHashesUnconsumed(await this.base.canonicalRootForRun(assignment.outputRoot), options.proposalHashes);
+    await this.assertProposalHashesUnconsumed(await this.base.canonicalRootForRun(assignment.outputRoot), assignment.runId, options.proposalHashes);
     const groupedAccepts = (options.proposalAccepts ?? []).flatMap((entry) => entry.artifactIds.map((artifactId): MergeCommitChange => ({ kind: "accept", proposalHash: entry.proposalHash, artifactId })));
     const changes = [...groupedAccepts, ...(options.changes ?? [])];
     if (changes.length === 0 || changes.length > MAX_TOTAL_MERGE_CHANGES) throw new Error(`Merge commit changes must contain one to ${MAX_TOTAL_MERGE_CHANGES} expanded entries`);
@@ -841,6 +856,29 @@ export class MemImportU2Service {
     requireNonEmpty(options.message, "message");
     const safeReasonCode = options.reasonCode.replace(/[^a-z0-9._-]/gi, "-").slice(0, 80);
     const message = options.message.slice(0, 1000);
+    const canonicalRoot = await this.base.canonicalRootForRun(run.outputRoot);
+    const mergeState = await this.readMergeState(canonicalRoot);
+    const proposalHashes = new Set<string>();
+    const proposalsRoot = proposalDir(run.outputRoot, run.runId);
+    for (const file of existsSync(proposalsRoot) ? await readdir(proposalsRoot) : []) {
+      if (!file.endsWith(".json")) continue;
+      const proposal = JSON.parse(await readFile(join(proposalsRoot, file), "utf-8")) as { contentHash?: unknown };
+      if (typeof proposal.contentHash === "string") proposalHashes.add(proposal.contentHash);
+    }
+    const consumedProposalHashes = await this.readConsumedProposalHashes(canonicalRoot, run.runId);
+    const unconsumedProposalCount = [...proposalHashes].filter((proposalHash) => !consumedProposalHashes.has(proposalHash)).length;
+    let blockingConflictCount = 0;
+    if (existsSync(identityStatePath(canonicalRoot))) {
+      const identity = JSON.parse(await readFile(identityStatePath(canonicalRoot), "utf-8")) as CanonicalIdentityState;
+      blockingConflictCount = Object.values(identity.conflicts ?? {}).filter((conflict) => conflict.status !== "resolved" && conflict.blocking).length;
+    }
+    const candidateKeys = new Set((await readExtractionStages(run.outputRoot)).flatMap((stage) => (stage.candidates ?? []).map((candidate) => `${stage.unitId}:${candidate.id}`)));
+    const accountedCandidateKeys = new Set((mergeState.stage.candidateDispositions ?? []).map((item) => `${item.unitId}:${item.candidateId}`).filter((key) => candidateKeys.has(key)));
+    const unaccountedCandidateCount = candidateKeys.size - accountedCandidateKeys.size;
+    const resumablePartialMerge = mergeState.revision > 0 && unconsumedProposalCount > 0 && blockingConflictCount === 0;
+    if (resumablePartialMerge && safeReasonCode !== "merge-recovery-unavailable") {
+      throw new Error(`Partial canonical merge is resumable (${unconsumedProposalCount} proposals and ${unaccountedCandidateCount} candidates remain); resume the current exact-profile merger or issue a fresh remaining-only planned merger assignment. Use reasonCode merge-recovery-unavailable only when exact-profile recovery is genuinely unavailable.`);
+    }
     await this.updateAudit(run.outputRoot, run.runId, {
       kind: "finalization",
       path: "stages/import-run.json",
@@ -1421,7 +1459,7 @@ export class MemImportU2Service {
       return [];
     }
     const packets = await Promise.all(batch.identityProposalHashes.map((identityHash) => this.identities.readIdentityProposal(outputRoot, runId, identityHash)));
-    const acceptedIdentityHashes = await this.readAcceptedIdentityProposalHashes(canonicalRoot);
+    const acceptedIdentityHashes = await this.readAcceptedIdentityProposalHashes(canonicalRoot, runId);
     const declaredProposalHashes = new Set(batch.proposalHashes);
     for (const packet of packets) {
       if (acceptedIdentityHashes.has(packet.contentHash)) throw new Error(`Identity proposal ${packet.contentHash} was already accepted`);
@@ -1480,30 +1518,30 @@ export class MemImportU2Service {
     return packets;
   }
 
-  private async assertProposalHashesUnconsumed(outputRoot: string, proposalHashes: string[]): Promise<void> {
-    const consumed = await this.readConsumedProposalHashes(outputRoot);
+  private async assertProposalHashesUnconsumed(outputRoot: string, runId: string, proposalHashes: string[]): Promise<void> {
+    const consumed = await this.readConsumedProposalHashes(outputRoot, runId);
     const repeated = proposalHashes.filter((proposalHash) => consumed.has(proposalHash));
     if (repeated.length) throw new Error(`Merge commit proposal hashes were already consumed: ${repeated.join(", ")}`);
   }
 
-  private async readConsumedProposalHashes(outputRoot: string): Promise<Set<string>> {
+  private async readConsumedProposalHashes(outputRoot: string, runId: string): Promise<Set<string>> {
     const consumed = new Set<string>();
     const directory = join(outputRoot, "stages", "merge", "transactions");
     if (!existsSync(directory)) return consumed;
     for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
-      const receipt = JSON.parse(await readFile(join(directory, file), "utf-8")) as { proposalHashes?: unknown };
-      if (Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string") consumed.add(proposalHash);
+      const receipt = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; proposalHashes?: unknown };
+      if (receipt.runId === runId && Array.isArray(receipt.proposalHashes)) for (const proposalHash of receipt.proposalHashes) if (typeof proposalHash === "string") consumed.add(proposalHash);
     }
     return consumed;
   }
 
-  private async readAcceptedIdentityProposalHashes(outputRoot: string): Promise<Set<string>> {
+  private async readAcceptedIdentityProposalHashes(outputRoot: string, runId: string): Promise<Set<string>> {
     const accepted = new Set<string>();
     const directory = join(outputRoot, "stages", "merge", "transactions");
     if (!existsSync(directory)) return accepted;
     for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json"))) {
-      const receipt = JSON.parse(await readFile(join(directory, file), "utf-8")) as { identityProposalHashes?: unknown };
-      if (Array.isArray(receipt.identityProposalHashes)) for (const identityHash of receipt.identityProposalHashes) if (typeof identityHash === "string") accepted.add(identityHash);
+      const receipt = JSON.parse(await readFile(join(directory, file), "utf-8")) as { runId?: unknown; identityProposalHashes?: unknown };
+      if (receipt.runId === runId && Array.isArray(receipt.identityProposalHashes)) for (const identityHash of receipt.identityProposalHashes) if (typeof identityHash === "string") accepted.add(identityHash);
     }
     return accepted;
   }

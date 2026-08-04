@@ -92,7 +92,7 @@ const coordinatorProfiles: MemImportNamedProfile[] = ([
   kind: "coordinator",
   phase,
   spawning: true,
-  autoExit: false,
+  autoExit: true,
   maxSubagentDepth: 1,
   allowedChildAgents: MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN[phase],
 }));

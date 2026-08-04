@@ -2289,6 +2289,51 @@ test("identity packets require their complete proposal evidence scope in one bat
   assert.ok(validation.issues.some((issue) => /complete proposal scope.*missing/.test(issue.message)));
 });
 
+test("planned reconciler assignment rejects an atomic set whose completed proposals exceed merge bounds", async () => {
+  const { run, units } = await setup();
+  const service = new MemImportService();
+  const plans = new MemImportClusterPlanService(service);
+  const proposals = new MemImportProposalService(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "oversized-set-extract", unitIds: units.map((unit) => unit.unitId) });
+  for (const unit of units) await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const inventory = await plans.candidateInventory({ ...run, maxItems: 100 });
+  const candidateIds = inventory.candidates.map((candidate) => `${candidate.unitId}:${candidate.candidateId}`);
+  const plan = await plans.submit({
+    ...run,
+    snapshotHash: inventory.snapshotHash,
+    baselineRevision: inventory.baselineRevision,
+    baselineContentHash: inventory.baselineContentHash,
+    plan: {
+      id: "oversized-atomic-set-plan",
+      clusters: candidateIds.map((candidateId, index) => ({ id: `oversized-cluster-${index + 1}`, label: `Oversized shard ${index + 1}`, kind: "coherent" as const, candidateIds: [candidateId], rationale: "Produce one half of an intentionally oversized reconciliation set." })),
+      reconciliationSets: [{ id: "oversized-set", clusterIds: ["oversized-cluster-1", "oversized-cluster-2"], rationale: "Exercise the assignment-time atomic bound." }],
+      rationale: "Verify structural bounds before dispatching a reconciler.",
+    },
+  });
+  for (const [index, unit] of units.entries()) {
+    const proposer = await service.assignWorker({ ...run, taskId: `oversized-proposer-${index + 1}`, role: "proposer", planHash: plan.planHash, clusterId: `oversized-cluster-${index + 1}` });
+    const artifacts = Array.from({ length: 32 }, (_, artifactIndex) => ({
+      id: `oversized-${index + 1}-${artifactIndex + 1}`,
+      group: "facts" as const,
+      title: `Oversized artifact ${index + 1}.${artifactIndex + 1}`,
+      description: "A bounded proposal artifact used to exercise reconciliation-set limits.",
+      sections: [{ heading: "Summary", body: "This artifact is intentionally small and independently provenance-backed." }],
+      provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }],
+    }));
+    await proposals.submitWorkerProposalBody({
+      ...proposer,
+      artifacts,
+      candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId: artifacts[0]!.id }],
+      rationale: "Persist 32 artifacts in this half of the atomic set.",
+    });
+    await recordDispatch(service, run, proposer.taskId, "proposer");
+  }
+  await assert.rejects(
+    service.assignWorker({ ...run, taskId: "oversized-reconciler", role: "reconciler", planHash: plan.planHash, reconciliationSetId: "oversized-set" }),
+    /structurally unassignable: Identity proposal requires at least 14 synthesized and 64 total atomic operations.*cannot be submitted in batches/,
+  );
+});
+
 test("merge requirements scope identity packets to one planned transaction subset", async () => {
   const { run, units } = await setup();
   const service = new MemImportService();
@@ -2520,4 +2565,87 @@ test("identity-aware cluster plans bind cross-unit work, retries, reconciliation
 
   await u2.fail({ ...run, reasonCode: "terminal-plan-test", message: "Verify the cluster-plan mutation guard after completing the focused fixture." });
   await assert.rejects(plans.submit({ ...run, snapshotHash: inventory.snapshotHash, baselineRevision: inventory.baselineRevision, baselineContentHash: inventory.baselineContentHash, plan: planBody }), /run is terminal/);
+});
+
+test("planned partial merge remains active and a fresh merger receives only unconsumed proposals", async () => {
+  const service = new MemImportService();
+  const u2 = new MemImportU2Service(service);
+  const plans = new MemImportClusterPlanService(service);
+  const proposals = new MemImportProposalService(service);
+  const { run, units } = await setup(service);
+  const extractor = await service.assignExtractor({ ...run, taskId: "partial-plan-extractor", unitIds: units.map((unit) => unit.unitId) });
+  for (const unit of units) await service.submitExtraction({ ...extractor, unitId: unit.unitId, stage: validStage(unit) });
+  const inventory = await plans.candidateInventory({ ...run, maxItems: 100 });
+  const candidateIds = inventory.candidates.map((candidate) => `${candidate.unitId}:${candidate.candidateId}`);
+  const plan = await plans.submit({
+    ...run,
+    snapshotHash: inventory.snapshotHash,
+    baselineRevision: inventory.baselineRevision,
+    baselineContentHash: inventory.baselineContentHash,
+    plan: {
+      id: "partial-merge-recovery-plan",
+      clusters: candidateIds.map((candidateId, index) => ({ id: `partial-cluster-${index + 1}`, label: `Partial shard ${index + 1}`, kind: "coherent" as const, candidateIds: [candidateId], rationale: "Keep each candidate in an independently mergeable proposal." })),
+      rationale: "Exercise deterministic remaining-only merger recovery after one accepted transaction.",
+    },
+  });
+  const persisted: Array<{ proposal: { contentHash: string }; artifactId: string }> = [];
+  for (const [index, unit] of units.entries()) {
+    const proposer = await service.assignWorker({ ...run, taskId: `partial-proposer-${index + 1}`, role: "proposer", planHash: plan.planHash, clusterId: `partial-cluster-${index + 1}` });
+    const artifactId = `partial-artifact-${index + 1}`;
+    const proposal = await proposals.submitWorkerProposalBody({
+      ...proposer,
+      artifacts: [{ id: artifactId, group: "facts", title: `Partial artifact ${index + 1}`, description: "A proposal used to verify partial merge recovery.", sections: [{ heading: "Summary", body: "This bounded artifact is committed by one of two merger passes." }], provenance: [{ sourceId: unit.sourceId, unitId: unit.unitId, startAnchor: unit.anchors[0]!, endAnchor: unit.anchors[0]! }] }],
+      candidateDispositions: [{ unitId: unit.unitId, candidateId: "local-candidate", disposition: "represented", artifactId }],
+      rationale: "Persist one independently mergeable planned proposal.",
+    });
+    await recordDispatch(service, run, proposer.taskId, "proposer");
+    persisted.push({ proposal, artifactId });
+  }
+  assert.equal((await plans.status({ ...run, maxItems: 100 })).readyForMerge, true);
+
+  const firstMerger = await service.assignWorker({ ...run, taskId: "partial-merger-first", role: "merger", planHash: plan.planHash });
+  assert.deepEqual(firstMerger.proposalHashes, persisted.map((item) => item.proposal.contentHash));
+  await u2.commitWorkerBatchReceipt({
+    ...firstMerger,
+    proposalHashes: [persisted[0]!.proposal.contentHash],
+    readSet: [{ artifactId: persisted[0]!.artifactId, contentHash: null }],
+    proposalAccepts: [{ proposalHash: persisted[0]!.proposal.contentHash, artifactIds: [persisted[0]!.artifactId] }],
+    rationale: "Intentionally consume only the first planned proposal.",
+  });
+  const partialStatus = await u2.workStatus(run);
+  assert.equal(partialStatus.revision, 1);
+  assert.equal(partialStatus.unconsumedProposalCount, 1);
+  assert.equal(partialStatus.unaccountedCandidateCount, 1);
+  await assert.rejects(
+    u2.fail({ ...run, reasonCode: "incomplete-canonical-accounting", message: "Do not terminalize a healthy partial merge." }),
+    /Partial canonical merge is resumable \(1 proposals and 1 candidates remain\)/,
+  );
+  assert.equal((await u2.workStatus(run)).terminalStatus, "active");
+
+  await u2.fail({ ...run, reasonCode: "merge-recovery-unavailable", message: "Simulate a genuinely unavailable merge host before checkpoint recovery." });
+  assert.equal((await u2.workStatus(run)).terminalStatus, "failed");
+  const recovered = await u2.recoverFailedRun({ ...run, reason: "Continue from the verified partial canonical checkpoint without repeating proposal work." });
+  const resumedRun = { outputRoot: recovered.outputRoot, runId: recovered.runId, coordinatorGrant: recovered.coordinatorGrant };
+  assert.equal(recovered.runId, run.runId, "failed-run recovery keeps durable semantic identities and hashes in the same run");
+  assert.equal(recovered.authorizationEpoch, 1);
+  await assert.rejects(service.status(run), /Invalid coordinator grant/);
+  await assert.rejects(u2.readWorkerMergeRequirements({ ...firstMerger, proposalHashes: [persisted[1]!.proposal.contentHash] }), /prior run authorization epoch/);
+  const recoveryExtractor = await service.assignExtractor({ ...resumedRun, taskId: "partial-recovery-extractor", unitIds: [units[0]!.unitId] });
+  await service.revokeAssignment({ ...resumedRun, taskId: recoveryExtractor.taskId });
+  assert.equal((await plans.status({ ...resumedRun, maxItems: 100 })).readyForMerge, true, "verified plan, proposals, and reconciliation state survive recovery");
+
+  const secondMerger = await service.assignWorker({ ...resumedRun, taskId: "partial-merger-second", role: "merger", planHash: plan.planHash });
+  assert.deepEqual(secondMerger.proposalHashes, [persisted[1]!.proposal.contentHash]);
+  await u2.commitWorkerBatchReceipt({
+    ...secondMerger,
+    proposalHashes: [persisted[1]!.proposal.contentHash],
+    readSet: [{ artifactId: persisted[1]!.artifactId, contentHash: null }],
+    proposalAccepts: [{ proposalHash: persisted[1]!.proposal.contentHash, artifactIds: [persisted[1]!.artifactId] }],
+    rationale: "Consume the remaining planned proposal with a fresh merger assignment.",
+  });
+  const complete = await u2.workStatus(resumedRun);
+  assert.equal(complete.revision, 2);
+  assert.equal(complete.unconsumedProposalCount, 0);
+  assert.equal(complete.unaccountedCandidateCount, 0);
+  await assert.rejects(service.assignWorker({ ...resumedRun, taskId: "partial-merger-empty", role: "merger", planHash: plan.planHash }), /no unconsumed proposals/);
 });

@@ -20,6 +20,8 @@ After preflight, the parent calls exactly one run-creation tool:
 
 Do not let a coordinator call begin and do not call begin again between phases or after interruption. Keep `outputRoot`, `runId`, and `coordinatorGrant` only in the parent's live context. The grant is transient authority for phase launches; never write it into a facility recipe, prompt template, transcript summary, audit field, or import artifact.
 
+If typed status reports `failed`, do not begin another run or repeat completed stages. The parent may call `mem_import_recover` with current coordinator authority, retain the returned rotated grant, and launch a fresh coordinator for the first ledger-derived incomplete phase. Recovery keeps the same run ID, invalidates all prior worker grants through a new authorization epoch, and preserves verified normalization, extraction, plan, proposal, identity, and canonical transaction artifacts. A `finalized` run cannot be recovered.
+
 Build each coordinator launch envelope only after the begin result is available, and include the authority in the coordinator's first task from the start—never launch a coordinator first and send `coordinatorGrant` in a later message. The live envelope contains exactly the dynamic handoff fields:
 
 ```text

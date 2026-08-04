@@ -19,7 +19,7 @@ Make multi-session chat feel consistent over time: if the agent invents or learn
 - persist memory in selectable modes, including transcript and qmd-based flows
 - support session restarts, recall commands, ignore/tombstone commands, and memory inspection
 - support agent-driven interactive-shell playtesting
-- provide `mem-import`, the default agent-led, acceptance-gated pipeline for provenance-rich world libraries, plus an explicitly invoked legacy `world-import` CLI
+- provide `mem-import`, the default agent-led, acceptance-gated pipeline for provenance-rich world libraries, including same-run recovery from durable failed checkpoints, plus an explicitly invoked legacy `world-import` CLI
 - expose requested generated Markdown trees and raw JSON artifact trees through separate temporary, Tailscale-only browser reviewers
 
 ## Design principle
@@ -62,3 +62,5 @@ For project commands that may run for a while or emit useful streaming output, u
 ## Status
 
 Memchat is still an experiment: the current emphasis is a small, inspectable CLI plus swappable memory behavior, not a polished end-user product.
+
+The full-corpus mem-import milestone was reached on 2026-08-03: a 13-unit *Alice's Adventures in Wonderland* run recovered in place from a partial failed merge, reused its completed extraction/proposal/reconciliation work, and finalized with 28/28 proposals consumed, 183/183 candidates accounted, and no conflicts. See the [milestone report](docs/evaluations/2026-08-03-alice-full-mem-import-milestone.md).

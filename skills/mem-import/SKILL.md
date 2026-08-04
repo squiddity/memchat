@@ -5,7 +5,7 @@ description: Import a book or series into a provenance-rich world library with b
 
 # Mem Import
 
-Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, identity packets, canonical transactions, reviews, checks, and the final run record are authoritative. Worker and coordinator prose is only a receipt.
+Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, identity packets, canonical transactions, reviews, checks, and the final run record are authoritative. Worker and coordinator prose is only a receipt. This contract has completed a full 13-unit Alice import, including same-run recovery from a partial failed merge through reviewed terminal finalization; see the [milestone report](../../docs/evaluations/2026-08-03-alice-full-mem-import-milestone.md).
 
 ## 1. Choose your role
 
@@ -24,7 +24,7 @@ At phase startup, reconstruct inputs by calling the typed status, manifest, cont
 
 Assignment results contain the complete worker bootstrap and exact semantic `tools` array. Pass both verbatim to the selected facility with the chosen model/thinking setting. Require the exact semantic profile, apart from documented lifecycle controls, and record the strongest lifecycle/tool evidence the facility exposes. Never derive observed evidence from the assignment or worker prose. If the facility cannot enforce `assignment.tools`, call `mem_import_fail` and stop.
 
-After launching a worker, **end the turn and remain idle** for push-delivered completion. Never poll merely to detect completion, schedule an ordinary wake-up, or launch a child to wait, sleep, monitor, say “done,” or keep the coordinator alive. Only a genuine external deadline without native completion may justify a timer. Wait/helper children invalidate the run.
+For independent work, form a bounded wave and launch only those assigned semantic workers, one launch per tool-result turn. After the final launch in the wave, **end the turn and remain idle** for push-delivered completion. Never do unrelated work between launches, poll merely to detect completion, schedule an ordinary wake-up, or launch a child to wait, sleep, monitor, say “done,” or keep the coordinator alive. Only a genuine external deadline without native completion may justify a timer. Wait/helper children invalidate the run.
 
 Read the selected facility's adapter reference only for invocation details. A recipe never replaces live assignment, dispatch, lifecycle, and durable-effect checks.
 
@@ -33,7 +33,7 @@ Read the selected facility's adapter reference only for invocation details. A re
 Read [coordinator decisions](references/workflow.md), then perform one phase:
 
 1. **Extraction:** assess run/manifest status, normalize if needed, dispatch [extractors](references/extractor-role.md), and exit only after the extraction ledger is complete.
-2. **Proposal/reconciliation:** assess the complete flattened candidate inventory, persist one model-authored identity-aware cluster plan, dispatch artifact-scoped [proposers](references/proposal-role.md) and required [reconcilers](references/reconciler-role.md), and exit only when plan status is ready for merge with complete, non-duplicated proposal disposition coverage.
+2. **Proposal/reconciliation:** assess the complete flattened candidate inventory, persist one model-authored identity-aware cluster plan, dispatch artifact-scoped [proposers](references/proposal-role.md) and required [reconcilers](references/reconciler-role.md) in bounded independent waves, and exit only when plan status is ready for merge with complete, non-duplicated proposal disposition coverage.
 3. **Merge:** independently require ready cluster-plan status, dispatch one plan-scoped [merger](references/merger-role.md), and exit only after proposal consumption and canonical candidate accounting are complete with no blocking conflict.
 4. **Review/finalization:** assess current canonical controls, dispatch a [reviewer](references/reviewer-role.md), select any scoped [repair](references/repairer-role.md), require a current post-repair review, run checks, and finalize.
 
@@ -56,7 +56,7 @@ Success requires all of the following:
 - `mem_check_run` reports no errors, including no unresolved reviewer-action diagnostic;
 - `mem_import_finalize` writes a successful schema-v2 `stages/import-run.json`, and fresh work status reports `terminalStatus: "finalized"`.
 
-A failure is complete only after `mem_import_fail` persists the terminal reason. Never report success from worker or coordinator prose alone.
+A failure is complete only after `mem_import_fail` persists the terminal reason. Never report success from worker or coordinator prose alone. Failed runs remain recoverable checkpoints: `mem_import_recover` reactivates the same run with rotated coordinator authority and a fresh worker-authorization epoch, preserving verified completed stages while requiring fresh assignments only for incomplete work. Finalized runs remain permanently terminal.
 
 ## Reference map
 

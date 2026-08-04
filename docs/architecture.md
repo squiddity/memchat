@@ -58,6 +58,10 @@ Implemented today:
 - vendored Lemonade provider discovery
 - pluggable `none`, `transcript`, and `qmd`-family memory modes
 - session-aware recall and interactive memory inspection commands
+- an assignment-bound, provenance-rich `mem-import` pipeline with typed durable phase ledgers, identity-aware planning, canonical transactions, review/repair, and terminal finalization
+- same-run recovery of failed imports by rotating coordinator authority and worker authorization epoch while preserving verified completed stages
+
+The full-corpus execution milestone was validated on 2026-08-03 with a 13-unit Alice import: 28/28 proposals and 183/183 candidates reached canonical accounting, a partial failed merge resumed without repeating earlier semantic work, and review/repair finalized revision 10 with no conflicts or errors. See [the evaluation report](evaluations/2026-08-03-alice-full-mem-import-milestone.md).
 
 ## Near-term roadmap
 
@@ -66,3 +70,4 @@ Implemented today:
 3. compare hardwired, skill-based, and hybrid retrieval fairly
 4. integrate richer qmd-backed retrieval/indexing where useful
 5. harden tool access for qmd skill usage
+6. improve mem-import narrative-surface classification, style citation density, provenance specificity, and complete usage retention now that full-corpus execution/recovery is proven

@@ -1,5 +1,7 @@
 # Alice Chapters I–III reviewer-enforcement rerun — 2026-07-28
 
+> **2026-08-03 update:** The full 13-unit Alice import subsequently reached reviewed terminal finalization and proved same-run recovery from a partial failed merge. See [the full-corpus milestone report](2026-08-03-alice-full-mem-import-milestone.md). This report remains the bounded reviewer-enforcement baseline.
+
 ## Scope
 
 This evaluation reran `.memchat-agent-testing/fixtures/alice-chapters-1-3.epub` after implementing:

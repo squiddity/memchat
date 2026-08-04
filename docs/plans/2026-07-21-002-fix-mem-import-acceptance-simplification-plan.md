@@ -70,7 +70,7 @@ Acceptance will evaluate tool transport, schema routing, authorization, persiste
 - **U4:** complete for the assignment-bound Pi SDK host adapter, exact observed profile validation, and lifecycle evidence.
 - **U5:** complete for normalize, extractor, proposer, reconciler, merger, reviewer, and repairer probes.
 - **U6:** complete for skill, acceptance reference, helper-tool, workflow, Pi/Herdr guidance, and Pi SDK adapter guidance.
-- **U7:** deterministic integration/pressure suites and focused model-backed acceptance are green; the separate Alice semantic evaluation remains pending.
+- **U7:** deterministic integration/pressure suites and focused model-backed acceptance are green; the separate Alice semantic evaluation reached full-corpus terminal success on 2026-08-03 and remains independent of installation acceptance.
 
 ---
 
@@ -108,7 +108,7 @@ A three-chapter Alice import is useful for identity consolidation, narrative qua
 ### Runtime requirements
 
 - **R1. Assignment-bound dispatch:** Semantic children are launched only from a live assignment. The host derives task identity, bootstrap, role, and exact tool allowlist from that assignment rather than accepting arbitrary coordinator-selected tools.
-- **R2. Terminal monotonicity:** After `mem_import_fail` or successful terminal finalization, new assignments, worker submissions, reviews, leases, merge/repair mutations, and further finalization attempts are rejected without durable effects.
+- **R2. Terminal monotonicity and explicit recovery:** After `mem_import_fail`, new assignments, worker submissions, reviews, leases, merge/repair mutations, and finalization reject without durable effects until an authorized recovery rotates coordinator/worker authority. Successful finalization remains permanently terminal.
 - **R3. No-op rejection:** A canonical transaction that changes no semantic artifacts, candidate accounting, identity/conflict state, or review-relevant controls does not create a transaction or revision.
 - **R4. Fresh retry identity:** A revoked, failed, cancelled, expired, or completed semantic task is never reused for a new effective attempt. A retry receives a fresh task ID and explicit lineage.
 - **R5. Compact effect discovery:** Coordinators can page authoritative assignment, dispatch, proposal, identity, review, and mutation effect summaries, including immutable hashes and terminal outcomes, without filesystem access or worker prose.
@@ -379,6 +379,8 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 
 ### U7. Retain deterministic integration and separate Alice evaluation
 
+**Status:** Complete for deterministic integration and full-corpus execution evidence. The 2026-08-03 Alice run finalized with complete proposal/candidate accounting and same-run checkpoint recovery; see [the milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Alice remains evaluation evidence, never installation acceptance.
+
 - Add one fixture-backed deterministic full-path test.
 - Keep scale/recovery tests deterministic.
 - Reclassify the three-chapter Alice excerpt and npm script as integration/evaluation support, not acceptance.
@@ -396,7 +398,7 @@ Use this inventory in real corpus coordination as well as acceptance validation.
 |---|---|
 | Fixture integrity | Tracked hashes match; fixtures contain no authority, host, timestamp, or machine-path data. |
 | Repeated materialization | Two fresh roots produce equivalent semantic prerequisites and expected call bodies after runtime placeholders are excluded. |
-| Terminal failure guard | After `mem_import_fail`, assignment, extraction/proposal/identity/review submission, lease, merge, repair, and finalization reject with no new effects. |
+| Failed checkpoint guard/recovery | After `mem_import_fail`, semantic mutation rejects with no new effects until authorized `mem_import_recover` rotates coordinator authority and worker epoch; verified completed stages remain reusable. |
 | Finalized guard | The same mutation surfaces reject after successful finalization. |
 | No-op transaction | Same-state accept/upsert creates no transaction or revision; meaningful accounting/conflict changes still commit. |
 | Weighted limits | 50 accepts pass and 51 fail; 12 synthesized changes pass and 13 fail; 50+12 mixed passes; 51 proposal hashes fail through every path. |

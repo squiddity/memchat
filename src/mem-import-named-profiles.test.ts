@@ -119,7 +119,7 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
       assert.equal(tools.some((tool) => tool === "mem_import_begin" || tool === "mem_import_begin_compendium"), false);
       if (adapter === "pi-herdr-subagents") {
         assert.equal(fields.spawning, "true");
-        assert.equal(fields["auto-exit"], "false");
+        assert.equal(fields["auto-exit"], "true");
         assert.equal(fields["session-mode"], "standalone");
         assert.equal(fields.skills, undefined);
       } else {
@@ -167,6 +167,20 @@ test("named profiles leave task completion behavior to the subagent facility", a
       const { body } = parseFlatProfile(await readFile(profilePath(profile, adapter), "utf8"));
       assert.doesNotMatch(body, /Completion contract:|when (?:this phase|your assigned work) is complete|summarizing what you accomplished/);
     }
+  }
+});
+
+test("proposal coordinator profiles bound waves and atomic reconciliation sets", async () => {
+  for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
+    const coordinator = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.phase === "proposal")!, adapter), "utf8")).body;
+    assert.match(coordinator, /never create a book-wide reconciliation set/);
+    assert.match(coordinator, /waves of at most four/);
+    assert.match(coordinator, /up to four disjoint reconciliation sets in parallel/);
+    assert.match(coordinator, /within 50 proposals, 62 expected proposal artifacts, and 12 synthesized/);
+    assert.match(coordinator, /one set yields exactly one identity packet and cannot be batched/);
+    assert.match(coordinator, /never pass derived `candidateIds`, `unitIds`, or `proposalHashes`/);
+    assert.match(coordinator, /do not immediately call `mem_import_assignment_brief`/);
+    assert.match(coordinator, /treat an atomic identity-scope bound as structural/);
   }
 });
 

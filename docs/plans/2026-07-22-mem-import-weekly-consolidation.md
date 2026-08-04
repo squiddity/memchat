@@ -53,14 +53,16 @@ Completed:
 - exact named-profile launch stabilization, dispatch-gated effects, and one successful fresh four-phase tiny import;
 - explicit deferral of assignment-scoped cwd closures while trusted/local grant-v1 evaluation continues, with model-visible replay and missing cwd/session binding accepted as residual risks;
 - demand-driven proposer/merger evidence guidance plus all-role content-free read telemetry in bounded status and final-audit summaries;
-- adapter-specific post-facto Pi/Herdr usage retrieval by sanitized child identity, latest-sequence resume deduplication, portable per-session audit snapshots, explicit sidecar failure classifications, and a final synchronous live-completion refresh.
+- adapter-specific post-facto Pi/Herdr usage retrieval by sanitized child identity, latest-sequence resume deduplication, portable per-session audit snapshots, explicit sidecar failure classifications, and a final synchronous live-completion refresh;
+- same-run failed-checkpoint recovery with coordinator-grant rotation, worker authorization epochs, preserved immutable semantic stages/transactions, remaining-only planned merger assignments, and explicit permanent finalization;
+- the first full 13-unit Alice terminal success: revision 10, 28/28 proposal consumption, 183/183 candidate accounting, 155 artifacts, no conflicts/errors, and live recovery from a 26/28 partial merge.
 
 Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not acceptance evidence. See the [superseded hardening handoff](2026-07-22-mem-import-subagent-hardening-handoff.md).
 
 ## Remaining roadmap
 
 1. Let real imports accumulate small sanitized facility recipes; version-control only broadly useful examples.
-2. The bounded three-chapter evaluation is complete. Rerun it with exact host child IDs after the identified narrative/reviewer-action fixes to validate the new authoritative audit path; the tiny artifact-led validation is also complete.
+2. Full-corpus execution/recovery is complete. Improve sidecar retention so every worker/coordinator contributes authoritative usage, then rerun only when measuring residual narrative/provenance quality or the controlled legacy comparison—not to re-prove basic completion.
 3. Resume assignment-scoped closure work before adversarial/multi-tenant execution, weakly trusted remote facilities, routine duplicate-worker concurrency, cross-boundary bootstrap handling, or any process/session-bound authorization claim; a replay or duplicate-effect incident also resumes it immediately.
 4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
 
@@ -131,6 +133,12 @@ The merger made four preventable rejected commit attempts before succeeding: omi
 - removal of mem-import-owned completion wording from named profiles and launch guidance, leaving auto-exit/manual completion behavior to the selected subagent facility.
 
 The final fresh validation passes: `npm run test:mem-import` is 72/72, `npm run build` succeeds, and `git diff --check` is clean. The next semantic evaluation should start as a fresh run rather than resume the intentionally stopped run.
+
+## Full-corpus milestone (2026-08-03)
+
+Run `mir-9799774c5c67d6b78e186988` completed the current four-phase production workflow with Luna/high coordinators and workers. It initially retained four healthy canonical commits but was incorrectly terminalized at 26/28 proposals and 174/183 candidate accounting. The recovery implementation reactivated the same run, rotated authority, invalidated prior worker grants, preserved normalization/extraction/plan/proposal history, and assigned only the Alice/Gryphon remainder. Review and bounded repairs advanced revision 5 to final revision 10; final work status reports 28/28 proposals, 183/183 candidates, zero conflicts, and terminal `finalized`.
+
+See [the full milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). This completes the full-corpus execution/recovery milestone. Remaining evaluation work is quality refinement and an exact cost comparison with complete usage retention and an instrumented legacy baseline—not another proof that the pipeline can finish a book.
 
 ## Documentation authority map
 

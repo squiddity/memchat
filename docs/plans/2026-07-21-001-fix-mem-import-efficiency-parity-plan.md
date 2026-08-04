@@ -12,6 +12,8 @@ acceptance_plan: docs/plans/2026-07-21-002-fix-mem-import-acceptance-simplificat
 # Mem-import Efficiency and Legacy Parity - Plan
 
 > **Authority boundary:** This plan governs real-import orchestration, compactness, semantic quality, usage telemetry, and Alice evaluation. It does not govern installation acceptance. Normal preflight uses the brief extension-agnostic facility check in `skills/mem-import/references/acceptance.md`; the [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) retains optional maintainer conformance and runtime-safety history.
+>
+> **2026-08-03 milestone:** Full-corpus mem-import execution is proven. A 13-unit Alice run recovered in place from a partial failed merge and finalized revision 10 with 28/28 proposals, 183/183 candidate accounting, 155 artifacts, and no conflicts or errors. See the [full milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Complete usage retention and the instrumented legacy comparison remain open parts of U8.
 
 ## Goal Capsule
 
@@ -178,7 +180,7 @@ The implementation authority for these runtime safeguards and the replacement of
 - **R11. Actionable errors:** Validation failures return stable codes/paths and concise correction guidance so workers do not regenerate unchanged oversized bodies.
 - **R12. Quality parity:** Efficiency improvements must not regress lint, provenance integrity, candidate accounting, identity conflicts, narrative surfaces, or reviewer quality.
 - **R13. Assignment-bound dispatch:** A coordinator may launch semantic children only from a live assignment, with host-enforced tools exactly equal to `assignment.tools` plus adapter lifecycle controls; generic helper children cannot broaden tools.
-- **R14. Terminal-state monotonicity:** After `mem_import_fail` or terminal finalization, assignments, semantic submissions, reviews, and canonical mutations are rejected.
+- **R14. Terminal-state monotonicity with checkpoint recovery:** After `mem_import_fail`, assignments, semantic submissions, reviews, and canonical mutations reject until explicit authorized same-run recovery rotates coordinator authority and worker epoch; terminal finalization remains permanent.
 - **R15. No-op rejection:** A transaction that does not change semantic canonical state, candidate accounting, identity/conflict state, or review-relevant controls must not create a new revision.
 - **R16. Compact effect discovery:** Coordinators can discover durable proposal/identity/review effect hashes and their authoritative task/dispatch status through bounded typed tools without filesystem helpers or worker prose.
 
@@ -396,7 +398,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 ### U8. Run controlled Alice A/B evaluation
 
-- **Status:** Pending rerun. The bounded three-chapter run completed on 2026-07-25; see [the evaluation report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md). It validated accounting, identity consolidation, one-transaction merge, and demand-driven proposal/merge reads. The telemetry bridge is now implemented; rerun with exact host child identities to validate authoritative aggregation while addressing the remaining narrative/reviewer-action quality gaps.
+- **Status:** Full-corpus mem-import milestone complete; comparative A/B remains open. The 2026-08-03 13-unit run finalized after same-run checkpoint recovery with 28/28 proposals, 183/183 accounting, and no conflicts/errors; see [the milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Usage retention was partial, so exact aggregate token/cost totals correctly remain null and the instrumented legacy comparison is not yet complete. The earlier bounded three-chapter evidence remains in [the 2026-07-25 report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md).
 - **Goal:** Verify efficiency and quality after U1–U7.
 - **Controls:** Same EPUB, skill revision, coordinator/worker models, thinking settings, acceptance profile, subagent behavior, and reviewer rubric.
 - **Compare:** Current finalized baseline, compact-response mem-import, and a newly instrumented legacy run where practical.
@@ -410,7 +412,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 2. **U6 — demand-driven reads:** complete; default source/chapter rereads are constrained and bounded per-role read counts are recorded.
 3. **U7 — usage telemetry:** complete; deterministic Pi/Herdr sidecar retrieval now owns authoritative host-to-audit ingestion and live completion refresh.
 4. **Three-chapter Alice evaluation:** complete on 2026-07-25; durable results and follow-ups are in [the evaluation report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md).
-5. **U8 — controlled full Alice A/B:** address the identified narrative/reviewer-action fixes, then compare the compact protocol with the finalized baseline and an instrumented legacy run where practical.
+5. **U8 — controlled full Alice A/B:** full-corpus mem-import execution and recovery are complete; improve usage retention and residual quality warnings, then compare against an instrumented legacy run where practical.
 
 Do not rerun the retired coordinator-driven acceptance ladder. Run the focused multi-role suite only for maintainer conformance after relevant production-tool, fixture, authorization, or adapter changes; ordinary imports use a brief facility recipe/probe.
 
@@ -426,7 +428,7 @@ Do not rerun the retired coordinator-driven acceptance ladder. Run the focused m
 | Batch transaction test | Targeted 24-proposal fixture | All proposals consumed in at most six transactions. |
 | Reconstruction test | Existing transaction history tests | Compact responses do not alter immutable history or reconstruction hashes. |
 | Coverage/provenance test | Existing checks | No accounting or provenance integrity regression. |
-| Terminal-run guard test | Targeted mem-import failure fixture | After `mem_import_fail`, assignment and every semantic/canonical mutation surface reject without new effects or revisions. |
+| Failed-run recovery test | Targeted partial-merge fixture | After `mem_import_fail`, semantic mutation rejects until `mem_import_recover` rotates coordinator authority and the worker authorization epoch; verified stages remain intact and a fresh merger receives only unconsumed proposals. Finalized runs remain permanently mutation-terminal. |
 | Assignment-bound dispatch test | Herdr adapter acceptance fixture | Child tools equal the live assignment allowlist plus lifecycle controls; unassigned shell/helper launches cannot count as semantic dispatch. |
 | No-op transaction test | Targeted merge fixture | Repeated same-content operations do not create a new revision or transaction receipt. |
 | Coordinator effect inventory test | Large bounded fixture | Proposal/identity/review/effect hashes are discoverable without filesystem access and responses remain below 10 KB. |
