@@ -1,8 +1,10 @@
 # Mem-import weekly plan consolidation
 
+> **Historical/non-product status:** This file is a preserved roadmap and decision record, not runtime authority or an installation contract. Its historical handoffs and plan references do not require their old commands, paths, or benchmarks to remain available. The controlled legacy cost A/B is waived, no new legacy run is required, and the [legacy cleanup feature handoff](2026-08-04-mem-import-legacy-cleanup-feature-handoff.md) replaces parity as cleanup input.
+
 ## Purpose
 
-This index resolves overlap among the July 20–22 mem-import plans. It is the current roadmap map, not a replacement for their detailed designs.
+This index resolves overlap among the July 20–22 mem-import plans. It is a historical roadmap map, not a replacement for their detailed designs or current production guidance.
 
 ## One boundary in three layers
 
@@ -22,7 +24,7 @@ After brief acceptance, the parent launches one corpus coordinator. Real workers
 
 ### 3. Integration, quality, and efficiency evaluation
 
-**Authority:** [Efficiency and Legacy Parity](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
+**Historical decision record:** [Efficiency and Legacy Parity](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md). Its cost A/B is waived and no new legacy run is required; use the cleanup feature handoff for legacy retirement.
 
 Deterministic tests cover cross-stage compatibility, authorization, concurrency, scale, reconstruction, checks, and finalization. Alice evaluations separately measure semantic quality, identity consolidation, coordinator behavior, transactions, duration, and token usage. Evaluation results do not create acceptance receipts.
 
@@ -59,14 +61,22 @@ Completed:
 
 Historical DeepSeek coordinator-driven attempts are rejected diagnostics, not acceptance evidence. See the [superseded hardening handoff](2026-07-22-mem-import-subagent-hardening-handoff.md).
 
-## Remaining roadmap
+## Cleanup completion
+
+The legacy-surface cleanup is complete. Root-level owned Markdown projection, retained-source provenance links, inline traversal, canonical link lint, symlink refusal, and nested-directory migration refusal are active under `mem-import`; deleted runtime docs and import surfaces are not authority or compatibility shims. The controlled legacy cost A/B remains waived and no benchmark rerun is required.
+
+The completed cleanup baseline passed `rm -rf dist && npm run build`, focused path/stage/projection/lint tests, `npm run test:cleanup`, `npm run test:mem-import`, `npm test`, `npm pack --dry-run`, and `git diff --check`.
+
+## Remaining roadmap: post-cleanup quality
 
 1. Let real imports accumulate small sanitized facility recipes; version-control only broadly useful examples.
-2. Full-corpus execution/recovery is complete. Improve sidecar retention so every worker/coordinator contributes authoritative usage, then rerun only when measuring residual narrative/provenance quality or the controlled legacy comparison—not to re-prove basic completion.
-3. Resume assignment-scoped closure work before adversarial/multi-tenant execution, weakly trusted remote facilities, routine duplicate-worker concurrency, cross-boundary bootstrap handling, or any process/session-bound authorization claim; a replay or duplicate-effect incident also resumes it immediately.
-4. Remove legacy `world-import` surfaces under the older orchestration cleanup plan when its migration gate is reached.
+2. Improve sidecar retention when useful for future mem-import measurements, without rerunning to re-prove basic completion.
+3. Improve hyperlink traversal, narrative-surface classification, style citation density, provenance specificity, retrieval usefulness, and maintained-compendium update guidance.
+4. Add stronger consistency fixtures and optional longitudinal quality evaluation outside installation acceptance.
 
-## New-session handoff (2026-07-28)
+## Historical new-session handoff snapshot (2026-07-28)
+
+> This dated handoff is preserved for traceability and is not an active instruction. It predates the 2026-08-03 full-corpus milestone; do not rerun a legacy benchmark or treat its U8 gate as current product authority.
 
 Start from pushed memchat commit `75e663e` on `feat/world-import-model-led-subagents-u0`, then inspect the uncommitted working tree before editing. The pushed commit implements reviewer-action enforcement, narrative/salient-object guidance, projection-aware pre-final checks, merger accounting guidance, tests, and the successful strong-model evaluation report at `docs/evaluations/2026-07-28-alice-three-chapter-review-enforced-rerun.md`.
 
@@ -102,6 +112,8 @@ Model: `openrouter/deepseek/deepseek-v4-flash`, high thinking, fixture `.memchat
 
 ### Handoff implementation progress (2026-07-28)
 
+> **Superseded historical snapshot:** The dated implementation checklist below is retained for traceability. It is not an active handoff; the cleanup and validation it describes are complete, and the cleanup completion section above is current.
+
 Completed in the current uncommitted working tree:
 
 1. New worker transactions bind deterministic semantic controls (actor task/role, assignment scope digest, proposals/identity packets, read set, stored operations, dispositions, conflict/repair scope, rationale, extraction and parent controls) into canonical `contentHash` through `transactionControlHash`. Runtime run IDs, timestamps, token hashes, and fences remain in the exact receipt/effect hash but are excluded from semantic hashing so fresh fixture materializations remain stable.
@@ -110,14 +122,10 @@ Completed in the current uncommitted working tree:
 4. Fault/restart tests cover interrupted merge and repair effects, missing canonical/identity projections, compendium-prior-run recovery, idempotency, malformed run/actor/role/assignment/lifecycle/hash/parent controls, wrong receipt directory, missing pre-checkpoint history, corrupted snapshots, orphan effects, missing dispatch, active writer synchronization, and blocked finalization.
 5. The centralized Herdr completion contract now gives one direct-result example and forbids “I will call,” “Let me call,” and “Now calling” narration. Generated coordinator/worker profiles were regenerated; disposable named preflight profiles carry the same rule.
 6. Reviewer authority, workflow, and generated static reviewer profiles now make explicitly requested missing/materially incomplete synopsis, timeline, chapter/scene guide, salient-object, and cross-unit identity coverage `repair`, not `info`.
-7. `mem_import_record_session` is registered with a typed parent schema and routes to `MemImportU2Service.recordCoordinatorSession`; a source-contract test protects the registration. The currently running parent session loaded its catalog before that registration and cannot prove live exposure; verify it after restart.
+7. `mem_import_record_session` is registered with a typed parent schema and routes to `MemImportCanonicalService.recordCoordinatorSession`; a source-contract test protects the registration. The currently running parent session loaded its catalog before that registration and cannot prove live exposure; verify it after restart.
 8. Acceptance expected hashes were deliberately updated for the new deterministic transaction-control binding. The Luna medium recovery audit's lease, synchronization, projection-order, checkpoint, effect-run, and revoked-dispatch findings were addressed; the DeepSeek Flash profile audit found no blockers. `npm run build` passes, `npm run test:mem-import` passes 69/69, and `git diff --check` passes at this checkpoint.
 
-Remaining work, in order:
-
-1. Review the final recovery/profile diff, force-add the intentionally ignored `.pi/agents/facility-preflight-{coordinator,reader}.md` files, rerun build/tests/diff checks after the audit fixes, then commit and push.
-2. Start a fresh parent session and confirm `mem_import_record_session` appears in the live tool catalog; do not use the direct service fallback in the next run.
-3. Rerun the same DeepSeek Flash three-chapter import. Require exact named-profile preflight, all four informative terminal `subagent_done` results without intent narration, complete canonical transaction/effect/dispatch correspondence, requested narrative surfaces, current clean post-repair review, complete telemetry, and terminal `finalized`. Do not begin U8 full-Alice A/B until this passes.
+The dated implementation checklist was completed and superseded by the full-corpus milestone and cleanup. Its historical commit/push and rerun instructions are not current actions; no legacy benchmark or new full-corpus proof is required.
 
 ## Handoff continuation (2026-07-31)
 
@@ -138,7 +146,7 @@ The final fresh validation passes: `npm run test:mem-import` is 72/72, `npm run 
 
 Run `mir-9799774c5c67d6b78e186988` completed the current four-phase production workflow with Luna/high coordinators and workers. It initially retained four healthy canonical commits but was incorrectly terminalized at 26/28 proposals and 174/183 candidate accounting. The recovery implementation reactivated the same run, rotated authority, invalidated prior worker grants, preserved normalization/extraction/plan/proposal history, and assigned only the Alice/Gryphon remainder. Review and bounded repairs advanced revision 5 to final revision 10; final work status reports 28/28 proposals, 183/183 candidates, zero conflicts, and terminal `finalized`.
 
-See [the full milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). This completes the full-corpus execution/recovery milestone. Remaining evaluation work is quality refinement and an exact cost comparison with complete usage retention and an instrumented legacy baseline—not another proof that the pipeline can finish a book.
+See [the full milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). This completes the full-corpus execution/recovery milestone. The exact legacy cost comparison is now waived. Remaining evaluation work is mem-import quality refinement, including hyperlink traversal, narrative-surface classification, and provenance specificity; see the [legacy cleanup feature handoff](2026-08-04-mem-import-legacy-cleanup-feature-handoff.md).
 
 ## Documentation authority map
 

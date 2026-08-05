@@ -1,5 +1,8 @@
 # Mem-import profile launch stabilization
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 **Date:** 2026-07-23  
 **Status:** stabilization and focused tiny-import acceptance complete; closure follow-up deferred by explicit risk acceptance
 **Scope:** generic `pi-herdr-subagents` launch reliability plus mem-import role prompt/profile stabilization

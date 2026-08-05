@@ -4,6 +4,9 @@ date: 2026-07-16
 status: concluded; Herdr child tool allowlist confirmed, extension isolation remains a non-blocking future validation
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # Child extension provenance follow-up
 
 ## Context

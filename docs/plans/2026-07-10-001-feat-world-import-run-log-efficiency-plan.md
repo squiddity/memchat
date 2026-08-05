@@ -1,12 +1,16 @@
 ---
 title: "World Import Run Log Efficiency and Model Tool Discipline - Plan"
 type: feat
+status: historical
 date: 2026-07-10
 artifact_contract: ce-unified-plan/v1
-artifact_readiness: implementation-ready
+artifact_readiness: historical-record
 product_contract_source: run-observation
-execution: code
+execution: historical-analysis
 ---
+
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
 
 # World Import Run Log Efficiency and Model Tool Discipline - Plan
 

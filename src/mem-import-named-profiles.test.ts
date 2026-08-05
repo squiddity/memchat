@@ -184,9 +184,15 @@ test("proposal coordinator profiles bound waves and atomic reconciliation sets",
   }
 });
 
-test("U6 proposer and merger profiles require demand-driven evidence reads", async () => {
+test("Proposer and merger profiles require demand-driven evidence reads", async () => {
   for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
     const proposer = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === "proposer")!, adapter), "utf8")).body;
+    assert.match(proposer, /description\/capsule/);
+    assert.match(proposer, /standalone summary/);
+    assert.match(proposer, /richer supported sections/);
+    assert.match(proposer, /progressive disclosure/);
+    assert.match(proposer, /group-appropriate details/);
+    assert.match(proposer, /provenance/);
     assert.match(proposer, /read its exact candidate IDs directly/);
     assert.match(proposer, /do not call extraction inventory first/);
     assert.match(proposer, /Candidate title, payload, metadata, and provenance are sufficient/);
@@ -198,6 +204,12 @@ test("U6 proposer and merger profiles require demand-driven evidence reads", asy
     assert.match(merger, /call `mem_merge_requirements` with exactly that subset before building the transaction/i);
     assert.match(merger, /Prefer grouped `proposalAccepts`/);
     assert.match(merger, /never put `proposalHash` on an upsert/);
+    assert.match(merger, /exact final `canonicalId`/);
+    assert.match(merger, /never leave a provisional ID/);
+    assert.match(merger, /standalone retrieval quality/);
+    assert.match(merger, /protected existing Markdown links/);
+    assert.match(merger, /`related` deduplicated and complementary/);
+    assert.match(merger, /both directions/);
     assert.match(merger, /Call `mem_merge_validate`, fix every issue/);
   }
 });
@@ -208,6 +220,29 @@ test("reviewer profiles make requested narrative omissions repair-level", async 
     assert.match(reviewer, /dedicated synopsis, source-ordered timeline, chapter\/scene guide/);
     assert.match(reviewer, /report it as `repair`, not `info`/);
     assert.match(reviewer, /falsely says those units were unavailable/);
+  }
+});
+
+test("proposer, reviewer, and repairer profiles preserve authored traversal contract", async () => {
+  for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
+    for (const role of ["proposer", "reviewer", "repairer"] as const) {
+      const body = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === role)!, adapter), "utf8")).body;
+      assert.match(body, /\[\[artifact-id\|reader-facing label\]\]/);
+      assert.match(body, /aliases(?:\/| and |,?\s*)possessives/i);
+      assert.match(body, /pronouns/);
+      assert.match(body, /ambiguous nouns/);
+      assert.match(body, /self-links/);
+      assert.match(body, /existing Markdown links/);
+      assert.match(body, /URLs/);
+      assert.match(body, /code/);
+      assert.match(body, /provenance quotes/);
+      assert.match(body, /`related`/);
+      assert.match(body, /deduplicated/);
+      assert.match(body, /(?:both directions|bidirectional|reciprocal)/i);
+    }
+    const reviewer = parseFlatProfile(await readFile(profilePath(MEM_IMPORT_NAMED_PROFILES.find((item) => item.role === "reviewer")!, adapter), "utf8")).body;
+    assert.match(reviewer, /material semantic retrieval\/traversal problems/);
+    assert.match(reviewer, /cannot infer every missed plain-text link/);
   }
 });
 

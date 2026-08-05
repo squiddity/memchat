@@ -4,8 +4,8 @@ import { isAbsolute, join, normalize, resolve } from "node:path";
 import { MemImportIdentityService, canonicalHash } from "./identity-service.js";
 import { MemImportProposalService } from "./proposal-service.js";
 import { MEM_IMPORT_ROLE_TOOLS, MemImportService, type AssignmentRole } from "./service.js";
-import { MemImportU2Service, type ReviewPacket } from "./u2-service.js";
-import type { SourceManifestEntry, StageEnvelope, WorldImportGroup } from "../world-import/types.js";
+import { MemImportCanonicalService, type ReviewPacket } from "./canonical-service.js";
+import type { SourceManifestEntry, StageEnvelope, MemImportGroup } from "./contracts.js";
 
 export type AcceptanceProbe = "normalize" | AssignmentRole;
 
@@ -23,7 +23,7 @@ type ExtractionSemantic = {
   version: 1;
   candidates: Array<{
     id: string;
-    group: WorldImportGroup;
+    group: MemImportGroup;
     title: string;
     startBlock: number;
     endBlock: number;
@@ -35,7 +35,7 @@ type ProposalSemantic = {
   version: 1;
   artifacts: Array<{
     id: string;
-    group: WorldImportGroup;
+    group: MemImportGroup;
     type?: string;
     title: string;
     description: string;
@@ -121,7 +121,7 @@ type MaterializerServices = {
   base?: MemImportService;
   proposals?: MemImportProposalService;
   identities?: MemImportIdentityService;
-  canonical?: MemImportU2Service;
+  canonical?: MemImportCanonicalService;
 };
 
 function sha256(value: string | Buffer): string {
@@ -262,7 +262,7 @@ export async function materializeAcceptanceProbe(options: {
   const base = options.services?.base ?? new MemImportService();
   const proposals = options.services?.proposals ?? new MemImportProposalService(base);
   const identities = options.services?.identities ?? new MemImportIdentityService(base);
-  const canonical = options.services?.canonical ?? new MemImportU2Service(base);
+  const canonical = options.services?.canonical ?? new MemImportCanonicalService(base);
   const run = await base.begin(options.outputRoot);
   const common = {
     probe: options.probe,
@@ -441,7 +441,7 @@ export async function materializeAcceptanceProbe(options: {
   };
 }
 
-export async function releaseAcceptanceProbeLease(prepared: PreparedAcceptanceProbe, canonical = new MemImportU2Service()): Promise<void> {
+export async function releaseAcceptanceProbeLease(prepared: PreparedAcceptanceProbe, canonical = new MemImportCanonicalService()): Promise<void> {
   if (!prepared.workerLease || !prepared.assignment) return;
   await canonical.releaseWorkerLease({
     outputRoot: prepared.outputRoot,

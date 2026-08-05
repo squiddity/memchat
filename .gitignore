@@ -34,5 +34,5 @@ dist/
 .ripgreprc
 .zprofile
 .zshrc
-world-output/
+compendium-output/
 samples/

@@ -1,8 +1,8 @@
-import type { ArtifactPacket } from "./types.js";
+import type { ArtifactPacket } from "./contracts.js";
 
 export type NarrativeSurfaceKind = "synopsis" | "timeline" | "scene-guide";
 
-const SYNOPSIS_LABELS = ["plot synopsis", "corpus synopsis", "world overview", "story overview"];
+const SYNOPSIS_ALIASES = new Set(["plot synopsis", "corpus synopsis", "world overview", "story overview"]);
 const TIMELINE_LABELS = ["timeline", "story so far", "reading order"];
 const SCENE_GUIDE_LABELS = [
   "scene guide",
@@ -49,10 +49,25 @@ function matchesAny(tokens: Set<string>, labels: string[]): boolean {
   return [...tokens].some((token) => labels.some((label) => token === label || token.includes(label)));
 }
 
+function isEntitySynopsisToken(token: string): boolean {
+  return /(?:character|entity|person|place|location|thing|object) synopsis(?:$| )/.test(token) || /(?:character|entity|person|place|location|thing|object) .+ synopsis$/.test(token);
+}
+
+function matchesSynopsis(artifact: ArtifactPacket, tokens: Set<string>): boolean {
+  // Explicit corpus-level aliases are intentionally narrow. A page titled
+  // "Character Synopsis" must not satisfy the corpus synopsis gate.
+  if ([...tokens].some(isEntitySynopsisToken)) return false;
+  if ([...tokens].some((token) => SYNOPSIS_ALIASES.has(token))) return true;
+  if (artifact.group !== "facts") return false;
+  // The generic alias is retained for facts/corpus pages, including a facts
+  // page whose title is a work-specific "... Synopsis".
+  return [...tokens].some((token) => token === "synopsis" || token.endsWith(" synopsis"));
+}
+
 export function classifyNarrativeSurface(artifact: ArtifactPacket): NarrativeSurfaceKind[] {
   const tokens = tokenSet(artifact);
   const kinds: NarrativeSurfaceKind[] = [];
-  if (matchesAny(tokens, SYNOPSIS_LABELS)) kinds.push("synopsis");
+  if (matchesSynopsis(artifact, tokens)) kinds.push("synopsis");
   if (matchesAny(tokens, TIMELINE_LABELS)) kinds.push("timeline");
   if (matchesAny(tokens, SCENE_GUIDE_LABELS)) kinds.push("scene-guide");
   return kinds;

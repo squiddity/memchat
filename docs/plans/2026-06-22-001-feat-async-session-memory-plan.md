@@ -4,6 +4,9 @@ type: feat
 date: 2026-06-22
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Add async session-aware memory
 
 ## Summary

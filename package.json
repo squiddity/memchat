@@ -7,18 +7,34 @@
   "keywords": [
     "pi-package"
   ],
+  "files": [
+    "dist/index.js",
+    "dist/artifact-review-cli.js",
+    "dist/markdown-review-cli.js",
+    "dist/local-env.js",
+    "dist/memory.js",
+    "dist/model-selection.js",
+    "dist/output-coordinator.js",
+    "dist/pi-runtime.js",
+    "dist/mem-import/",
+    "src/mem-import/",
+    "extensions/",
+    "skills/",
+    "fixtures/mem-import/named-profiles/",
+    "docs/architecture.md",
+    "docs/cli.md",
+    "docs/memory-backends.md",
+    "docs/playtesting.md",
+    "docs/smoke-tests.md",
+    "README.md"
+  ],
   "bin": {
     "memchat": "dist/index.js",
-    "memchat-world-import": "dist/world-import-cli.js",
-    "memchat-world-import-helper": "dist/world-import/command-router.js",
     "memchat-markdown-review": "dist/markdown-review-cli.js",
     "memchat-artifact-review": "dist/artifact-review-cli.js"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
-    "world-import": "tsx src/world-import-cli.ts",
-    "world-import-run": "bash ./scripts/world-import-run.sh",
-    "world-import-helper": "tsx src/world-import/command-router.ts",
     "fixture:alice-excerpt": "tsx scripts/create-alice-integration-excerpt.ts",
     "conformance:mem-import": "tsx scripts/run-mem-import-focused-conformance.ts",
     "markdown-review": "tsx src/markdown-review-cli.ts",
@@ -26,7 +42,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
-    "test:mem-import": "node --import tsx --test src/mem-import-tools.test.ts src/mem-import-acceptance-fixture.test.ts src/mem-import-named-profiles.test.ts"
+    "test:mem-import": "node --import tsx --test src/mem-import-tools.test.ts src/mem-import-acceptance-fixture.test.ts src/mem-import-named-profiles.test.ts src/mem-import-projection.test.ts src/mem-import-lint.test.ts src/mem-import-checks.test.ts src/mem-import-provenance-audit.test.ts src/mem-import-source-normalizer.test.ts src/mem-import-stage-store.test.ts",
+    "test:cleanup": "node --import tsx --test src/cleanup-guards.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6",

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJson } from "../world-import/staging.js";
+import { writeJson } from "./stage-store.js";
 import { MemImportService } from "./service.js";
 
 type WorkerAuthority = { outputRoot: string; runId: string; taskId: string; grant: string };

@@ -1,9 +1,60 @@
-import { existsSync } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { WORLD_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type StagedRepairSummary, type StagedRepairVerification, type StagedReviewCheckpoint, type WorldImportGroup, type WorldImportRunAudit } from "./types.js";
+import { mkdir, open, readFile, readdir, rename, rm, lstat } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { MEM_IMPORT_GROUPS, type ArtifactPacket, type CandidateDisposition, type ManifestDiagnostic, type MemImportRunAudit, type NormalizedSourceUnit, type SourceManifest, type SourceSpanRef, type StageEnvelope, type MemImportGroup } from "./contracts.js";
+import { assertNoSymlinkedPathComponents } from "./path-safety.js";
 
-const validGroups = [...WORLD_IMPORT_GROUPS];
+const validGroups = [...MEM_IMPORT_GROUPS];
+
+function assertContainedStagePath(outputRoot: string, path: string, label: string): void {
+  const root = resolve(outputRoot);
+  const candidate = resolve(path);
+  const pathRelativeToRoot = relative(root, candidate);
+  if (pathRelativeToRoot === ".." || pathRelativeToRoot.startsWith(`..${sep}`) || pathRelativeToRoot === "") {
+    throw new Error(`${label} escapes output root: ${path}`);
+  }
+}
+
+async function readStageJson<T>(outputRoot: string, path: string, label: string): Promise<T> {
+  assertContainedStagePath(outputRoot, path, label);
+  await assertNoSymlinkedPathComponents(path, {
+    requireDirectories: true,
+    onSymlink: (component) => new Error(`Refusing symlinked ${label} path component: ${component}`),
+    onNonDirectory: (component) => new Error(`${label} path component is not a directory: ${component}`),
+  });
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) throw new Error(`Refusing symlinked ${label}: ${path}`);
+  if (!info.isFile()) throw new Error(`${label} is not a regular file: ${path}`);
+  return JSON.parse(await readFile(path, "utf-8")) as T;
+}
+
+async function readStageDirectory(outputRoot: string, path: string, label: string): Promise<string[]> {
+  assertContainedStagePath(outputRoot, path, label);
+  await assertNoSymlinkedPathComponents(path, {
+    requireDirectories: true,
+    onSymlink: (component) => new Error(`Refusing symlinked ${label} path component: ${component}`),
+    onNonDirectory: (component) => new Error(`${label} path component is not a directory: ${component}`),
+  });
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) throw new Error(`Refusing symlinked ${label}: ${path}`);
+  if (!info.isDirectory()) throw new Error(`${label} is not a directory: ${path}`);
+  const entries = await readdir(path, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const child = join(path, entry.name);
+    // Inspect every entry, not only JSON names: an unexpected symlink or
+    // directory must not be silently ignored as a future stage input.
+    await assertNoSymlinkedPathComponents(child, {
+      requireDirectories: true,
+      onSymlink: (component) => new Error(`Refusing symlinked ${label} path component: ${component}`),
+      onNonDirectory: (component) => new Error(`${label} path component is not a directory: ${component}`),
+    });
+    const childInfo = await lstat(child);
+    if (childInfo.isSymbolicLink()) throw new Error(`Refusing symlinked ${label} entry: ${child}`);
+    if (!childInfo.isFile()) throw new Error(`${label} entry is not a regular file: ${child}`);
+    if (entry.name.endsWith(".json")) files.push(entry.name);
+  }
+  return files.sort();
+}
 
 export function sourcesDir(outputRoot: string): string {
   return join(outputRoot, "sources");
@@ -19,22 +70,6 @@ export function extractionDir(outputRoot: string): string {
 
 export function mergeDir(outputRoot: string): string {
   return join(outputRoot, "stages", "merge");
-}
-
-export function checkpointsDir(outputRoot: string): string {
-  return join(outputRoot, "stages", "checkpoints");
-}
-
-export function checkpointReviewPath(outputRoot: string, checkpointId: string, iteration: number): string {
-  return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.review.json`);
-}
-
-export function checkpointRepairPath(outputRoot: string, checkpointId: string, iteration: number): string {
-  return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.repair.json`);
-}
-
-export function checkpointVerifyPath(outputRoot: string, checkpointId: string, iteration: number): string {
-  return join(checkpointsDir(outputRoot), `${checkpointId}-${String(iteration).padStart(2, "0")}.verify.json`);
 }
 
 export function manifestPath(outputRoot: string): string {
@@ -57,24 +92,32 @@ export function mergedCandidatesPath(outputRoot: string): string {
   return join(mergeDir(outputRoot), "merged-candidates.json");
 }
 
-export async function ensureWorldImportDirs(outputRoot: string): Promise<void> {
-  await mkdir(normalizedDir(outputRoot), { recursive: true });
-  await mkdir(extractionDir(outputRoot), { recursive: true });
-  await mkdir(mergeDir(outputRoot), { recursive: true });
-  await mkdir(checkpointsDir(outputRoot), { recursive: true });
+export async function ensureMemImportDirs(outputRoot: string): Promise<void> {
+  for (const directory of [normalizedDir(outputRoot), extractionDir(outputRoot), mergeDir(outputRoot)]) {
+    await assertNoSymlinkedPathComponents(directory, { requireDirectories: true });
+    await mkdir(directory, { recursive: true });
+    await assertNoSymlinkedPathComponents(directory, { requireDirectories: true });
+  }
 }
 
 export async function writeJson(path: string, value: unknown): Promise<void> {
   const directory = dirname(path);
+  // Check before mkdir as recursive mkdir would otherwise follow an existing
+  // symlinked ancestor. Check again after mkdir and immediately before both
+  // the temporary create and replacement to fail closed on a changed tree.
+  await assertNoSymlinkedPathComponents(path, { requireDirectories: true });
   await mkdir(directory, { recursive: true });
+  await assertNoSymlinkedPathComponents(path, { requireDirectories: true });
   const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    await assertNoSymlinkedPathComponents(temporaryPath, { requireDirectories: true });
     handle = await open(temporaryPath, "wx", 0o600);
     await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf-8");
     await handle.sync();
     await handle.close();
     handle = undefined;
+    await assertNoSymlinkedPathComponents(path, { requireDirectories: true });
     await rename(temporaryPath, path);
   } catch (error) {
     await handle?.close().catch(() => undefined);
@@ -84,21 +127,24 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
 }
 
 export async function writeManifest(manifest: SourceManifest): Promise<void> {
-  await mkdir(sourcesDir(manifest.outputRoot), { recursive: true });
   await writeJson(manifestPath(manifest.outputRoot), manifest);
 }
 
 export async function readManifest(outputRoot: string): Promise<SourceManifest> {
-  return JSON.parse(await readFile(manifestPath(outputRoot), "utf-8")) as SourceManifest;
+  return readStageJson<SourceManifest>(outputRoot, manifestPath(outputRoot), "manifest");
 }
 
-export async function writeImportRun(outputRoot: string, audit: WorldImportRunAudit): Promise<void> {
+export async function writeImportRun(outputRoot: string, audit: MemImportRunAudit): Promise<void> {
   await writeJson(importRunPath(outputRoot), audit);
 }
 
-export async function readImportRun(outputRoot: string): Promise<WorldImportRunAudit | undefined> {
-  if (!existsSync(importRunPath(outputRoot))) return undefined;
-  return JSON.parse(await readFile(importRunPath(outputRoot), "utf-8")) as WorldImportRunAudit;
+export async function readImportRun(outputRoot: string): Promise<MemImportRunAudit | undefined> {
+  try {
+    return await readStageJson<MemImportRunAudit>(outputRoot, importRunPath(outputRoot), "import audit");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 export async function writeNormalizedUnit(outputRoot: string, unit: NormalizedSourceUnit): Promise<void> {
@@ -106,7 +152,7 @@ export async function writeNormalizedUnit(outputRoot: string, unit: NormalizedSo
 }
 
 export async function readNormalizedUnit(outputRoot: string, unitId: string): Promise<NormalizedSourceUnit> {
-  return JSON.parse(await readFile(normalizedUnitPath(outputRoot, unitId), "utf-8")) as NormalizedSourceUnit;
+  return readStageJson<NormalizedSourceUnit>(outputRoot, normalizedUnitPath(outputRoot, unitId), "normalized source unit");
 }
 
 export async function writeExtractionStage(outputRoot: string, stage: StageEnvelope): Promise<void> {
@@ -117,9 +163,19 @@ export async function writeExtractionStage(outputRoot: string, stage: StageEnvel
 
 export async function readExtractionStages(outputRoot: string): Promise<StageEnvelope[]> {
   const dir = extractionDir(outputRoot);
-  if (!existsSync(dir)) return [];
-  const files = (await readdir(dir)).filter((name) => name.endsWith(".json")).sort();
-  return Promise.all(files.map(async (file) => JSON.parse(await readFile(join(dir, file), "utf-8")) as StageEnvelope));
+  await assertNoSymlinkedPathComponents(dir, {
+    requireDirectories: true,
+    onSymlink: (component) => new Error(`Refusing symlinked extraction stage directory path component: ${component}`),
+    onNonDirectory: (component) => new Error(`Extraction stage directory path component is not a directory: ${component}`),
+  });
+  try {
+    await lstat(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const files = await readStageDirectory(outputRoot, dir, "extraction stage directory");
+  return Promise.all(files.map((file) => readStageJson<StageEnvelope>(outputRoot, join(dir, file), "extraction stage")));
 }
 
 export async function writeMergeStage(outputRoot: string, stage: StageEnvelope): Promise<void> {
@@ -128,25 +184,7 @@ export async function writeMergeStage(outputRoot: string, stage: StageEnvelope):
 }
 
 export async function readMergeStage(outputRoot: string): Promise<StageEnvelope> {
-  return JSON.parse(await readFile(mergedCandidatesPath(outputRoot), "utf-8")) as StageEnvelope;
-}
-
-export async function writeStagedReviewCheckpoint(outputRoot: string, checkpoint: StagedReviewCheckpoint): Promise<string> {
-  const path = checkpointReviewPath(outputRoot, checkpoint.checkpointId, checkpoint.iteration);
-  await writeJson(path, checkpoint);
-  return path;
-}
-
-export async function writeStagedRepairSummary(outputRoot: string, summary: StagedRepairSummary): Promise<string> {
-  const path = checkpointRepairPath(outputRoot, summary.checkpointId, summary.iteration);
-  await writeJson(path, summary);
-  return path;
-}
-
-export async function writeStagedRepairVerification(outputRoot: string, verification: StagedRepairVerification): Promise<string> {
-  const path = checkpointVerifyPath(outputRoot, verification.checkpointId, verification.iteration);
-  await writeJson(path, verification);
-  return path;
+  return readStageJson<StageEnvelope>(outputRoot, mergedCandidatesPath(outputRoot), "merge stage");
 }
 
 export function diagnostic(level: ManifestDiagnostic["level"], message: string, path?: string): ManifestDiagnostic {
@@ -182,7 +220,7 @@ function validateProvenance(value: unknown, label: string): asserts value is Sou
 function validateArtifactPacket(value: unknown, label: string): asserts value is ArtifactPacket {
   assertRecord(value, label);
   assertString(value.id, `${label}.id`);
-  if (!validGroups.includes(String(value.group) as WorldImportGroup)) throw new Error(`${label}.group must be one of ${validGroups.join(", ")}`);
+  if (!validGroups.includes(String(value.group) as MemImportGroup)) throw new Error(`${label}.group must be one of ${validGroups.join(", ")}`);
   assertOptionalString(value.type, `${label}.type`);
   assertString(value.title, `${label}.title`);
   assertOptionalString(value.description, `${label}.description`);
@@ -203,7 +241,7 @@ function validateArtifactPacket(value: unknown, label: string): asserts value is
 function validateCandidateEnvelope(value: unknown, label: string): void {
   assertRecord(value, label);
   assertString(value.id, `${label}.id`);
-  if (!validGroups.includes(String(value.group) as WorldImportGroup)) throw new Error(`${label}.group must be one of ${validGroups.join(", ")}`);
+  if (!validGroups.includes(String(value.group) as MemImportGroup)) throw new Error(`${label}.group must be one of ${validGroups.join(", ")}`);
   assertString(value.title, `${label}.title`);
   validateProvenance(value.provenance, label);
   if (value.metadata !== undefined) assertRecord(value.metadata, `${label}.metadata`);
@@ -225,7 +263,7 @@ function validateCandidateDispositions(value: unknown): asserts value is Candida
 export function validateStageEnvelope(stage: StageEnvelope, options: { requireCandidates?: boolean; requireArtifacts?: boolean } = {}): void {
   assertRecord(stage, "stage");
   if (stage.version !== 1) throw new Error("stage.version must be 1");
-  if (!["extraction", "merge", "review"].includes(String(stage.kind))) throw new Error("stage.kind is invalid");
+  if (!["extraction", "merge"].includes(String(stage.kind))) throw new Error("stage.kind is invalid");
   if (stage.unitId !== undefined) assertString(stage.unitId, "stage.unitId");
   if (stage.sourceId !== undefined) assertString(stage.sourceId, "stage.sourceId");
   if (options.requireCandidates && !Array.isArray(stage.candidates)) throw new Error("stage.candidates must be an array");
@@ -251,6 +289,3 @@ export function validateStageEnvelope(stage: StageEnvelope, options: { requireCa
   }
 }
 
-export function stageBasename(path: string): string {
-  return basename(path).replace(/\.json$/i, "");
-}

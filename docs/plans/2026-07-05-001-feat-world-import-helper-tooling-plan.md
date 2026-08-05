@@ -5,6 +5,9 @@ date: 2026-07-05
 origin: world-output/frankenstein-deepseek import run observations
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Add world-import helper tooling for provenance refs, merge authoring, and repair loops
 
 ## Summary

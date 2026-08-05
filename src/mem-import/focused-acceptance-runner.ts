@@ -14,7 +14,7 @@ import {
 } from "./acceptance-service.js";
 import type { AssignmentBoundAcceptanceHost } from "./pi-sdk-acceptance-adapter.js";
 import { MemImportService } from "./service.js";
-import { MemImportU2Service } from "./u2-service.js";
+import { MemImportCanonicalService } from "./canonical-service.js";
 
 export const CORE_ACCEPTANCE_PROBES = ["normalize", "extractor", "proposer", "merger", "reviewer"] as const satisfies readonly AcceptanceProbe[];
 export const ALL_ACCEPTANCE_PROBES = ["normalize", "extractor", "proposer", "reconciler", "merger", "reviewer", "repairer"] as const satisfies readonly AcceptanceProbe[];
@@ -46,7 +46,7 @@ export async function runFocusedAcceptance(options: {
   for (const probe of probes) {
     const outputRoot = join(disposableRoot, `${String(probes.indexOf(probe) + 1).padStart(2, "0")}-${probe}`, "output");
     const base = new MemImportService();
-    const canonical = new MemImportU2Service(base);
+    const canonical = new MemImportCanonicalService(base);
     const prepared = await materializeAcceptanceProbe({ fixtureRoot, outputRoot, probe, services: { base, canonical } });
     let evidence: HostProbeEvidence;
     try {

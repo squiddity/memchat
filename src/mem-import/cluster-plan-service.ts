@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { extractionStagePath, mergedCandidatesPath, readManifest, readMergeStage, writeJson } from "../world-import/staging.js";
-import type { StageEnvelope } from "../world-import/types.js";
+import { extractionStagePath, mergedCandidatesPath, readManifest, readMergeStage, writeJson } from "./stage-store.js";
+import type { StageEnvelope } from "./contracts.js";
 import { canonicalHash, assertAtomicIdentityScope, assertMemImportId } from "./identity-service.js";
 import { MemImportService } from "./service.js";
 
@@ -194,7 +194,7 @@ export class MemImportClusterPlanService {
       const packet = JSON.parse(await readFile(join(proposalsRoot, file), "utf-8")) as Record<string, unknown>;
       if (packet.planHash !== plan.planHash || typeof packet.clusterId !== "string" || typeof packet.contentHash !== "string") continue;
       const { runId: packetRunId, taskId: _taskId, contentHash, submittedAt: _submittedAt, ...semantic } = packet;
-      if (packetRunId !== runId || !/^[a-f0-9]{64}$/.test(contentHash) || canonicalHash(semantic) !== contentHash) throw new Error(`Cluster ${packet.clusterId} has an invalid immutable proposal`);
+      if (packetRunId !== runId || typeof packet.id !== "string" || file !== `${packet.id}-${contentHash}.json` || !/^[a-f0-9]{64}$/.test(contentHash) || canonicalHash(semantic) !== contentHash) throw new Error(`Cluster ${packet.clusterId} has an invalid immutable proposal`);
       if (!plan.clusters.some((cluster) => cluster.id === packet.clusterId)) throw new Error(`Proposal references missing cluster ${packet.clusterId}`);
       if (typeof packet.taskId !== "string" || !(await this.base.hasCompletedExactWorkerDispatch(outputRoot, runId, packet.taskId, "proposer"))) continue;
       if (proposalByCluster.has(packet.clusterId) && proposalByCluster.get(packet.clusterId) !== contentHash) throw new Error(`Cluster ${packet.clusterId} has more than one effective proposal`);
@@ -207,7 +207,7 @@ export class MemImportClusterPlanService {
       const packet = JSON.parse(await readFile(join(identitiesRoot, file), "utf-8")) as Record<string, unknown>;
       if (packet.planHash !== plan.planHash || typeof packet.reconciliationSetId !== "string" || typeof packet.contentHash !== "string") continue;
       const { runId: packetRunId, taskId: _taskId, contentHash, submittedAt: _submittedAt, ...semantic } = packet;
-      if (packetRunId !== runId || !/^[a-f0-9]{64}$/.test(contentHash) || canonicalHash(semantic) !== contentHash) throw new Error(`Reconciliation set ${packet.reconciliationSetId} has an invalid immutable identity packet`);
+      if (packetRunId !== runId || typeof packet.id !== "string" || file !== `${packet.id}-${contentHash}.json` || !/^[a-f0-9]{64}$/.test(contentHash) || canonicalHash(semantic) !== contentHash) throw new Error(`Reconciliation set ${packet.reconciliationSetId} has an invalid immutable identity packet`);
       if (!plan.reconciliationSets.some((set) => set.id === packet.reconciliationSetId)) throw new Error(`Identity packet references missing reconciliation set ${packet.reconciliationSetId}`);
       if (typeof packet.taskId !== "string" || !(await this.base.hasCompletedExactWorkerDispatch(outputRoot, runId, packet.taskId, "reconciler"))) continue;
       if (identityBySet.has(packet.reconciliationSetId) && identityBySet.get(packet.reconciliationSetId) !== contentHash) throw new Error(`Reconciliation set ${packet.reconciliationSetId} has more than one effective identity packet`);

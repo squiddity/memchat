@@ -2,8 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { readExtractionStages, readManifest, readNormalizedUnit, writeExtractionStage, writeJson, writeManifest, writeNormalizedUnit } from "../world-import/staging.js";
-import type { SourceManifest } from "../world-import/types.js";
+import { readExtractionStages, readManifest, readNormalizedUnit, writeExtractionStage, writeJson, writeManifest, writeNormalizedUnit } from "./stage-store.js";
+import type { SourceManifest } from "./contracts.js";
 import { MemImportService, type BeginRunResult, type MemImportActorAudit } from "./service.js";
 
 export type CompendiumRunRecord = {

@@ -1,4 +1,4 @@
-import type { NormalizedSourceUnit, SourceBlock, SourceBlockKind } from "./types.js";
+import type { NormalizedSourceUnit, SourceBlock, SourceBlockKind } from "./contracts.js";
 
 export type SourceBlockInput = string | {
   text: string;

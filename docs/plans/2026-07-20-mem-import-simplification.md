@@ -1,5 +1,8 @@
 # Mem-import simplification plan
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 > **Status: implemented design input, no longer an acceptance authority.** The golden-path role/tool simplification remains relevant. Normal installation acceptance is the brief facility check in `skills/mem-import/references/acceptance.md`; the [July 21 focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) now documents optional maintainer conformance and runtime safety. Alice and full-import efficiency evaluation are governed by [the efficiency/parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
 
 ## Goal

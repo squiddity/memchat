@@ -5,6 +5,9 @@ date: 2026-07-15
 origin: follow-up review of the successful Alice staged import
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Add portable world-import invocation audit trails
 
 ## Summary

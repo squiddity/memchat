@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { canonicalHash } from "./identity-service.js";
 import { type AcceptanceProbe, type PreparedAcceptanceProbe } from "./acceptance-materializer.js";
 import { MemImportService } from "./service.js";
-import { writeJson } from "../world-import/staging.js";
+import { writeJson } from "./stage-store.js";
 
 export type AcceptanceProfile = {
   protocolVersion: number;

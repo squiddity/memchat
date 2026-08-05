@@ -5,6 +5,9 @@ date: 2026-07-14
 origin: follow-up discussion on browseable world-import output
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Resolve inline artifact links across world wiki pages
 
 ## Summary

@@ -6,7 +6,7 @@ Resolve real cross-proposal or existing-canon identity questions without mutatin
 
 ## Profile
 
-Launch a subagent with exactly `assignment.tools`. A production assignment names one immutable `planHash` and `reconciliationSetId`; the service derives the exact completed proposal hashes, plan baseline, and any bounded canonical dependencies. Legacy unplanned fixtures may still name proposal hashes directly.
+Launch a subagent with exactly `assignment.tools`. A production assignment names one immutable `planHash` and `reconciliationSetId`; the service derives the exact completed proposal hashes, plan baseline, and any bounded canonical dependencies. Direct-scope fixtures may still name proposal hashes directly.
 
 ## Steps
 

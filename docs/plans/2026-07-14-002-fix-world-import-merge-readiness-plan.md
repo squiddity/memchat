@@ -1,5 +1,8 @@
 # World-import merge readiness and bounded recovery plan
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 ## Problem
 
 Two fresh Alice imports completed extraction but did not complete merge:

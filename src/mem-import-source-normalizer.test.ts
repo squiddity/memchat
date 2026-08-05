@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { normalizeSources } from "./world-import/normalize.js";
-import { readSlice } from "./world-import/spans.js";
-import { readNormalizedUnit } from "./world-import/staging.js";
+import { normalizeSources } from "./mem-import/source-normalizer.js";
+import { readSlice } from "./mem-import/source-spans.js";
+import { readNormalizedUnit } from "./mem-import/stage-store.js";
 
 async function tempDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "memchat-world-import-"));
+  return mkdtemp(join(tmpdir(), "memchat-mem-import-"));
 }
 
 test("normalizes an HTML directory into stable units and anchors", async () => {

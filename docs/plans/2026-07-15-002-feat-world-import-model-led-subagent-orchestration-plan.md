@@ -20,9 +20,9 @@ status: archived
 - Bind semantic reviews to exact revisions and read sets, then apply accepted repairs through bounded, fenced transactions with selective review invalidation.
 - Treat legacy `world-import` as migration/reference material to be removed after useful deterministic behavior is retained under `mem-import`; do not preserve obsolete aliases, paths, vocabulary, or roadmap labels in active product surfaces.
 
-## Current authority
+## Historical authority references (not product authority)
 
-- Normal installation acceptance: [brief facility acceptance](../../skills/mem-import/references/acceptance.md).
-- Optional maintainer conformance/runtime safety: [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
-- Real-import efficiency and evaluation: [efficiency-parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
-- Current authority mapping: [weekly consolidation](2026-07-22-mem-import-weekly-consolidation.md).
+- Historical installation-acceptance reference: [brief facility acceptance](../../skills/mem-import/references/acceptance.md).
+- Historical maintainer-conformance/runtime-safety reference: [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md).
+- Historical real-import efficiency/evaluation reference: [efficiency-parity plan](2026-07-21-001-fix-mem-import-efficiency-parity-plan.md).
+- For current behavior, use the active product sources listed in [`docs/plans/README.md`](README.md).

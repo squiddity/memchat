@@ -122,9 +122,18 @@ MEMCHAT_PI_PACKAGES=pi-agent-memory npm run dev
 
 Inside the CLI, use `/plugins` to see the resolved local package paths.
 
+## Mem-import output roots and migration
+
+The host-agent `/skill:mem-import` workflow supports two explicit layouts:
+
+- **Standalone output root:** a dedicated root for one import, containing its stages, normalized source records, and root-level owned Markdown projection.
+- **Compendium root:** an existing maintained compendium root. The same root-level owned Markdown projection is the reader-facing surface; run data remains in its owned subdirectories.
+
+Projection refuses a root containing a nested retired `world/` directory, including a symlink. Review that content and manually move, archive, or remove the directory before retrying. It does not automatically delete or follow unknown files, directories, or symlinks; generated Markdown cleanup is limited to paths recorded in the ownership manifest. See the active [mem-import skill](../skills/mem-import/SKILL.md) for the workflow contract.
+
 ## More detail
 
 - backend strategy and storage layout: [`docs/memory-backends.md`](./memory-backends.md)
 - interactive shell testing flow: [`docs/playtesting.md`](./playtesting.md)
-- world import: [`docs/world-import.md`](./world-import.md)
+- compendium import: [`skills/mem-import/SKILL.md`](../skills/mem-import/SKILL.md) — host-agent workflow, bounded tools, and durable projection
 - validation commands: [`docs/smoke-tests.md`](./smoke-tests.md)

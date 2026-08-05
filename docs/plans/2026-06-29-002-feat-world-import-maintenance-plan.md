@@ -5,6 +5,9 @@ date: 2026-06-29
 origin: review of commit 87af5c6 and follow-up discussion
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Strengthen world-import guidance, evals, and iterative world updates
 
 ## Summary

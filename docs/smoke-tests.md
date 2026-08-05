@@ -164,30 +164,35 @@ Expected:
 
 If using a different configured model, replace `lemonade/Qwen3.6-35B-A3B-MTP-GGUF` with that provider/model. If the command prints `Command aborted` without an assistant response, retry once after checking the local model server; this can indicate a transient Lemonade/server-side failure rather than a memchat CLI failure.
 
-## 9. World-import targeted regression checks
+## 9. Mem-import projection and provenance checks
 
-Run these after changes to world-import emit/eval/provenance behavior:
+Run the focused deterministic suite after changes to compendium projection, source normalization, stages, lint, checks, or provenance:
 
 ```bash
-node --import tsx --test src/world-import-emit.test.ts
-node --import tsx --test src/world-import-eval.test.ts
-node --import tsx --test src/world-import.test.ts
-node --import tsx --test src/world-import-provenance-tools.test.ts
+node --import tsx --test src/mem-import-projection.test.ts
+node --import tsx --test src/mem-import-lint.test.ts
+node --import tsx --test src/mem-import-checks.test.ts
+node --import tsx --test src/mem-import-provenance-audit.test.ts
+node --import tsx --test src/mem-import-source-normalizer.test.ts
+node --import tsx --test src/mem-import-stage-store.test.ts
 npm run test:mem-import
 ```
 
-Expected:
+Expected: exact-ID inline markers resolve to portable cross-group Markdown links without rewriting protected Markdown/code/URL regions; related and unresolved-link diagnostics are deterministic; narrative surfaces are promoted in the root compendium index; retained source pages preserve local anchors and coverage; stage writes are atomic; lint/checks/provenance audits report structural failures without semantic inference. The broader mem-import suite also covers assignment-bound extraction, proposal/reconciliation, canonical transactions, review/repair, recovery, and finalization.
 
-- Emit tests confirm narrative-surface promotion appears in `world/index.md` only when declared artifacts exist and model-authored inline artifact markers resolve to portable cross-group Markdown links without rewriting code or existing links.
-- Eval tests confirm reviewer prompt dimensions include plot synopsis / timeline / source-structure / object coverage / omission visibility, post-merge review packets can request Romeo-like object repairs, parser status is explicit, prose-only score mentions are non-authoritative, and deterministic narrative risk signals remain non-failing warnings.
-- Inline-link review covers at least one entity page as well as synopsis/timeline pages; `Related` links do not substitute for traversable references in authored prose.
-- Orchestration tests confirm staged post-merge checkpoints, skipped-review reasons, repair-stage invocation fields, bounded repair attempts, and portable/redacted `stages/import-run.json` invocation records remain wired.
-- Emit tests confirm `world/log.md` projects the completed audit without duplicating prompt or credential data.
-- Provenance-tool tests confirm provenance-audit warnings still surface heading-only and sparse-citation risks.
-- Mem-import tests confirm the flattened cross-unit candidate inventory has a stale-safe snapshot cursor; immutable model-authored cluster plans enforce exact candidate partitioning and artifact-derived proposer/reconciler/merger scopes; plan status reconstructs pending/proposed clusters, required/completed reconciliation sets, and merge readiness from the ledger; proposer submission derives packet hashes and rejects incomplete candidate accounting; planned proposal/identity artifacts retain plan bindings; bounded canonical dependencies tolerate unrelated revisions while strict-baseline sets remain strict; planned merger assignment/write reject incomplete or out-of-scope work; a fresh service rebuilds status and terminal state; interrupted merge/repair effect projections recover idempotently only from fully reconstructed canonical transactions with valid actor assignment/lifecycle/scope while malformed run/task/role/hash/parent controls, missing exact dispatch, and finalization remain fail-closed; healthy partial merges reject accidental terminalization, while explicit failed checkpoints recover in the same run with rotated coordinator authority, stale prior worker grants, preserved immutable stage history, and fresh merger scope containing only unconsumed proposals; successful evidence reads aggregate content-free per assignment/role/tool telemetry into bounded status and final audit summaries; schema-v1 subagent usage snapshots persist per worker/coordinator session and aggregate by role, phase, and provider/model with explicit unavailable/null metrics; Pi/Herdr post-facto retrieval reads only content-free sidecars, retains the latest cumulative resume sequence, deduplicates child identities, survives cleanup from portable snapshots, and classifies missing/invalid/stale/unmatched records, including a post-finalization coordinator refresh; proposer/merger profiles enforce demand-driven source reopening; active guidance enforces four sequential fresh coordinator phases with typed durable startup/exit gates and current-phase-only resume; narrative guidance requires synopsis, timeline/chapter-guide, salient-object inspection, and repair-level treatment of explicitly requested missing or materially incomplete cross-unit narrative/identity surfaces; identity ambiguity, unresolved repair/critical review actions, post-repair review currency, repair scope, provenance, and exact-profile dispatch gates remain enforced.
-- The mem-import large-work fixture verifies cursor-bounded inventory responses against 500 normalized units, 5,000 extraction candidates, and 1,000 canonical artifacts; the incremental fixture retains ten distinct sequential work runs in one shared compendium projection. The transaction-pressure fixture persists twenty asynchronously prepared proposals through one serialized commit queue, content-addresses changed artifacts, creates bounded replay checkpoints, reconstructs an older review target, and proves a malformed/interrupted successor cannot replace accepted state. Rebase coverage accepts a stale transaction only when its exact artifact read set remains unchanged, while a changed dependency fails. Lifecycle coverage records a cancelled worker and its completed retry. Compendium coverage matches an edition-repeat entity to its existing canonical artifact while retaining both editions' provenance.
+## 10. Legacy cleanup guard
 
-## 10. Markdown review command smoke test
+Run the deletion-oriented cleanup guard after rebuilding `dist/`:
+
+```bash
+rm -rf dist
+npm run build
+npm run test:cleanup
+```
+
+Expected: active source, tests, skills, package metadata, user-facing docs, and built output contain no retired importer/service vocabulary, deleted legacy paths, or roadmap labels; package bins/scripts remain current.
+
+## 11. Markdown review command smoke test
 
 The automated review-command test uses a temporary fixture and loopback-only test binding; it does not prove tailnet authorization:
 
@@ -196,7 +201,7 @@ node --import tsx --test src/markdown-review-cli.test.ts
 npm run markdown-review -- --help
 ```
 
-For the required remote smoke, first ensure an emitted Markdown tree exists under `world-output/`. From an authorized Tailscale browser, have the agent find or create the current workspace's dedicated `mdts` Herdr tab and its `review` pane. Inspect it with `herdr pane read <review-pane-id> --source recent-unwrapped --lines 120`: an active viewer has a current `Markdown review URL` and no returned shell prompt. If it is absent or inactive, launch or relaunch `npm run markdown-review` in that pane with `herdr pane run <review-pane-id> "npm run markdown-review"`, then open the newly emitted URL. Verify the tree is visible, then close that exact pane and confirm the URL is unreachable. This validates tailnet access and shutdown only; do not test or configure public reachability.
+For the required remote smoke, first ensure an emitted root-level compendium Markdown tree exists under `compendium-output/`. From an authorized Tailscale browser, have the agent find or create the current workspace's dedicated `mdts` Herdr tab and its `review` pane. Inspect it with `herdr pane read <review-pane-id> --source recent-unwrapped --lines 120`: an active viewer has a current `Markdown review URL` and no returned shell prompt. If it is absent or inactive, launch or relaunch `npm run markdown-review` in that pane with `herdr pane run <review-pane-id> "npm run markdown-review"`, then open the newly emitted URL. Verify the tree is visible, then close that exact pane and confirm the URL is unreachable. This validates tailnet access and shutdown only; do not test or configure public reachability.
 
 To review an explicitly requested alternate root, use a separate `mdts` tab and a repository-contained directory such as:
 

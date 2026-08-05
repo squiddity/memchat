@@ -5,8 +5,8 @@ import { mkdir, readFile, readdir, rename, rm, stat, utimes } from "node:fs/prom
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { normalizeSources } from "../world-import/normalize.js";
-import { readSlice } from "../world-import/spans.js";
+import { normalizeSources } from "./source-normalizer.js";
+import { readSlice } from "./source-spans.js";
 import {
   extractionStagePath,
   readExtractionStages,
@@ -14,9 +14,9 @@ import {
   readNormalizedUnit,
   writeExtractionStage,
   writeJson,
-} from "../world-import/staging.js";
-import { validateStageEnvelope } from "../world-import/staging.js";
-import { WORLD_IMPORT_GROUPS, type SourceManifest, type SourceManifestEntry, type StageEnvelope, type WorldImportGroup } from "../world-import/types.js";
+} from "./stage-store.js";
+import { validateStageEnvelope } from "./stage-store.js";
+import { MEM_IMPORT_GROUPS, type SourceManifest, type SourceManifestEntry, type StageEnvelope, type MemImportGroup } from "./contracts.js";
 import { PI_HERDR_USAGE_ADAPTER, type MemImportUsageResolver, type MemImportUsageResolution } from "./pi-herdr-usage-resolver.js";
 import {
   MEM_IMPORT_ROLE_PHASE,
@@ -82,7 +82,7 @@ export const MEM_IMPORT_ROLE_TOOLS: Record<AssignmentRole, string[]> = {
   repairer: ["mem_proposal_inventory", "mem_proposal_read", "mem_identity_inventory", "mem_identity_read", "mem_merge_inventory", "mem_merge_read_artifact", "mem_source_read_worker", "mem_extraction_read_worker", "mem_merge_acquire_lease", "mem_merge_heartbeat_lease", "mem_merge_apply_repair_batch", "mem_merge_release_lease"],
 };
 
-/** Successful model-facing reads counted by U6 evidence-read telemetry. */
+/** Successful model-facing reads counted by evidence-read telemetry. */
 export const MEM_IMPORT_EVIDENCE_READ_CAPABILITIES: Record<string, MemImportCapability> = {
   mem_source_read_unit: "source:read",
   mem_extraction_read: "extraction:read",
@@ -147,6 +147,14 @@ export type MemImportEffectInventoryResult = {
   returnedItems: number;
   truncated: boolean;
   continuationCursor?: string;
+};
+
+type ValidSemanticEffect = {
+  kind: string;
+  contentHash: string;
+  path?: string;
+  acceptedAt: Date;
+  file: string;
 };
 
 export type RecoveredTransactionEffect = {
@@ -353,7 +361,7 @@ export type ExtractionInventoryEntry = {
   sourceId: string;
   packetHash: string;
   candidateCount: number;
-  groupCounts: Partial<Record<WorldImportGroup, number>>;
+  groupCounts: Partial<Record<MemImportGroup, number>>;
 };
 
 export type ExtractionInventoryResult = {
@@ -389,7 +397,7 @@ type ExtractionInventoryCursor = {
   kind: "extraction-inventory";
   afterOrder: number;
   afterUnitId: string;
-  group?: WorldImportGroup;
+  group?: MemImportGroup;
 };
 
 type ExtractionPacketCursor = {
@@ -609,6 +617,28 @@ function sameToolSet(left: string[], right: string[]): boolean {
   return left.length === right.length && [...left].sort().every((item, index) => item === [...right].sort()[index]);
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalize(item)]));
+  return value;
+}
+
+function semanticHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
+}
+
+function isCanonicalIsoTimestamp(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+function safeEffectPath(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith("stages/") && !value.split("/").includes("..") && !value.includes("\\");
+}
+
+function effectKindForRole(role: AssignmentRole): string {
+  return role === "extractor" ? "extraction" : role === "proposer" ? "proposal" : role === "reconciler" ? "identity" : role === "merger" ? "merge" : role === "reviewer" ? "review" : "repair";
+}
+
 function asIsoDate(value: string, label: string): Date {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) throw new Error(`${label} must be an ISO timestamp`);
@@ -702,7 +732,7 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || (value.lifecycleOutcome !== undefined && !["assigned", "submitted", "revoked", "superseded", "completed"].includes(String(value.lifecycleOutcome)))) {
     throw new Error("Invalid mem-import assignment record");
   }
-  // U1 records predate lifecycle evidence; treat them as live assigned records until changed by U1a operations.
+  // Records written before lifecycle evidence was added remain live assigned records until changed by lifecycle operations.
   return { ...value, lifecycleOutcome: (value.lifecycleOutcome ?? "assigned") as LifecycleOutcome, ...(value.audit === undefined ? {} : { audit: sanitizeAudit(value.audit as MemImportAssignmentAudit) }) } as MemImportAssignmentRecord;
 }
 
@@ -999,7 +1029,7 @@ export class MemImportService {
     unitId: string;
     packetHash: string;
     totalCandidates: number;
-    candidates: Array<{ id: string; group: WorldImportGroup; title: string }>;
+    candidates: Array<{ id: string; group: MemImportGroup; title: string }>;
     truncated: boolean;
     continuationCursor?: string;
   }> {
@@ -1103,8 +1133,12 @@ export class MemImportService {
     await withUnitLocks(run.outputRoot, unitIds, async () => {
       if (existsSync(assignmentPath(run.outputRoot, options.taskId))) throw new Error(`Assignment ${options.taskId} already exists; use a new taskId for a retry or superseding worker`);
       const existing = await readAssignments(run.outputRoot);
-      if (options.retriesTaskId && !existing.some((item) => item.taskId === options.retriesTaskId && item.runId === run.runId)) {
-        throw new Error(`retriesTaskId does not name an assignment in this run: ${options.retriesTaskId}`);
+      if (options.retriesTaskId) {
+        const retryTarget = existing.find((item) => item.taskId === options.retriesTaskId && item.runId === run.runId);
+        if (!retryTarget) throw new Error(`retriesTaskId does not name an assignment in this run: ${options.retriesTaskId}`);
+        if (await this.hasPersistedSemanticEffect(retryTarget) || await this.hasExactCompletedDispatch(retryTarget, run.runId)) {
+          throw new Error(`Cannot retry assignment ${retryTarget.taskId}: semantic work or an exact completed worker dispatch is already persisted`);
+        }
       }
       const liveOverlaps = existing.filter((item) => item.role === "extractor" && isLiveAssignment(item, issuedAt, run.authorizationEpoch ?? 0) && item.allowedUnitIds.some((unitId) => unitIds.includes(unitId)));
       const unapproved = liveOverlaps.filter((item) => !supersedesTaskIds.includes(item.taskId));
@@ -1246,12 +1280,8 @@ export class MemImportService {
     if (options.role === "proposer" && unitIds.length === 0) throw new Error("Proposer assignments require explicit unitIds or a planned cluster");
     for (const unitId of unitIds) if (!manifest.units.some((unit) => unit.unitId === unitId)) throw new Error(`Worker assignment references missing normalized unit ${unitId}`);
     if (options.role === "proposer" && candidateIds.length && !planHash) {
-      const stages = new Map<string, StageEnvelope>();
-      for (const unitId of unitIds) {
-        const path = extractionStagePath(run.outputRoot, unitId);
-        if (!existsSync(path)) throw new Error(`Proposer unit ${unitId} has no persisted extraction packet`);
-        stages.set(unitId, JSON.parse(await readFile(path, "utf-8")) as StageEnvelope);
-      }
+      const stages = new Map((await readExtractionStages(run.outputRoot)).filter((stage) => stage.unitId && unitIds.includes(stage.unitId)).map((stage) => [stage.unitId!, stage]));
+      for (const unitId of unitIds) if (!stages.has(unitId)) throw new Error(`Proposer unit ${unitId} has no persisted extraction packet`);
       candidateIds = [...new Set(candidateIds.map((inputId) => {
         const separator = inputId.indexOf(":");
         if (separator > 0 && separator < inputId.length - 1) {
@@ -1274,6 +1304,13 @@ export class MemImportService {
     if (options.role !== "repairer" && (checkpointIds.length > 0 || actionIds.length > 0)) throw new Error("Only repairer assignments may carry checkpoint/action scope");
 
     const issuedAt = this.now();
+    if (options.retriesTaskId) {
+      const retryTarget = (await readAssignments(run.outputRoot)).find((item) => item.taskId === options.retriesTaskId && item.runId === run.runId);
+      if (!retryTarget) throw new Error(`retriesTaskId does not name an assignment in this run: ${options.retriesTaskId}`);
+      if (await this.hasPersistedSemanticEffect(retryTarget) || await this.hasExactCompletedDispatch(retryTarget, run.runId)) {
+        throw new Error(`Cannot retry assignment ${retryTarget.taskId}: semantic work or an exact completed worker dispatch is already persisted`);
+      }
+    }
     if (planHash && (clusterId || reconciliationSetId)) {
       const prior = (await readAssignments(run.outputRoot)).filter((item) => item.runId === run.runId && item.planHash === planHash && item.clusterId === clusterId && item.reconciliationSetId === reconciliationSetId);
       for (const item of prior) {
@@ -1746,23 +1783,204 @@ export class MemImportService {
     return aggregateUsageTelemetry(records);
   }
 
-  /** Return whether one semantic effect has an active exact subagent dispatch receipt. */
-  async hasCompletedExactWorkerDispatch(outputRoot: string, runId: string, taskId: string, role: AssignmentRole): Promise<boolean> {
+  /** Read service-valid immutable semantic effects for one assignment. Effects are
+   * intentionally checked against their immutable artifact rather than trusted from
+   * the disposable effect projection alone. */
+  private async readValidSemanticEffects(assignment: MemImportAssignmentRecord, expectedOutputRoot?: string): Promise<ValidSemanticEffect[]> {
+    if (expectedOutputRoot !== undefined) {
+      try {
+        if (canonicalOutputRoot(assignment.outputRoot) !== canonicalOutputRoot(expectedOutputRoot)) return [];
+      } catch {
+        return [];
+      }
+    }
+    const directory = `${orchestrationDir(assignment.outputRoot)}/effects/${assignment.taskId}`;
+    if (!existsSync(directory)) return [];
+    const expectedKind = effectKindForRole(assignment.role);
+    let issuedAt: number;
+    let expiresAt: number;
     try {
-      const assignment = await readAssignment(outputRoot, taskId);
-      if (assignment.runId !== runId || assignment.role !== role || assignment.revokedAt || assignment.supersededAt) return false;
-      const dispatchFile = dispatchPath(outputRoot, taskId);
+      issuedAt = asIsoDate(assignment.issuedAt, "assignment.issuedAt").getTime();
+      expiresAt = asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime();
+    } catch {
+      return [];
+    }
+    const now = this.now().getTime();
+    const effects: ValidSemanticEffect[] = [];
+    for (const file of (await readdir(directory)).filter((name) => name.endsWith(".json")).sort()) {
+      let value: Record<string, unknown>;
+      try { value = JSON.parse(await readFile(join(directory, file), "utf-8")) as Record<string, unknown>; }
+      catch { continue; }
+      if (value.version !== 1 || value.runId !== assignment.runId || value.taskId !== assignment.taskId) continue;
+      if (value.kind === "mem-import-packet-effect") {
+        if (expectedKind !== "extraction"
+          || typeof value.unitId !== "string"
+          || !assignment.allowedUnitIds.includes(value.unitId)
+          || value.stagePath !== `stages/extraction/${value.unitId}.json`
+          || typeof value.packetHash !== "string"
+          || !/^[a-f0-9]{64}$/.test(value.packetHash)
+          || !Number.isInteger(value.candidateCount)
+          || !isCanonicalIsoTimestamp(value.submittedAt)) continue;
+        let submittedAt: Date;
+        try { submittedAt = asIsoDate(value.submittedAt, "effect.submittedAt"); }
+        catch { continue; }
+        const recordedAt = value.recordedAt === undefined
+          ? submittedAt
+          : (isCanonicalIsoTimestamp(value.recordedAt) ? asIsoDate(value.recordedAt, "effect.recordedAt") : undefined);
+        if (!recordedAt || submittedAt.getTime() < issuedAt || submittedAt.getTime() > expiresAt || submittedAt.getTime() > now
+          || recordedAt.getTime() < issuedAt || recordedAt.getTime() > expiresAt || recordedAt.getTime() > now) continue;
+        const stagePath = extractionStagePath(assignment.outputRoot, value.unitId);
+        if (!existsSync(stagePath) || file !== `${createHash("sha256").update(value.unitId).digest("hex")}.json`) continue;
+        let stage: StageEnvelope;
+        try {
+          stage = JSON.parse(await readFile(stagePath, "utf-8")) as StageEnvelope;
+          validateStageEnvelope(stage, { requireCandidates: true });
+        } catch { continue; }
+        if (stage.kind !== "extraction" || stage.unitId !== value.unitId || !Array.isArray(stage.candidates)) continue;
+        let normalizedUnit: SourceManifestEntry;
+        try {
+          const manifest = await readManifest(assignment.outputRoot);
+          const entry = manifest.units.find((unit) => unit.unitId === value.unitId);
+          if (!entry) continue;
+          normalizedUnit = entry;
+        } catch { continue; }
+        if (stage.sourceId !== normalizedUnit.sourceId) continue;
+        const packetHash = createHash("sha256").update(JSON.stringify(stage)).digest("hex");
+        if (packetHash !== value.packetHash || stage.candidates.length !== value.candidateCount) continue;
+        effects.push({ kind: expectedKind, contentHash: value.packetHash, acceptedAt: new Date(Math.max(submittedAt.getTime(), recordedAt.getTime())), file });
+        continue;
+      }
+      if (value.kind !== "mem-import-worker-effect" || value.effect !== expectedKind
+        || typeof value.path !== "string" || !safeEffectPath(value.path)
+        || typeof value.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(value.contentHash)
+        || !isCanonicalIsoTimestamp(value.recordedAt)) continue;
+      let recordedAt: Date;
+      try { recordedAt = asIsoDate(value.recordedAt, "effect.recordedAt"); }
+      catch { continue; }
+      if (recordedAt.getTime() < issuedAt || recordedAt.getTime() > expiresAt || recordedAt.getTime() > now) continue;
+      let acceptedAt = recordedAt;
+      // Proposal, identity, and review files are immutable acceptance records. A
+      // forged effect timestamp cannot make a later-submitted packet historical.
+      if (expectedKind === "proposal" || expectedKind === "identity" || expectedKind === "review") {
+        const artifactPath = join(assignment.outputRoot, value.path);
+        if (!existsSync(artifactPath)) continue;
+        let artifact: Record<string, unknown>;
+        try { artifact = JSON.parse(await readFile(artifactPath, "utf-8")) as Record<string, unknown>; }
+        catch { continue; }
+        if (artifact.version !== 1 || artifact.runId !== assignment.runId || artifact.taskId !== assignment.taskId) continue;
+        if (!isCanonicalIsoTimestamp(artifact.submittedAt)) continue;
+        let submittedAt: Date;
+        try { submittedAt = asIsoDate(artifact.submittedAt, "artifact.submittedAt"); }
+        catch { continue; }
+        if (submittedAt.getTime() < issuedAt || submittedAt.getTime() > expiresAt || submittedAt.getTime() > now) continue;
+        if (expectedKind !== "review" && (typeof artifact.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(artifact.id))) continue;
+        if (expectedKind === "proposal" && value.path !== `stages/runs/${assignment.runId}/proposals/${artifact.id}-${value.contentHash}.json`) continue;
+        if (expectedKind === "identity" && value.path !== `stages/runs/${assignment.runId}/identity/${artifact.id}-${value.contentHash}.json`) continue;
+        if (expectedKind === "review" && (typeof artifact.checkpointId !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(artifact.checkpointId) || value.path !== `stages/reviews/${artifact.checkpointId}/${assignment.taskId}-${value.contentHash}.json`)) continue;
+        const { runId: _runId, taskId: _taskId, contentHash: _contentHash, submittedAt: _submittedAt, ...semantic } = artifact;
+        const actualHash = expectedKind === "review"
+          ? semanticHash({ runId: artifact.runId, taskId: artifact.taskId, ...semantic, submittedAt: artifact.submittedAt })
+          : semanticHash(semantic);
+        if (actualHash !== value.contentHash || artifact.contentHash !== undefined && artifact.contentHash !== value.contentHash) continue;
+        acceptedAt = new Date(Math.max(recordedAt.getTime(), submittedAt.getTime()));
+      } else {
+        // Canonical merge/repair effects point at immutable transaction receipts
+        // in the run's canonical root. The transaction's assignment authority is
+        // the durable service-owned binding; an arbitrary effect file is not.
+        let canonicalRoot: string;
+        try { canonicalRoot = await this.canonicalRootForRun(assignment.outputRoot); }
+        catch { continue; }
+        if (!value.path.startsWith("stages/merge/transactions/") || !isCanonicalIsoTimestamp(value.recordedAt)) continue;
+        const transactionPath = join(canonicalRoot, value.path);
+        if (!existsSync(transactionPath)) continue;
+        let transaction: Record<string, unknown>;
+        try { transaction = JSON.parse(await readFile(transactionPath, "utf-8")) as Record<string, unknown>; }
+        catch { continue; }
+        const actor = transaction.actor;
+        if (transaction.version !== 1 || transaction.kind !== "mem-import-merge-transaction" || transaction.runId !== assignment.runId
+          || typeof transaction.revision !== "number" || !Number.isInteger(transaction.revision) || transaction.revision < 1
+          || value.path !== `stages/merge/transactions/${String(transaction.revision).padStart(8, "0")}-${value.contentHash}.json`
+          || transaction.contentHash !== value.contentHash
+          || !isRecord(actor) || actor.kind !== "worker" || actor.taskId !== assignment.taskId || actor.role !== assignment.role
+          || transaction.assignmentAuthorityHash !== assignmentAuthorityHash(assignment)
+          || !isCanonicalIsoTimestamp(transaction.createdAt) || (transaction.authorizedAt !== undefined && !isCanonicalIsoTimestamp(transaction.authorizedAt))
+          || typeof value.transactionReceiptHash !== "string" || !/^[a-f0-9]{64}$/.test(value.transactionReceiptHash) || value.transactionReceiptHash !== semanticHash(transaction)) continue;
+        const transactionCreatedAt = Date.parse(String(transaction.createdAt));
+        const transactionAuthorizedAt = Date.parse(String(transaction.authorizedAt ?? transaction.createdAt));
+        if (transactionAuthorizedAt < issuedAt || transactionAuthorizedAt > expiresAt || transactionAuthorizedAt > now
+          || transactionCreatedAt < issuedAt || transactionCreatedAt > expiresAt || transactionCreatedAt > now
+          || transactionAuthorizedAt > transactionCreatedAt) continue;
+        acceptedAt = new Date(Math.max(recordedAt.getTime(), transactionAuthorizedAt, transactionCreatedAt));
+      }
+      effects.push({ kind: expectedKind, contentHash: value.contentHash, path: value.path, acceptedAt, file });
+    }
+    return effects;
+  }
+
+  private async hasPersistedSemanticEffect(assignment: MemImportAssignmentRecord): Promise<boolean> {
+    const directory = `${orchestrationDir(assignment.outputRoot)}/effects/${assignment.taskId}`;
+    return existsSync(directory) && (await readdir(directory)).some((name) => name.endsWith(".json"));
+  }
+
+  private lifecycleBoundary(assignment: MemImportAssignmentRecord): number {
+    return [assignment.revokedAt, assignment.supersededAt]
+      .filter((value): value is string => value !== undefined)
+      .map((value) => asIsoDate(value, "assignment lifecycle timestamp").getTime())
+      .reduce((earliest, value) => Math.min(earliest, value), Number.POSITIVE_INFINITY);
+  }
+
+  private effectIsValidBeforeLifecycle(assignment: MemImportAssignmentRecord, effect: ValidSemanticEffect): boolean {
+    try { return effect.acceptedAt.getTime() < this.lifecycleBoundary(assignment); }
+    catch { return false; }
+  }
+
+  private dispatchIsValidBeforeLifecycle(assignment: MemImportAssignmentRecord, recordedAt: string): boolean {
+    if (!isCanonicalIsoTimestamp(recordedAt)) return false;
+    try {
+      const timestamp = Date.parse(recordedAt);
+      const issuedAt = asIsoDate(assignment.issuedAt, "assignment.issuedAt").getTime();
+      const expiresAt = asIsoDate(assignment.expiresAt, "assignment.expiresAt").getTime();
+      return timestamp >= issuedAt && timestamp <= expiresAt && timestamp <= this.now().getTime() && timestamp < this.lifecycleBoundary(assignment);
+    } catch {
+      return false;
+    }
+  }
+
+  private async hasExactCompletedDispatch(assignment: MemImportAssignmentRecord, runId: string): Promise<boolean> {
+    try {
+      const dispatchFile = dispatchPath(assignment.outputRoot, assignment.taskId);
       if (!existsSync(dispatchFile)) return false;
-      const dispatch = JSON.parse(await readFile(dispatchFile, "utf-8")) as MemImportDispatchRecord;
+      const dispatch = JSON.parse(await readFile(dispatchFile, "utf-8")) as Partial<MemImportDispatchRecord>;
       return dispatch.version === 1
         && dispatch.kind === "mem-import-worker-dispatch"
         && dispatch.runId === runId
-        && dispatch.taskId === taskId
-        && dispatch.role === role
+        && dispatch.taskId === assignment.taskId
+        && dispatch.role === assignment.role
         && dispatch.facility === "subagent"
         && dispatch.outcome === "completed"
-        && sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[role])
-        && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[role]);
+        && typeof dispatch.hostTaskId === "string"
+        && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(dispatch.hostTaskId)
+        && this.dispatchIsValidBeforeLifecycle(assignment, dispatch.recordedAt as string)
+        && Array.isArray(dispatch.requestedTools)
+        && Array.isArray(dispatch.observedTools)
+        && dispatch.requestedTools.every((tool) => typeof tool === "string")
+        && dispatch.observedTools.every((tool) => typeof tool === "string")
+        && sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role])
+        && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Return whether one semantic effect has an exact completed subagent
+   * dispatch. A historical effect remains effective only when it was accepted
+   * before a later revoke/supersede boundary. */
+  async hasCompletedExactWorkerDispatch(outputRoot: string, runId: string, taskId: string, role: AssignmentRole): Promise<boolean> {
+    try {
+      const assignment = await readAssignment(outputRoot, taskId);
+      if (assignment.runId !== runId || assignment.outputRoot !== canonicalOutputRoot(outputRoot) || assignment.role !== role || !(await this.hasExactCompletedDispatch(assignment, runId))) return false;
+      const effects = await this.readValidSemanticEffects(assignment, outputRoot);
+      return effects.some((effect) => this.effectIsValidBeforeLifecycle(assignment, effect));
     } catch {
       return false;
     }
@@ -1776,9 +1994,27 @@ export class MemImportService {
     const run = await readRun(assignment.outputRoot);
     assertRunScope(run, assignment.outputRoot, assignment.runId);
     assertRunMutable(run);
+    const current = await readAssignment(assignment.outputRoot, assignment.taskId);
+    if (current.runId !== assignment.runId || current.role !== assignment.role || current.outputRoot !== run.outputRoot || current.tokenHash !== assignment.tokenHash) throw new Error("Worker effect assignment does not match the current assignment record");
+    if (current.revokedAt) throw new Error(`Assignment ${current.taskId} was revoked at ${current.revokedAt}`);
+    if (current.supersededAt) throw new Error(`Assignment ${current.taskId} was superseded at ${current.supersededAt}`);
+    if (asIsoDate(current.expiresAt, "assignment.expiresAt").getTime() <= this.now().getTime()) throw new Error(`Assignment ${current.taskId} has expired`);
     requireNonEmpty(effect.kind, "effect.kind");
     requireNonEmpty(effect.path, "effect.path");
+    if (effect.kind !== effectKindForRole(current.role)) throw new Error(`Worker effect kind does not match the ${current.role} assignment`);
+    if (!safeEffectPath(effect.path)) throw new Error("Worker effect path must be a safe stages-relative path");
+    const expectedPathPrefix = current.role === "proposer"
+      ? `stages/runs/${current.runId}/proposals/`
+      : current.role === "reconciler"
+        ? `stages/runs/${current.runId}/identity/`
+        : current.role === "reviewer"
+          ? "stages/reviews/"
+          : current.role === "merger" || current.role === "repairer"
+            ? "stages/merge/transactions/"
+            : "stages/extraction/";
+    if (!effect.path.startsWith(expectedPathPrefix)) throw new Error(`Worker effect path does not match the ${current.role} assignment`);
     if (!/^[a-f0-9]{64}$/.test(effect.contentHash)) throw new Error("effect.contentHash must be a SHA-256 hex string");
+    if (!effect.path.endsWith(`${effect.contentHash}.json`)) throw new Error("Worker effect path must end with its content hash");
     const nonce = randomBytes(6).toString("hex");
     await writeJson(`${orchestrationDir(assignment.outputRoot)}/effects/${assignment.taskId}/${new Date().toISOString().replace(/[:.]/g, "-")}-${nonce}.json`, {
       version: 1, kind: "mem-import-worker-effect", runId: assignment.runId, taskId: assignment.taskId,
@@ -1827,6 +2063,8 @@ export class MemImportService {
     if (!Number.isInteger(options.revision) || options.revision < 1) throw new Error("Recovered transaction revision must be a positive integer");
     if (!/^[a-f0-9]{64}$/.test(options.contentHash)) throw new Error("Recovered transaction contentHash must be a SHA-256 hex string");
     requireNonEmpty(options.path, "transaction.path");
+    if (!safeEffectPath(options.path) || options.path !== `stages/merge/transactions/${String(options.revision).padStart(8, "0")}-${options.contentHash}.json`) throw new Error("Recovered transaction path is not the expected immutable transaction path");
+    if (!isCanonicalIsoTimestamp(options.transactionCreatedAt) || !isCanonicalIsoTimestamp(options.transactionAuthorizedAt ?? options.transactionCreatedAt)) throw new Error("Recovered transaction timestamps must be canonical ISO timestamps");
     const transactionCreatedAt = asIsoDate(options.transactionCreatedAt, "transaction.createdAt");
     const transactionAuthorizedAt = asIsoDate(options.transactionAuthorizedAt ?? options.transactionCreatedAt, "transaction.authorizedAt");
     if (transactionAuthorizedAt.getTime() > transactionCreatedAt.getTime()) throw new Error("Recovered transaction authorization occurs after transaction creation");
@@ -1856,7 +2094,7 @@ export class MemImportService {
       if (value.version !== 1 || value.runId !== run.runId || value.taskId !== assignment.taskId || typeof existingKind !== "string" || typeof existingHash !== "string" || !/^[a-f0-9]{64}$/.test(existingHash)) throw new Error(`Invalid worker effect record for task ${assignment.taskId}`);
       if (existingKind === options.effect && existingHash === options.contentHash && (value.transactionReceiptHash === options.transactionReceiptHash || (value.transactionReceiptHash === undefined && value.path === options.path))) return { run, assignment, directory, matchingPath: `${directory}/${file}` };
     }
-    if (!options.assignmentAuthorityHash) throw new Error("Legacy transaction lacks a recoverable effect; manual repair is required");
+    if (!options.assignmentAuthorityHash) throw new Error("Transaction lacks a recoverable effect; manual repair is required");
     return { run, assignment, directory };
   }
 
@@ -1888,11 +2126,11 @@ export class MemImportService {
         lifecycleOutcome: assignment.lifecycleOutcome,
         ...(assignment.retriesTaskId ? { retriesTaskId: assignment.retriesTaskId } : {}),
         ...(assignment.supersededByTaskId ? { supersededByTaskId: assignment.supersededByTaskId } : {}),
-        ...(dispatch ? { dispatch: { facility: dispatch.facility, outcome: dispatch.outcome, hostTaskId: dispatch.hostTaskId, exactToolMatch: sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) } } : {}),
+        ...(dispatch ? { dispatch: { facility: dispatch.facility, outcome: dispatch.outcome, hostTaskId: dispatch.hostTaskId, exactToolMatch: Array.isArray(dispatch.requestedTools) && Array.isArray(dispatch.observedTools) && sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) && sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) } } : {}),
       } satisfies Omit<MemImportEffectInventoryEntry, "effect">;
       const directory = `${orchestrationDir(run.outputRoot)}/effects/${assignment.taskId}`;
       const files = existsSync(directory) ? (await readdir(directory)).filter((name) => name.endsWith(".json")).sort() : [];
-      if (files.length === 0) flattened.push({ key: `${assignment.taskId}\u0000-`, entry: summary });
+      if (files.length === 0) flattened.push({ key: `${assignment.taskId}${String.fromCharCode(0)}-`, entry: summary });
       for (const file of files) {
         const value = JSON.parse(await readFile(`${directory}/${file}`, "utf-8")) as { version?: unknown; kind?: unknown; runId?: unknown; taskId?: unknown; effect?: unknown; contentHash?: unknown; packetHash?: unknown };
         const packetEffect = value.kind === "mem-import-packet-effect" && typeof value.packetHash === "string" ? { kind: "extraction", contentHash: value.packetHash } : undefined;
@@ -1924,7 +2162,12 @@ export class MemImportService {
       let assignment: MemImportAssignmentRecord;
       try { assignment = await readAssignment(outputRoot, taskId); }
       catch { diagnostics.push({ taskId, message: "Semantic effect has no valid assignment record." }); continue; }
-      if (assignment.revokedAt || assignment.supersededAt) { diagnostics.push({ taskId, message: `Semantic worker effect belongs to a ${assignment.revokedAt ? "revoked" : "superseded"} assignment.` }); continue; }
+      const effects = await this.readValidSemanticEffects(assignment, outputRoot);
+      if (effects.length === 0) { diagnostics.push({ taskId, message: "Semantic worker effect is invalid or does not match its immutable artifact." }); continue; }
+      if ((assignment.revokedAt || assignment.supersededAt) && !effects.some((effect) => this.effectIsValidBeforeLifecycle(assignment, effect))) {
+        diagnostics.push({ taskId, message: `Semantic worker effect belongs to a ${assignment.revokedAt ? "revoked" : "superseded"} assignment.` });
+        continue;
+      }
       const dispatchFile = dispatchPath(outputRoot, taskId);
       if (!existsSync(dispatchFile)) { diagnostics.push({ taskId, message: "Semantic worker effect lacks a correlated dispatch receipt." }); continue; }
       let dispatch: MemImportDispatchRecord;
@@ -1933,7 +2176,8 @@ export class MemImportService {
       if (dispatch.version !== 1 || dispatch.kind !== "mem-import-worker-dispatch" || dispatch.runId !== assignment.runId || dispatch.taskId !== taskId || dispatch.role !== assignment.role) diagnostics.push({ taskId, message: "Semantic worker dispatch receipt does not correlate to its assignment." });
       else if (dispatch.facility !== "subagent") diagnostics.push({ taskId, message: `Semantic worker used disallowed ${dispatch.facility} facility.` });
       else if (dispatch.outcome !== "completed") diagnostics.push({ taskId, message: `Semantic worker dispatch ended ${dispatch.outcome}.` });
-      else if (!sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) || !sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role])) diagnostics.push({ taskId, message: "Semantic worker dispatch allowlist does not match its role." });
+      else if (typeof dispatch.hostTaskId !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(dispatch.hostTaskId) || !this.dispatchIsValidBeforeLifecycle(assignment, dispatch.recordedAt)) diagnostics.push({ taskId, message: "Semantic worker dispatch receipt timestamp, lifecycle, or host identity is invalid." });
+      else if (!Array.isArray(dispatch.requestedTools) || !Array.isArray(dispatch.observedTools) || !dispatch.requestedTools.every((tool) => typeof tool === "string") || !dispatch.observedTools.every((tool) => typeof tool === "string") || !sameToolSet(dispatch.requestedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role]) || !sameToolSet(dispatch.observedTools, MEM_IMPORT_ROLE_TOOLS[assignment.role])) diagnostics.push({ taskId, message: "Semantic worker dispatch allowlist does not match its role." });
     }
     return diagnostics;
   }
@@ -1949,6 +2193,15 @@ export class MemImportService {
     if (initial.runId !== run.runId) throw new Error("Assignment does not belong to this run");
     return withUnitLocks(run.outputRoot, initial.allowedUnitIds, async () => {
       const assignment = await readAssignment(run.outputRoot, options.taskId);
+      if (assignment.outputRoot !== run.outputRoot) throw new Error("Assignment scope does not match the active run");
+      if (await this.hasPersistedSemanticEffect(assignment)) {
+        throw new Error(`Cannot revoke assignment ${assignment.taskId}: a semantic effect is already persisted; preserve the completed work and retry only an effect-free assignment`);
+      }
+      if (await this.hasExactCompletedDispatch(assignment, run.runId)) {
+        throw new Error(`Cannot revoke assignment ${assignment.taskId}: an exact completed worker dispatch is already persisted; preserve the completed work and retry only an effect-free assignment`);
+      }
+      if (assignment.revokedAt) return { taskId: assignment.taskId, revokedAt: assignment.revokedAt };
+      if (assignment.supersededAt) throw new Error(`Cannot revoke assignment ${assignment.taskId}: it was superseded at ${assignment.supersededAt}`);
       const revokedAt = this.now().toISOString();
       await writeJson(assignmentPath(run.outputRoot, assignment.taskId), { ...assignment, revokedAt, lifecycleOutcome: "revoked" } satisfies MemImportAssignmentRecord);
       return { taskId: assignment.taskId, revokedAt };
@@ -2145,9 +2398,9 @@ export class MemImportService {
    * List compact extraction-packet summaries in deterministic source-unit order.
    * This deliberately never returns candidates or a whole corpus packet payload.
    */
-  async readWorkerExtractionInventory(options: { outputRoot: string; runId: string; taskId: string; grant: string; group?: WorldImportGroup; continuationCursor?: string; maxItems?: number }): Promise<ExtractionInventoryResult> {
+  async readWorkerExtractionInventory(options: { outputRoot: string; runId: string; taskId: string; grant: string; group?: MemImportGroup; continuationCursor?: string; maxItems?: number }): Promise<ExtractionInventoryResult> {
     const assignment = await this.authorizeWorker({ ...options, capability: "extraction:read" });
-    if (options.group && !WORLD_IMPORT_GROUPS.includes(options.group)) throw new Error("group must be a known world-import group");
+    if (options.group && !MEM_IMPORT_GROUPS.includes(options.group)) throw new Error("group must be a known mem-import group");
     const maxItems = options.maxItems ?? 25;
     if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 100) throw new Error("maxItems must be an integer between 1 and 100");
     const cursor = options.continuationCursor ? this.decodeExtractionInventoryCursor(options.continuationCursor) : undefined;
@@ -2257,6 +2510,7 @@ export class MemImportService {
         packetHash,
         candidateCount: stage.candidates?.length ?? 0,
         submittedAt,
+        recordedAt: this.now().toISOString(),
       });
       await writeJson(assignmentPath(outputRoot, assignment.taskId), { ...assignment, lifecycleOutcome: "submitted" } satisfies MemImportAssignmentRecord);
       return { unitId: options.unitId, candidateCount: stage.candidates?.length ?? 0, packetHash };
@@ -2265,7 +2519,7 @@ export class MemImportService {
 
   private extractionInventoryEntry(stage: StageEnvelope, packetHash: string): ExtractionInventoryEntry {
     if (!stage.unitId || !stage.sourceId || !Array.isArray(stage.candidates)) throw new Error("Cannot inventory an invalid extraction stage");
-    const groupCounts: Partial<Record<WorldImportGroup, number>> = {};
+    const groupCounts: Partial<Record<MemImportGroup, number>> = {};
     for (const candidate of stage.candidates) {
       groupCounts[candidate.group] = (groupCounts[candidate.group] ?? 0) + 1;
     }
@@ -2293,7 +2547,7 @@ export class MemImportService {
     let cursor: Partial<ExtractionInventoryCursor>;
     try { cursor = JSON.parse(Buffer.from(value, "base64url").toString("utf-8")) as Partial<ExtractionInventoryCursor>; }
     catch { throw new Error("Invalid extraction inventory continuation cursor"); }
-    if (cursor.version !== 1 || cursor.kind !== "extraction-inventory" || typeof cursor.afterOrder !== "number" || !Number.isInteger(cursor.afterOrder) || cursor.afterOrder < 0 || typeof cursor.afterUnitId !== "string" || (cursor.group !== undefined && !WORLD_IMPORT_GROUPS.includes(cursor.group))) throw new Error("Invalid extraction inventory continuation cursor");
+    if (cursor.version !== 1 || cursor.kind !== "extraction-inventory" || typeof cursor.afterOrder !== "number" || !Number.isInteger(cursor.afterOrder) || cursor.afterOrder < 0 || typeof cursor.afterUnitId !== "string" || (cursor.group !== undefined && !MEM_IMPORT_GROUPS.includes(cursor.group))) throw new Error("Invalid extraction inventory continuation cursor");
     return cursor as ExtractionInventoryCursor;
   }
 

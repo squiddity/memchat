@@ -19,7 +19,7 @@ import { acceptanceSourceRevision } from "./mem-import/source-revision.js";
 import { MemImportIdentityService } from "./mem-import/identity-service.js";
 import { MemImportProposalService } from "./mem-import/proposal-service.js";
 import { MemImportService } from "./mem-import/service.js";
-import { MemImportU2Service } from "./mem-import/u2-service.js";
+import { MemImportCanonicalService } from "./mem-import/canonical-service.js";
 
 const fixtureRoot = resolve("fixtures/mem-import/acceptance/v1");
 const exactHostEvidence = {
@@ -31,7 +31,7 @@ const exactHostEvidence = {
 } as const;
 
 test("active guidance keeps brief acceptance and enforces artifact-led phase handoffs", async () => {
-  const [skill, parentPreflight, workflow, helperTools, proposalRole, mergerRole, reviewerRole, acceptance, recipes, capabilities, adapter, genericAdapter, extension] = await Promise.all([
+  const [skill, parentPreflight, workflow, helperTools, proposalRole, mergerRole, reviewerRole, repairerRole, acceptance, recipes, capabilities, adapter, genericAdapter, extension] = await Promise.all([
     readFile(resolve("skills/mem-import/SKILL.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/parent-preflight.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/workflow.md"), "utf8"),
@@ -39,6 +39,7 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
     readFile(resolve("skills/mem-import/references/proposal-role.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/merger-role.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/reviewer-role.md"), "utf8"),
+    readFile(resolve("skills/mem-import/references/repairer-role.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/acceptance.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/facility-recipes.md"), "utf8"),
     readFile(resolve("skills/mem-import/references/subagent-capabilities.md"), "utf8"),
@@ -76,13 +77,37 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(workflow, /White Rabbit's watch/);
   assert.match(workflow, /current `repair` or `critical` finding\/action is a finalization error/);
   assert.match(proposalRole, /dedicated synopsis, ordered-timeline, and chapter\/scene-guide artifacts/);
+  assert.match(proposalRole, /description\/capsule/);
+  assert.match(proposalRole, /useful summary/);
+  assert.match(proposalRole, /richer supported sections/);
+  assert.match(proposalRole, /progressive disclosure/);
+  assert.match(proposalRole, /group-appropriate details/);
+  assert.match(proposalRole, /explicit provenance/);
   assert.match(mergerRole, /union of receipt `consumedProposalHashes`/);
   assert.match(workflow, /A partial durable merge is resumable, not an immediate terminal failure/);
   assert.match(reviewerRole, /White Rabbit's watch/);
   assert.match(reviewerRole, /new scoped review of the final revision/);
   assert.match(reviewerRole, /missing or materially incomplete synopsis, timeline, chapter\/scene guide, salient-object entry, or cross-unit identity page is a `repair` finding, not `info`/);
+  for (const role of [skill, proposalRole, reviewerRole, repairerRole]) {
+    assert.match(role, /\[\[artifact-id\|reader-facing label\]\]/);
+    assert.match(role, /(?:natural )?aliases(?: and| or|\/) possessives|aliases\/possessives|aliases (?:and|or) possessives/);
+    assert.match(role, /pronouns/);
+    assert.match(role, /ambiguous (?:common )?nouns/);
+    assert.match(role, /self-links|current artifact/);
+    assert.match(role, /existing Markdown links/);
+    assert.match(role, /URLs/);
+    assert.match(role, /(?:inline\/fenced|inline or fenced) code|\bcode\b/);
+    assert.match(role, /provenance quotes/);
+    assert.match(role, /`related`/);
+    assert.match(role, /structured and deduplicated|structured, deduplicated|deduplicated.*navigation/);
+    assert.match(role, /(?:both directions|bidirectional|reciprocal).*relationship|relationship.*(?:both directions|bidirectional|reciprocal)/i);
+  }
+  assert.match(reviewerRole, /material semantic retrieval\/traversal problems/);
+  assert.match(reviewerRole, /cannot infer every missed plain-text link/);
   assert.match(workflow, /identity page that omits major cross-unit actions\/state\/relationships or falsely says available units were unavailable/);
   assert.match(helperTools, /model-authored exact candidate partition/);
+  assert.match(helperTools, /exact-ID section markers such as `\[\[artifact-id\|reader-facing label\]\]`/);
+  assert.match(helperTools, /semantic review must assess material retrieval\/traversal problems/);
   assert.match(helperTools, /compact cross-phase ledger handoff/);
   assert.match(helperTools, /no status depends on an earlier service instance or coordinator conversation/);
   assert.match(helperTools, /aggregates[\s\S]*by role and phase[\s\S]*provider\/model buckets/);
@@ -128,15 +153,15 @@ async function executePrepared(probe: PreparedAcceptanceProbe, releaseRepairLeas
   const base = new MemImportService();
   const proposals = new MemImportProposalService(base);
   const identities = new MemImportIdentityService(base);
-  const canonical = new MemImportU2Service(base);
+  const canonical = new MemImportCanonicalService(base);
   if (probe.probe === "normalize") return base.normalize(probe.call as Parameters<MemImportService["normalize"]>[0]);
   if (probe.probe === "extractor") return base.submitExtraction(probe.call as Parameters<MemImportService["submitExtraction"]>[0]);
   if (probe.probe === "proposer") return proposals.submitWorkerProposalBody(probe.call as Parameters<MemImportProposalService["submitWorkerProposalBody"]>[0]);
   if (probe.probe === "reconciler") return identities.submitWorkerIdentity(probe.call as Parameters<MemImportIdentityService["submitWorkerIdentity"]>[0]);
-  if (probe.probe === "merger") return canonical.commitWorkerBatchReceipt(probe.call as Parameters<MemImportU2Service["commitWorkerBatchReceipt"]>[0]);
-  if (probe.probe === "reviewer") return canonical.submitReview(probe.call as Parameters<MemImportU2Service["submitReview"]>[0]);
+  if (probe.probe === "merger") return canonical.commitWorkerBatchReceipt(probe.call as Parameters<MemImportCanonicalService["commitWorkerBatchReceipt"]>[0]);
+  if (probe.probe === "reviewer") return canonical.submitReview(probe.call as Parameters<MemImportCanonicalService["submitReview"]>[0]);
   try {
-    return await canonical.applyWorkerRepairBatchReceipt(probe.call as Parameters<MemImportU2Service["applyWorkerRepairBatchReceipt"]>[0]);
+    return await canonical.applyWorkerRepairBatchReceipt(probe.call as Parameters<MemImportCanonicalService["applyWorkerRepairBatchReceipt"]>[0]);
   } finally {
     if (releaseRepairLease) await releaseAcceptanceProbeLease(probe, canonical);
   }

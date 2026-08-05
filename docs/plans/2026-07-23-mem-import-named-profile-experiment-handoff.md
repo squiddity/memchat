@@ -1,5 +1,8 @@
 # Mem-import named-profile experiment handoff
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 ## Current state
 
 Repository: `/home/squiddity/projects/memchat`  

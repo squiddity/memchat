@@ -5,6 +5,9 @@ date: 2026-06-29
 origin: docs/brainstorms/2026-06-24-provenance-preserving-world-library-requirements.md
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Produce OKF-compatible world wiki bundles
 
 ## Summary

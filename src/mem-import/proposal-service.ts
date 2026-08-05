@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { extractionStagePath, readNormalizedUnit, validateStageEnvelope, writeJson } from "../world-import/staging.js";
-import type { StageEnvelope } from "../world-import/types.js";
+import { readExtractionStages, readNormalizedUnit, validateStageEnvelope, writeJson } from "./stage-store.js";
+import type { StageEnvelope } from "./contracts.js";
 import { MemImportService } from "./service.js";
 
 type WorkerAuthority = { outputRoot: string; runId: string; taskId: string; grant: string };
@@ -105,10 +105,10 @@ export class MemImportProposalService {
     const scoped = assignment.allowedCandidateIds?.length ? new Set(assignment.allowedCandidateIds) : undefined;
     const inputs: ProposalInput[] = [];
     const expectedCandidates = new Set<string>();
+    const extractionStages = new Map((await readExtractionStages(assignment.outputRoot)).filter((stage) => stage.unitId).map((stage) => [stage.unitId!, stage]));
     for (const unitId of assignment.allowedUnitIds) {
-      const path = extractionStagePath(assignment.outputRoot, unitId);
-      if (!existsSync(path)) throw new Error(`Assigned extraction packet ${unitId} does not exist`);
-      const stage = JSON.parse(await readFile(path, "utf-8")) as StageEnvelope;
+      const stage = extractionStages.get(unitId);
+      if (!stage) throw new Error(`Assigned extraction packet ${unitId} does not exist`);
       if (!Array.isArray(stage.candidates)) throw new Error(`Assigned extraction packet ${unitId} is invalid`);
       const candidateIds = stage.candidates.map((candidate) => candidate.id).filter((candidateId) => !scoped || scoped.has(`${unitId}:${candidateId}`));
       if (scoped && candidateIds.length === 0) continue;
@@ -219,9 +219,8 @@ export class MemImportProposalService {
       if (!allowedUnitIds.includes(input.unitId)) throw new Error(`Proposal input unit ${input.unitId} is outside this assignment`);
       if (inputUnitIds.has(input.unitId)) throw new Error(`Proposal inputs duplicate unit ${input.unitId}`);
       inputUnitIds.add(input.unitId);
-      const stagePath = extractionStagePath(outputRoot, input.unitId);
-      if (!existsSync(stagePath)) throw new Error(`Proposal input extraction packet ${input.unitId} does not exist`);
-      const stage = JSON.parse(await readFile(stagePath, "utf-8")) as StageEnvelope;
+      const stage = (await readExtractionStages(outputRoot)).find((candidate) => candidate.unitId === input.unitId);
+      if (!stage) throw new Error(`Proposal input extraction packet ${input.unitId} does not exist`);
       if (!Array.isArray(stage.candidates) || createHash("sha256").update(JSON.stringify(stage)).digest("hex") !== input.packetHash) throw new Error(`Proposal input extraction packet ${input.unitId} is stale or invalid`);
       if (input.candidateIds !== undefined) {
         if (!Array.isArray(input.candidateIds) || input.candidateIds.length === 0 || input.candidateIds.some((id) => typeof id !== "string" || !id.trim())) throw new Error(`Proposal input ${input.unitId} candidateIds must be a non-empty string array`);

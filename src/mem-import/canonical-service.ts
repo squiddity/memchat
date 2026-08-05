@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { emitWorldLibrary, refreshWorldImportLog } from "../world-import/emit.js";
-import { deterministicWorldImportChecks, lintWorldImport } from "../world-import/eval.js";
-import { buildCoveragePlan, provenanceAudit } from "../world-import/helper-tools.js";
+import { isAbsolute, join, relative as relativePath, resolve } from "node:path";
+import { emitMemImportProjection, refreshMemImportLog } from "./projection.js";
+import { deterministicMemImportChecks, type MemImportChecksResult } from "./checks.js";
+import { lintMemImport } from "./lint.js";
+import { buildCoveragePlan } from "./coverage.js";
+import { provenanceAudit } from "./provenance-audit.js";
 import {
   importRunPath,
   mergedCandidatesPath,
@@ -15,8 +17,8 @@ import {
   validateStageEnvelope,
   writeJson,
   writeMergeStage,
-} from "../world-import/staging.js";
-import type { MemImportRunAuditV2, StageEnvelope } from "../world-import/types.js";
+} from "./stage-store.js";
+import type { MemImportRunAudit, StageEnvelope } from "./contracts.js";
 import type { MemImportCoordinatorSessionRecord, MemImportUsageEvidence, MemImportUsagePhase } from "./usage-telemetry.js";
 import { MemImportCompendiumService, projectCompendium } from "./compendium-service.js";
 import { assignmentAuthorityHash, MemImportService, type AssignmentRole, type EvidenceReadTelemetrySummary, type MemImportAssignmentRecord, type MemImportCapability, type MemImportRunRecord, type MemImportTerminalStatus, type RecoveredTransactionEffect } from "./service.js";
@@ -29,6 +31,68 @@ const LEASE_EXPIRY_MS = 5 * 60_000;
 const TRANSACTION_CHECKPOINT_INTERVAL = 16;
 
 type CoordinatorAuthority = { outputRoot: string; runId: string; coordinatorGrant: string };
+
+type CheckDiagnostic = {
+  level: "error" | "warning";
+  message: string;
+  code?: string;
+  path?: string;
+  artifactId?: string;
+  unitId?: string;
+  candidateId?: string;
+};
+
+function diagnosticKey(diagnostic: CheckDiagnostic): string {
+  return JSON.stringify([
+    diagnostic.level,
+    diagnostic.code ?? "",
+    diagnostic.message,
+    diagnostic.path ?? "",
+    diagnostic.artifactId ?? "",
+    diagnostic.unitId ?? "",
+    diagnostic.candidateId ?? "",
+  ]);
+}
+
+function uniqueDiagnostics<T extends CheckDiagnostic>(diagnostics: T[]): T[] {
+  const seen = new Set<string>();
+  return diagnostics.filter((diagnostic) => {
+    const key = diagnosticKey(diagnostic);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function deterministicCheckFailureDiagnostics(result: MemImportChecksResult): Array<{ level: "error"; code: string; message: string; path?: string }> {
+  if (result.passed) return [];
+  const failures = result.checks.filter((check) => !check.passed && !(check.diagnostics?.some((diagnostic) => diagnostic.level === "error")));
+  return failures.map((check) => ({
+    level: "error" as const,
+    code: "deterministic-check-failed",
+    message: `Deterministic mem-import check failed: ${check.name}${check.message ? ` (${check.message})` : ""}`,
+    path: "stages/checks/final.json",
+  }));
+}
+
+/** The exact structural baseline shared by mem_check_run and finalization. */
+type CollectedChecks = {
+  deterministic: MemImportChecksResult;
+  lint: { diagnostics: CheckDiagnostic[] };
+  coverage: { recommendations: CheckDiagnostic[]; unitCoverage: Array<{ diagnostics: CheckDiagnostic[] }> };
+  provenance: { diagnostics: CheckDiagnostic[] };
+};
+
+function projectionCheckDiagnostics(checks: CollectedChecks): CheckDiagnostic[] {
+  return uniqueDiagnostics([
+    ...checks.lint.diagnostics,
+    ...checks.coverage.recommendations,
+    ...checks.coverage.unitCoverage.flatMap((unit) => unit.diagnostics),
+    ...checks.provenance.diagnostics,
+    ...checks.deterministic.checks.flatMap((check) => check.diagnostics ?? []),
+    ...deterministicCheckFailureDiagnostics(checks.deterministic),
+  ]);
+}
 type WorkerAuthority = { outputRoot: string; runId: string; taskId: string; grant: string };
 type MergeActor = { kind: "coordinator" | "worker"; taskId: string; role?: AssignmentRole };
 
@@ -231,10 +295,32 @@ export type ReviewPacket = {
   reviewedMergeHash: string;
   findings: Array<{ id: string; severity: "info" | "warning" | "repair" | "critical"; summary: string; sourceRefs?: unknown[]; requestedActionIds?: string[] }>;
   requestedActions: Array<{ id: string; type: string; severity: "info" | "warning" | "repair" | "critical"; summary: string; rationale?: string; sourceRefs?: unknown[] }>;
-  /** Exact bounded canonical artifact read set; absence is retained as legacy unscoped review evidence. */
+  /** Exact bounded canonical artifact read set; absence is retained for unscoped review records. */
   readSet?: Array<{ artifactId: string; contentHash: string | null }>;
   diagnostics?: Array<{ level: "info" | "warning" | "error"; message: string }>;
   metadata?: Record<string, unknown>;
+};
+
+type ReviewPacketRecord = {
+  path: string;
+  runRoot: string;
+  runId: string;
+  packet: Partial<ReviewPacket> & { contentHash?: unknown; runId?: unknown; taskId?: unknown; submittedAt?: unknown };
+  contentHash: string;
+};
+
+type ReviewValidityStatus = "current" | "stale" | "unaffected" | "unscoped";
+
+type ReviewValidityEntry = {
+  /** The immutable packet's run identity; runRoot disambiguates compendium runs. */
+  runId: string;
+  runRoot: string;
+  /** Always relative to runRoot and never an escaping path. */
+  path: string;
+  contentHash: string;
+  reviewedMergeRevision: number;
+  reviewedMergeHash: string;
+  status: ReviewValidityStatus;
 };
 
 function orchestrationDir(outputRoot: string): string { return join(outputRoot, "stages", "orchestration"); }
@@ -285,9 +371,9 @@ function semanticStage(stage: StageEnvelope): StageEnvelope {
   return semantic;
 }
 
-function worldSemanticStage(stage: StageEnvelope): StageEnvelope {
-  const { transactionControlHash: _transactionControlHash, ...world } = semanticStage(stage);
-  return world;
+function canonicalSemanticStage(stage: StageEnvelope): StageEnvelope {
+  const { transactionControlHash: _transactionControlHash, ...canonical } = semanticStage(stage);
+  return canonical;
 }
 
 function transactionControlDigest(receipt: Omit<StoredTransactionReceipt, "contentHash" | "transactionControlHash">): string {
@@ -325,7 +411,7 @@ function leaseOwnerEquals(left: MergeActor, right: MergeActor): boolean {
   return left.kind === right.kind && left.taskId === right.taskId && left.role === right.role;
 }
 
-export class MemImportU2Service {
+export class MemImportCanonicalService {
   private readonly identities: MemImportIdentityService;
   private readonly plans: MemImportClusterPlanService;
 
@@ -365,15 +451,14 @@ export class MemImportU2Service {
   async mergeControls(options: CoordinatorAuthority): Promise<MergeControls> {
     const run = await this.base.authorizeCoordinator(options);
     const canonicalRoot = this.canonicalRoot(run);
-    const state = await this.readMergeState(canonicalRoot);
     const status = await this.workStatus(options);
+    const state = await this.readMergeState(canonicalRoot);
+    // The validity file is a projection, not an authority. Rebuild it from the
+    // immutable packets so merge-state controls cannot lag behind a run-root
+    // review (or a packet added after the last merge).
+    const entries = await this.refreshReviewValidity(canonicalRoot, state.stage);
     const reviewCounts = { current: 0, stale: 0, unaffected: 0, unscoped: 0 };
-    if (existsSync(reviewValidityPath(canonicalRoot))) {
-      const validity = JSON.parse(await readFile(reviewValidityPath(canonicalRoot), "utf-8")) as { entries?: Array<{ status?: unknown }> };
-      for (const entry of validity.entries ?? []) {
-        if (entry.status === "current" || entry.status === "stale" || entry.status === "unaffected" || entry.status === "unscoped") reviewCounts[entry.status] += 1;
-      }
-    }
+    for (const entry of entries) reviewCounts[entry.status] += 1;
     return {
       ...status,
       artifactCount: state.stage.artifacts?.length ?? 0,
@@ -549,7 +634,7 @@ export class MemImportU2Service {
 
   async writeWorkerMerge(options: WorkerAuthority & { fence: number; expectedRevision: number; expectedContentHash: string | null; stage: unknown; rationale: string; checkpointId?: string; actionIds?: string[] }): Promise<MergeState> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "merge:write", checkpointId: options.checkpointId, actionIds: options.actionIds });
-    // Complete snapshots are coordinator-only legacy comparison/admin work. Semantic
+    // Complete snapshots are coordinator-only comparison/admin work. Semantic
     // workers must use bounded proposal-backed batches even if a host leaks this tool.
     void assignment;
     throw new Error("Worker complete snapshot writes are disabled; use the assigned bounded batch mutation tool");
@@ -682,7 +767,7 @@ export class MemImportU2Service {
         validateStageEnvelope(applied, { requireArtifacts: true });
         await this.assertLiteralArtifactProvenance(sourceRoots, applied, touched);
         const meaningfulConflictChange = batch.conflictOperations?.length ? await this.hasMeaningfulConflictChange(canonicalRoot, batch.conflictOperations) : false;
-        if (current.revision > 0 && hash(worldSemanticStage(applied)) === hash(worldSemanticStage(current.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision would be created");
+        if (current.revision > 0 && hash(canonicalSemanticStage(applied)) === hash(canonicalSemanticStage(current.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision would be created");
       } catch (error) { issues.push({ category: "application", message: error instanceof Error ? error.message : String(error) }); }
     }
     return { valid: issues.length === 0, revision: current.revision, contentHash: current.contentHash, acceptCount, synthesizedCount, expandedOperationCount: batch?.operations.length ?? 0, issues };
@@ -736,7 +821,7 @@ export class MemImportU2Service {
     const synthesizedCount = changes.length - acceptCount;
     if (acceptCount > MAX_ACCEPT_CHANGES) throw new Error(`Merge commit changes accepts exceed the ${MAX_ACCEPT_CHANGES}-entry lightweight limit`);
     if (synthesizedCount > MAX_SYNTHESIZED_CHANGES) throw new Error(`Merge commit changes upsert/delete entries exceed the ${MAX_SYNTHESIZED_CHANGES}-entry synthesis limit`);
-    const proposals = new Map<string, Awaited<ReturnType<MemImportU2Service["readProposal"]>>>();
+    const proposals = new Map<string, Awaited<ReturnType<MemImportCanonicalService["readProposal"]>>>();
     for (const proposalHash of options.proposalHashes) proposals.set(proposalHash, await this.readProposal(assignment.outputRoot, assignment.runId, proposalHash));
     const operations: MergeBatch["operations"] = changes.map((change) => {
       if (change.kind !== "accept") return structuredClone(change);
@@ -893,10 +978,18 @@ export class MemImportU2Service {
   async checks(options: CoordinatorAuthority) {
     const run = await this.base.authorizeCoordinator(options);
     const projectionRoot = this.canonicalRoot(run);
+    // Recovery may reconstruct a newer canonical revision from an immutable
+    // transaction receipt. It must happen before any projection or check read.
+    const transactionDiagnostics = await this.transactionEffectDiagnostics(run, projectionRoot);
+    const recoveredState = await this.readMergeState(projectionRoot);
     if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
-    await emitWorldLibrary(projectionRoot);
+    await emitMemImportProjection(projectionRoot);
+    const emittedState = await this.readMergeState(projectionRoot);
+    if (emittedState.revision !== recoveredState.revision || emittedState.contentHash !== recoveredState.contentHash) throw new Error("Canonical merge changed while emitting checks; retry the typed read");
     const checks = await this.collectChecks(projectionRoot);
     const state = await this.readMergeState(projectionRoot);
+    if (state.revision !== recoveredState.revision || state.contentHash !== recoveredState.contentHash) throw new Error("Canonical merge changed while collecting checks; retry the typed read");
+    await this.refreshReviewValidity(projectionRoot, state.stage);
     const [identityDiagnostics, reviewDiagnostics] = await Promise.all([
       this.identityDiagnostics(projectionRoot),
       this.reviewActionDiagnostics(projectionRoot, state.stage),
@@ -904,10 +997,15 @@ export class MemImportU2Service {
     const dispatchRoots = run.compendiumRoot
       ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
       : [run.outputRoot];
-    const transactionDiagnostics = await this.transactionEffectDiagnostics(run, projectionRoot);
     const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
       .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
-    const diagnostics = [...identityDiagnostics, ...reviewDiagnostics, ...transactionDiagnostics, ...dispatchDiagnostics];
+    const diagnostics = uniqueDiagnostics([
+      ...projectionCheckDiagnostics(checks),
+      ...identityDiagnostics,
+      ...reviewDiagnostics,
+      ...transactionDiagnostics,
+      ...dispatchDiagnostics,
+    ]);
     return { ...checks, readiness: { passed: diagnostics.every((item) => item.level !== "error"), diagnostics } };
   }
 
@@ -919,10 +1017,18 @@ export class MemImportU2Service {
     const run = await this.base.authorizeCoordinatorMutation(options);
     const projectionRoot = this.canonicalRoot(run);
     await this.requireLease(projectionRoot, run.runId, { kind: "coordinator", taskId: options.taskId }, options.fence);
+    // Reconcile transaction effects before deriving any projection or checks;
+    // recovery can advance the canonical revision and review validity.
+    const transactionDiagnostics = await this.transactionEffectDiagnostics(run, projectionRoot, { runId: run.runId, owner: { kind: "coordinator", taskId: options.taskId } });
+    const recoveredState = await this.readMergeState(projectionRoot);
     if (run.compendiumRoot) await projectCompendium(run.compendiumRoot);
-    await emitWorldLibrary(projectionRoot);
+    await emitMemImportProjection(projectionRoot);
+    const emittedState = await this.readMergeState(projectionRoot);
+    if (emittedState.revision !== recoveredState.revision || emittedState.contentHash !== recoveredState.contentHash) throw new Error("Canonical merge changed while emitting finalization checks; retry the typed read");
     const checks = await this.collectChecks(projectionRoot);
     const state = await this.readMergeState(projectionRoot);
+    if (state.revision !== recoveredState.revision || state.contentHash !== recoveredState.contentHash) throw new Error("Canonical merge changed while collecting finalization checks; retry the typed read");
+    await this.refreshReviewValidity(projectionRoot, state.stage);
     const [identityDiagnostics, reviewDiagnostics] = await Promise.all([
       this.identityDiagnostics(projectionRoot),
       this.reviewActionDiagnostics(projectionRoot, state.stage),
@@ -930,20 +1036,15 @@ export class MemImportU2Service {
     const dispatchRoots = run.compendiumRoot
       ? (await new MemImportCompendiumService(this.base).inspect(run.compendiumRoot)).runs.map((item) => item.runRoot)
       : [run.outputRoot];
-    const transactionDiagnostics = await this.transactionEffectDiagnostics(run, projectionRoot, { runId: run.runId, owner: { kind: "coordinator", taskId: options.taskId } });
     const dispatchDiagnostics = (await Promise.all(dispatchRoots.map((root) => this.base.dispatchDiagnostics(root)))).flat()
       .map((item) => ({ level: "error" as const, message: `Dispatch gate (${item.taskId}): ${item.message}`, path: "stages/orchestration/dispatches" }));
-    const diagnostics = [
-      ...checks.lint.diagnostics,
-      ...checks.coverage.recommendations,
-      ...checks.coverage.unitCoverage.flatMap((unit) => unit.diagnostics),
-      ...checks.provenance.diagnostics,
-      ...checks.deterministic.checks.flatMap((check) => check.diagnostics ?? []),
+    const diagnostics = uniqueDiagnostics([
+      ...projectionCheckDiagnostics(checks),
       ...identityDiagnostics,
       ...reviewDiagnostics,
       ...transactionDiagnostics,
       ...dispatchDiagnostics,
-    ];
+    ]);
     const errors = diagnostics.filter((item) => item.level === "error").length;
     const warnings = diagnostics.filter((item) => item.level === "warning").length;
     if (!state.contentHash) throw new Error("Cannot finalize before a canonical merge revision exists");
@@ -968,7 +1069,7 @@ export class MemImportU2Service {
       evidenceReads,
       usage,
     });
-    await refreshWorldImportLog(projectionRoot);
+    await refreshMemImportLog(projectionRoot);
     await this.recordEvent(projectionRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(projectionRoot, checksPath), errors, warnings, status: audit.status });
     if (errors === 0) await this.base.markRunTerminal(run, "finalized");
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(projectionRoot, checksPath), errors, warnings };
@@ -998,7 +1099,7 @@ export class MemImportU2Service {
       return this.base.withRunMutation(projectionRoot, async () => {
         const usage = await this.base.usageTelemetry(options);
         await this.updateAudit(projectionRoot, run.runId, undefined, { usage });
-        if (existsSync(join(projectionRoot, "world", "log.md"))) await refreshWorldImportLog(projectionRoot);
+        if (existsSync(join(projectionRoot, "log.md"))) await refreshMemImportLog(projectionRoot);
         return record;
       });
     });
@@ -1026,7 +1127,7 @@ export class MemImportU2Service {
     const meaningfulConflictChange = options.transaction?.conflictOperations?.length
       ? await this.hasMeaningfulConflictChange(options.outputRoot, options.transaction.conflictOperations)
       : false;
-    if (before.revision > 0 && hash(worldSemanticStage(submitted)) === hash(worldSemanticStage(before.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision was created");
+    if (before.revision > 0 && hash(canonicalSemanticStage(submitted)) === hash(canonicalSemanticStage(before.stage)) && !meaningfulConflictChange) throw new Error("Merge transaction is a semantic no-op; no revision was created");
     const extractionHash = await this.extractionHash(options.sourceRoot ?? options.outputRoot);
     // Compute immutable artifact references before validation, but do not write blobs
     // until every structural/provenance check and the final CAS have succeeded.
@@ -1784,72 +1885,136 @@ export class MemImportU2Service {
     }
   }
 
-  private async reviewPackets(directory: string): Promise<Array<{ path: string; packet: Partial<ReviewPacket> & { contentHash?: unknown } }>> {
-    if (!existsSync(directory)) return [];
-    const entries = await readdir(directory, { withFileTypes: true });
-    const packets: Array<{ path: string; packet: Partial<ReviewPacket> & { contentHash?: unknown } }> = [];
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) packets.push(...await this.reviewPackets(path));
-      else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "validity.json") {
-        const packet = JSON.parse(await readFile(path, "utf-8")) as Partial<ReviewPacket> & { contentHash?: unknown };
-        if (typeof packet.reviewedMergeRevision === "number" && typeof packet.reviewedMergeHash === "string") packets.push({ path, packet });
-      }
+  /**
+   * Review packets live with the run that submitted them. A compendium's
+   * validity projection must therefore walk every registered run root rather
+   * than only the canonical projection root.
+   */
+  private async reviewRoots(canonicalRootInput: string): Promise<Array<{ runId?: string; runRoot: string }>> {
+    const canonicalRoot = resolve(canonicalRootInput);
+    const compendiumRecord = join(canonicalRoot, "stages", "compendium.json");
+    if (!existsSync(compendiumRecord)) return [{ runRoot: canonicalRoot }];
+    const record = await new MemImportCompendiumService(this.base).inspect(canonicalRoot);
+    const roots = new Map<string, { runId?: string; runRoot: string }>();
+    for (const run of record.runs) {
+      const runRoot = resolve(run.runRoot);
+      roots.set(`${run.runId}\u0000${runRoot}`, { runId: run.runId, runRoot });
     }
-    return packets;
+    return [...roots.values()];
+  }
+
+  private async reviewPackets(canonicalRoot: string): Promise<ReviewPacketRecord[]> {
+    const packets = new Map<string, ReviewPacketRecord>();
+    const visit = async (directory: string, root: { runId?: string; runRoot: string }): Promise<void> => {
+      if (!existsSync(directory)) return;
+      const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) await visit(path, root);
+        else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "validity.json") {
+          let packet: Partial<ReviewPacket> & { contentHash?: unknown; runId?: unknown; taskId?: unknown; submittedAt?: unknown };
+          try { packet = JSON.parse(await readFile(path, "utf-8")) as typeof packet; } catch { continue; }
+          // Only packets written by submitReview are authoritative. In
+          // particular, compute the packet hash from its content and require
+          // the immutable filename to agree; prose/contentHash fields cannot
+          // make a tampered packet valid.
+          const reviewedMergeRevision = packet.reviewedMergeRevision;
+          const reviewedMergeHash = packet.reviewedMergeHash;
+          if (packet.version !== 1 || packet.kind !== "mem-import-review"
+            || typeof packet.runId !== "string" || !packet.runId.trim()
+            || typeof packet.taskId !== "string" || !packet.taskId.trim()
+            || typeof packet.submittedAt !== "string"
+            || !Array.isArray(packet.findings) || !Array.isArray(packet.requestedActions)) continue;
+          if (typeof reviewedMergeRevision !== "number" || !Number.isInteger(reviewedMergeRevision) || reviewedMergeRevision < 1) continue;
+          if (typeof reviewedMergeHash !== "string" || !/^[a-f0-9]{64}$/.test(reviewedMergeHash)) continue;
+          if (![...packet.findings, ...packet.requestedActions].every((item) => item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { summary?: unknown }).summary === "string")) continue;
+          if (root.runId !== undefined && packet.runId !== root.runId) continue;
+          const contentHash = hash(packet);
+          const filenameHash = entry.name.match(/-([a-f0-9]{64})\.json$/)?.[1];
+          if (filenameHash !== contentHash) continue;
+          const packetPath = relativePath(root.runRoot, path).replaceAll("\\", "/");
+          if (!packetPath || packetPath === ".." || packetPath.startsWith("../") || isAbsolute(packetPath)) continue;
+          if (!packets.has(contentHash)) packets.set(contentHash, { path, runRoot: root.runRoot, runId: packet.runId, packet, contentHash });
+        }
+      }
+    };
+    for (const root of await this.reviewRoots(canonicalRoot)) await visit(join(root.runRoot, "stages", "reviews"), { ...root, runRoot: resolve(root.runRoot) });
+    return [...packets.values()];
+  }
+
+  private reviewReadSetMatches(stage: StageEnvelope, packet: Partial<ReviewPacket>): boolean {
+    if (!Array.isArray(packet.readSet) || packet.readSet.length > 100) return false;
+    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    const seen = new Set<string>();
+    return packet.readSet.every((item) => {
+      if (!item || typeof item !== "object" || typeof item.artifactId !== "string" || seen.has(item.artifactId)
+        || (item.contentHash !== null && (typeof item.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(item.contentHash)))) return false;
+      seen.add(item.artifactId);
+      const actual = artifacts.get(item.artifactId) ? hash(artifacts.get(item.artifactId)) : null;
+      return actual === item.contentHash;
+    });
+  }
+
+  private reviewIsCurrent(stage: StageEnvelope, packet: Partial<ReviewPacket>): boolean {
+    return packet.reviewedMergeRevision === stage.revision
+      && packet.reviewedMergeHash === stage.contentHash
+      && this.reviewReadSetMatches(stage, packet);
+  }
+
+  private reviewDisplayPath(record: ReviewPacketRecord): string {
+    return `${record.runId}/${relativePath(record.runRoot, record.path).replaceAll("\\", "/")}`;
   }
 
   private async reviewActionDiagnostics(outputRoot: string, stage: StageEnvelope): Promise<Array<{ level: "error"; message: string; path: string }>> {
-    const packets = await this.reviewPackets(join(outputRoot, "stages", "reviews"));
-    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+    const packets = await this.reviewPackets(outputRoot);
     const isBlockingSeverity = (severity: unknown) => severity === "repair" || severity === "critical";
     const hasBlockingRequest = (packet: Partial<ReviewPacket>) =>
       (packet.findings ?? []).some((finding) => isBlockingSeverity(finding.severity))
       || (packet.requestedActions ?? []).some((action) => isBlockingSeverity(action.severity));
     const repairRequested = packets.some(({ packet }) => hasBlockingRequest(packet));
-    if (!repairRequested) return [];
-
-    const current = packets.filter(({ packet }) => {
-      if (packet.reviewedMergeRevision !== stage.revision || packet.reviewedMergeHash !== stage.contentHash || !packet.readSet) return false;
-      return !packet.readSet.some((item) => (artifacts.get(item.artifactId) ? hash(artifacts.get(item.artifactId)) : null) !== item.contentHash);
-    });
-    const diagnostics = current.flatMap(({ path, packet }) => [
-      ...(packet.findings ?? []).filter((finding) => isBlockingSeverity(finding.severity)).map((finding) => ({
-        level: "error" as const,
-        message: `Unresolved ${finding.severity} review finding ${finding.id}: ${finding.summary}`,
-        path: this.relative(outputRoot, path),
-      })),
-      ...(packet.requestedActions ?? []).filter((action) => isBlockingSeverity(action.severity)).map((action) => ({
-        level: "error" as const,
-        message: `Unresolved ${action.severity} review action ${action.id}: ${action.summary}`,
-        path: this.relative(outputRoot, path),
-      })),
-    ]);
+    const current = packets.filter(({ packet }) => this.reviewIsCurrent(stage, packet));
+    const diagnostics: Array<{ level: "error"; message: string; path: string }> = [];
     if (current.length === 0) diagnostics.push({
       level: "error",
-      message: "A prior review requested repair; finalization requires a current scoped post-repair review of the final canonical revision.",
+      message: repairRequested
+        ? "A prior review requested repair; finalization requires a current scoped post-repair review of the final canonical revision."
+        : "Finalization requires at least one current scoped review of the final canonical revision.",
       path: "stages/reviews",
     });
+    if (!repairRequested) return diagnostics;
+    diagnostics.push(...current.flatMap((record) => [
+      ...(record.packet.findings ?? []).filter((finding) => isBlockingSeverity(finding.severity)).map((finding) => ({
+        level: "error" as const,
+        message: `Unresolved ${finding.severity} review finding ${finding.id}: ${finding.summary}`,
+        path: this.reviewDisplayPath(record),
+      })),
+      ...(record.packet.requestedActions ?? []).filter((action) => isBlockingSeverity(action.severity)).map((action) => ({
+        level: "error" as const,
+        message: `Unresolved ${action.severity} review action ${action.id}: ${action.summary}`,
+        path: this.reviewDisplayPath(record),
+      })),
+    ]));
     return diagnostics;
   }
 
-  private async refreshReviewValidity(outputRoot: string, stage: StageEnvelope): Promise<void> {
-    const directory = join(outputRoot, "stages", "reviews");
-    const packets = await this.reviewPackets(directory);
-    const artifacts = new Map((stage.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
-    const entries = packets.map(({ path, packet }) => {
-      const readSet = packet.readSet;
-      const readSetChanged = readSet?.some((item) => (artifacts.get(item.artifactId) ? hash(artifacts.get(item.artifactId)) : null) !== item.contentHash) ?? false;
+  private async refreshReviewValidity(outputRoot: string, stage: StageEnvelope): Promise<ReviewValidityEntry[]> {
+    const packets = await this.reviewPackets(outputRoot);
+    const entries = packets.map(({ path, runRoot, runId, packet, contentHash }): ReviewValidityEntry => {
+      const scoped = Array.isArray(packet.readSet);
+      const readSetValid = this.reviewReadSetMatches(stage, packet);
       const sameRoot = packet.reviewedMergeRevision === stage.revision && packet.reviewedMergeHash === stage.contentHash;
       return {
-        path: this.relative(outputRoot, path),
-        ...(typeof packet.contentHash === "string" ? { contentHash: packet.contentHash } : {}),
-        reviewedMergeRevision: packet.reviewedMergeRevision,
-        reviewedMergeHash: packet.reviewedMergeHash,
-        status: !readSet ? "unscoped" : readSetChanged ? "stale" : sameRoot ? "current" : "unaffected",
+        runId,
+        runRoot,
+        path: relativePath(runRoot, path).replaceAll("\\", "/"),
+        contentHash,
+        reviewedMergeRevision: packet.reviewedMergeRevision!,
+        reviewedMergeHash: packet.reviewedMergeHash!,
+        status: !scoped ? "unscoped" : !readSetValid ? "stale" : sameRoot ? "current" : "unaffected",
       };
     });
     await writeJson(reviewValidityPath(outputRoot), { version: 1, kind: "mem-import-review-validity", merge: { revision: stage.revision ?? 0, contentHash: stage.contentHash ?? null }, updatedAt: this.now().toISOString(), entries });
+    return entries;
   }
 
   private validateReviewPacket(value: unknown): ReviewPacket {
@@ -1881,8 +2046,8 @@ export class MemImportU2Service {
 
   private async collectChecks(outputRoot: string) {
     const [deterministic, lint, coverage, provenance] = await Promise.all([
-      deterministicWorldImportChecks(outputRoot),
-      lintWorldImport(outputRoot),
+      deterministicMemImportChecks(outputRoot),
+      lintMemImport(outputRoot),
       buildCoveragePlan(outputRoot),
       provenanceAudit({ outputRoot }),
     ]);
@@ -1893,17 +2058,17 @@ export class MemImportU2Service {
     await writeJson(eventPath(outputRoot, kind), { version: 1, kind: `mem-import-${kind}-event`, at: this.now().toISOString(), ...event });
   }
 
-  private async updateAudit(outputRoot: string, runId: string, effect?: MemImportRunAuditV2["effects"][number], update: Partial<MemImportRunAuditV2> = {}): Promise<MemImportRunAuditV2> {
+  private async updateAudit(outputRoot: string, runId: string, effect?: MemImportRunAudit["effects"][number], update: Partial<MemImportRunAudit> = {}): Promise<MemImportRunAudit> {
     let manifest: Awaited<ReturnType<typeof readManifest>> | undefined;
     try { manifest = await readManifest(outputRoot); } catch { manifest = undefined; }
     const source = manifest ? { normalizedUnits: manifest.units.length, manifestHash: hash(manifest) } : { normalizedUnits: 0, manifestHash: "unavailable" };
-    let audit: MemImportRunAuditV2;
+    let audit: MemImportRunAudit;
     if (existsSync(importRunPath(outputRoot))) {
-      const existing = JSON.parse(await readFile(importRunPath(outputRoot), "utf-8")) as Partial<MemImportRunAuditV2>;
-      if (existing.version === 2 && existing.kind === "mem-import-run" && existing.runId === runId && Array.isArray(existing.effects)) audit = existing as MemImportRunAuditV2;
+      const existing = JSON.parse(await readFile(importRunPath(outputRoot), "utf-8")) as Partial<MemImportRunAudit>;
+      if (existing.version === 2 && existing.kind === "mem-import-run" && existing.runId === runId && Array.isArray(existing.effects)) audit = existing as MemImportRunAudit;
       else audit = { version: 2, kind: "mem-import-run", runId, status: "running", createdAt: this.now().toISOString(), source, effects: [] };
     } else audit = { version: 2, kind: "mem-import-run", runId, status: "running", createdAt: this.now().toISOString(), source, effects: [] };
-    const next: MemImportRunAuditV2 = { ...audit, ...update, effects: effect ? [...audit.effects, effect] : audit.effects };
+    const next: MemImportRunAudit = { ...audit, ...update, effects: effect ? [...audit.effects, effect] : audit.effects };
     await writeJson(importRunPath(outputRoot), next);
     return next;
   }

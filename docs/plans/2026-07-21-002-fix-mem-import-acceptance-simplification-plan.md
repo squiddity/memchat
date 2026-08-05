@@ -1,13 +1,17 @@
 ---
 title: "Mem-import Acceptance Simplification and Runtime Safety - Plan"
 type: fix
+status: historical
 date: 2026-07-21
 artifact_contract: ce-unified-plan/v1
-artifact_readiness: implementation-in-progress
+artifact_readiness: historical-record
 product_contract_source: failed-mem-import-acceptance-run
-execution: code-and-eval
+execution: historical-analysis
 related_plan: docs/plans/2026-07-21-001-fix-mem-import-efficiency-parity-plan.md
 ---
+
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
 
 # Mem-import Acceptance Simplification and Runtime Safety - Plan
 

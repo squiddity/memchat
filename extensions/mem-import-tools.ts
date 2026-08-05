@@ -3,14 +3,14 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { MemImportService } from "../src/mem-import/service.js";
 import { PiHerdrUsageResolver } from "../src/mem-import/pi-herdr-usage-resolver.js";
-import { MemImportU2Service } from "../src/mem-import/u2-service.js";
+import { MemImportCanonicalService } from "../src/mem-import/canonical-service.js";
 import { MemImportProposalService } from "../src/mem-import/proposal-service.js";
 import { MemImportCompendiumService } from "../src/mem-import/compendium-service.js";
 import { MemImportIdentityService } from "../src/mem-import/identity-service.js";
 import { MemImportClusterPlanService } from "../src/mem-import/cluster-plan-service.js";
 
 const service = new MemImportService(undefined, new PiHerdrUsageResolver());
-const u2 = new MemImportU2Service(service);
+const canonical = new MemImportCanonicalService(service);
 const proposals = new MemImportProposalService(service);
 const compendia = new MemImportCompendiumService(service);
 const identities = new MemImportIdentityService(service);
@@ -204,7 +204,7 @@ const artifactSchema = Type.Object({
   provenance: Type.Array(artifactProvenanceSchema, { minItems: 1, description: "Exact local source anchors; omit quote." }),
   related: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 })),
   metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-}, { additionalProperties: false, description: "Complete provenance-backed world artifact." });
+}, { additionalProperties: false, description: "Complete provenance-backed compendium artifact." });
 
 const candidateDispositionSchema = Type.Object({
   unitId: Type.String({ minLength: 1, description: "Unit containing the extraction candidate." }),
@@ -217,7 +217,7 @@ const candidateDispositionSchema = Type.Object({
 const mergeStageSchema = Type.Object({
   version: Type.Literal(1),
   kind: Type.Literal("merge"),
-  artifacts: Type.Array(artifactSchema, { description: "Complete model-authored world artifacts." }),
+  artifacts: Type.Array(artifactSchema, { description: "Complete model-authored compendium artifacts." }),
   candidateDispositions: Type.Optional(Type.Array(candidateDispositionSchema, { description: "Extraction candidate accounting dispositions." })),
   diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
   metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -302,8 +302,8 @@ const identityPacketSchema = Type.Object({
   version: Type.Literal(1),
   kind: Type.Literal("mem-import-identity"),
   id: Type.String({ minLength: 1 }),
-  proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100, description: "Legacy unplanned packet binding. Planned assignments derive this from completed cluster proposals." })),
-  baselineRevision: Type.Optional(Type.Integer({ minimum: 0, description: "Legacy unplanned baseline. Planned assignments derive this from the cluster plan." })),
+  proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100, description: "Direct-scope packet binding. Planned assignments derive this from completed cluster proposals." })),
+  baselineRevision: Type.Optional(Type.Integer({ minimum: 0, description: "Direct-scope baseline. Planned assignments derive this from the cluster plan." })),
   baselineContentHash: Type.Optional(Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()])),
   decisions: Type.Array(Type.Union([
     Type.Object({ id: Type.String({ minLength: 1 }), provisionalId: Type.String({ minLength: 1 }), disposition: Type.Literal("match"), canonicalId: Type.String({ minLength: 1 }), alternatives: Type.Optional(Type.Array(Type.Object({ canonicalId: Type.String({ minLength: 1 }), artifactHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), summary: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }), { maxItems: 25 })), evidenceRefs: Type.Optional(Type.Array(Type.Unknown())), rationale: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
@@ -366,7 +366,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       reason: Type.String({ minLength: 1, maxLength: 1000 }),
     }),
     async execute(_id, params) {
-      try { return result(await u2.recoverFailedRun(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.recoverFailedRun(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -435,7 +435,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
     }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await u2.effectInventory(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.effectInventory(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -560,7 +560,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       usageEvidence: Type.Optional(usageEvidenceSchema),
     }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await u2.recordCoordinatorSession(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.recordCoordinatorSession(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -671,7 +671,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     label: "Assign Mem Import Worker",
     description: "Issue a role-scoped semantic worker assignment. Planned proposers name exactly one planHash/clusterId, planned reconcilers name one planHash/reconciliationSetId, and planned mergers name only planHash; all worker scopes are derived from the immutable artifact. A failed/revoked no-effect planned assignment may be retried with a fresh taskId and retriesTaskId.",
     parameters: Type.Union([
-      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("proposer"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), clusterId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), unitIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 })), candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1, description: "Legacy unplanned fixture scope only. Planned scope is derived from clusterId." }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
+      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("proposer"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), clusterId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), unitIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 })), candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1, description: "Direct-scope fixture only. Planned scope is derived from clusterId." }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reconciler"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), reconciliationSetId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("merger"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reviewer"), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
@@ -808,7 +808,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read compact cursor-paginated canonical artifact summaries for an authorized merger, reviewer, or repairer. Use this instead of loading a complete canonical snapshot.",
     parameters: Type.Object({ ...workerSchema, group: Type.Optional(extractionGroupSchema), continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_id, params) {
-      try { return result(await trackedEvidenceRead("mem_merge_inventory", params, () => u2.readMergeInventoryForWorker(params))); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_merge_inventory", params, () => canonical.readMergeInventoryForWorker(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -818,7 +818,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read one explicit canonical artifact by ID for an authorized merger, reviewer, or repairer.",
     parameters: Type.Object({ ...workerSchema, artifactId: Type.String({ minLength: 1 }) }),
     async execute(_id, params) {
-      try { return result(await trackedEvidenceRead("mem_merge_read_artifact", params, () => u2.readMergeArtifactForWorker(params))); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_merge_read_artifact", params, () => canonical.readMergeArtifactForWorker(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -828,7 +828,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read deterministic precommit requirements for one intended proposal subset: pending proposal/identity hashes, identity creates requiring same-batch upserts, match read-set controls, blocking conflicts, and batch limits. This does not choose semantics or mutate state.",
     parameters: Type.Object({ ...workerSchema, proposalHashes: Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 50, description: "Exact intended proposal subset for the next transaction." }) }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await trackedEvidenceRead("mem_merge_requirements", params, () => u2.readWorkerMergeRequirements(params))); } catch (error) { return failure(error); }
+      try { return result(await trackedEvidenceRead("mem_merge_requirements", params, () => canonical.readWorkerMergeRequirements(params))); } catch (error) { return failure(error); }
     },
   });
 
@@ -838,7 +838,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Validate a fully shaped proposal-backed commit against current scope, read sets, identity requirements, and canonical application without acquiring the writer lease or mutating state. Fix every returned issue before commit.",
     parameters: Type.Object({ ...workerSchema, ...mergeCommitFields }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await u2.validateWorkerCommit(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.validateWorkerCommit(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -848,7 +848,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Commit one validated proposal-backed batch and return a compact transaction receipt. Prefer grouped proposalAccepts for unchanged artifacts; reserve changes.upsert/delete for synthesis. The service carries proposal candidate accounting and owns lease, fence, and current-revision CAS internally.",
     parameters: Type.Object({ ...workerSchema, ...mergeCommitFields }, { additionalProperties: false }),
     async execute(_id, params) {
-      try { return result(await u2.commitWorkerBatchReceipt(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.commitWorkerBatchReceipt(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -858,7 +858,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read compact cursor-paginated canonical artifact summaries as the coordinator.",
     parameters: Type.Object({ ...coordinatorSchema, group: Type.Optional(extractionGroupSchema), continuationCursor: Type.Optional(Type.String({ minLength: 1 })), maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_id, params) {
-      try { return result(await u2.mergeInventory(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.mergeInventory(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -868,7 +868,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Summarize the durable cross-phase ledger: terminal status, proposal-stage candidate coverage and duplicates, identity packets, canonical revision/consumption/accounting, and conflicts. Fresh phase coordinators use this without prior coordinator prose.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
-      try { return result(await u2.workStatus(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.workStatus(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -878,7 +878,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Read compact terminal, proposal/identity, canonical revision/hash, conflict, accounting, and review-validity controls. Use bounded inventory and explicit artifact reads for canonical content.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
-      try { return result(await u2.mergeControls(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.mergeControls(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -890,7 +890,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     async execute(_id, params) {
       try {
         await service.authorizeWorker({ ...params, capability: "merge:lease", role: "repairer" });
-        return result(await u2.acquireWorkerLease(params));
+        return result(await canonical.acquireWorkerLease(params));
       } catch (error) { return failure(error); }
     },
   });
@@ -901,7 +901,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Acquire the fenced global merge writer lease for explicit coordinator-authored merge/repair work.",
     parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }) }),
     async execute(_id, params) {
-      try { return result(await u2.acquireCoordinatorLease(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.acquireCoordinatorLease(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -913,7 +913,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     async execute(_id, params) {
       try {
         await service.authorizeWorker({ ...params, capability: "merge:lease", role: "repairer" });
-        return result(await u2.heartbeatWorkerLease(params));
+        return result(await canonical.heartbeatWorkerLease(params));
       } catch (error) { return failure(error); }
     },
   });
@@ -924,7 +924,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Extend the coordinator-owned merge lease only when its fence remains current.",
     parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), fence: Type.Integer({ minimum: 1 }) }),
     async execute(_id, params) {
-      try { return result(await u2.heartbeatCoordinatorLease(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.heartbeatCoordinatorLease(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -942,7 +942,7 @@ export default function memImportTools(pi: ExtensionAPI) {
       batch: mergeBatchSchema,
     }),
     async execute(_id, params) {
-      try { return result(await u2.applyWorkerRepairBatchReceipt(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.applyWorkerRepairBatchReceipt(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -954,7 +954,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     async execute(_id, params) {
       try {
         await service.authorizeWorker({ ...params, capability: "merge:lease", role: "repairer" });
-        await u2.releaseWorkerLease(params);
+        await canonical.releaseWorkerLease(params);
         return result({ released: true });
       } catch (error) { return failure(error); }
     },
@@ -966,17 +966,17 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Release an explicit coordinator-owned merge lease after the final mutation or finalization.",
     parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), fence: Type.Integer({ minimum: 1 }) }),
     async execute(_id, params) {
-      try { await u2.releaseCoordinatorLease(params); return result({ released: true }); } catch (error) { return failure(error); }
+      try { await canonical.releaseCoordinatorLease(params); return result({ released: true }); } catch (error) { return failure(error); }
     },
   });
 
   registerMemImportTool(pi, {
     name: "mem_review_submit",
     label: "Submit Immutable Review",
-    description: "Persist one immutable reviewer packet bound to an existing canonical merge revision. This cannot mutate world state.",
+    description: "Persist one immutable reviewer packet bound to an existing canonical merge revision. This cannot mutate compendium state.",
     parameters: Type.Object({ ...workerSchema, packet: reviewPacketSchema }),
     async execute(_id, params) {
-      try { return result(await u2.submitReview(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.submitReview(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -986,7 +986,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Emit the current deterministic Markdown projection, then run lint, coverage, provenance, identity, dispatch, reviewer-action, and readiness checks without choosing semantic repairs.",
     parameters: Type.Object(coordinatorSchema),
     async execute(_id, params) {
-      try { return result(await u2.checks(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.checks(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -996,7 +996,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Coordinator-only terminal failure record for an unmet capability or required-delegation gate. Keep the message concise and credential-free.",
     parameters: Type.Object({ ...coordinatorSchema, reasonCode: Type.String({ minLength: 1, maxLength: 80 }), message: Type.String({ minLength: 1, maxLength: 1000 }) }),
     async execute(_id, params) {
-      try { return result(await u2.fail(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.fail(params)); } catch (error) { return failure(error); }
     },
   });
 
@@ -1006,7 +1006,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Coordinator-only finalization. With a current coordinator lease, emit Markdown, rerun deterministic checks, write import-run v2, and refuse finalized success on error diagnostics.",
     parameters: Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), fence: Type.Integer({ minimum: 1 }) }),
     async execute(_id, params) {
-      try { return result(await u2.finalize(params)); } catch (error) { return failure(error); }
+      try { return result(await canonical.finalize(params)); } catch (error) { return failure(error); }
     },
   });
 }

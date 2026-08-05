@@ -1,11 +1,11 @@
 ---
 name: mem-import
-description: Import a book or series into a provenance-rich world library with bounded semantic subagents. Use for fresh imports, maintained compendia, resumable extraction, canonical merge, review, and repair.
+description: Import a book or series into a provenance-rich compendium with bounded semantic subagents. Use for fresh imports, maintained compendia, resumable extraction, canonical merge, review, and repair.
 ---
 
 # Mem Import
 
-Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, identity packets, canonical transactions, reviews, checks, and the final run record are authoritative. Worker and coordinator prose is only a receipt. This contract has completed a full 13-unit Alice import, including same-run recovery from a partial failed merge through reviewed terminal finalization; see the [milestone report](../../docs/evaluations/2026-08-03-alice-full-mem-import-milestone.md).
+Treat durable artifacts as a **ledger**: normalized source, extraction packets, proposals, identity packets, canonical transactions, reviews, checks, and the final run record are authoritative. Worker and coordinator prose is only a receipt. This contract has completed a full 13-unit Alice import, including same-run recovery from a partial failed merge through reviewed terminal finalization; that run is historical project evidence, while this skill and `../../docs/smoke-tests.md` are the included operational contract.
 
 ## 1. Choose your role
 
@@ -39,7 +39,25 @@ Read [coordinator decisions](references/workflow.md), then perform one phase:
 
 After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet.
 
-## 5. Complete the ledger
+## 5. Preserve traversable authored prose
+
+Apply this compact authoring contract to every authored section body across people, places, things, facts, style, synopsis, timeline, and guide artifacts:
+
+- Mark each clear, durable mention of another artifact with the exact `[[artifact-id|reader-facing label]]` form. Labels should use natural aliases and possessives where that is how a reader would recognize the artifact.
+- Do not link pronouns, ambiguous common nouns, the current artifact, existing Markdown links, URLs, inline or fenced code, or provenance quotes.
+- Keep `related` as structured, deduplicated navigation; it complements and never replaces traversable inline prose. When both artifacts exist, make meaningful relationships and event participation useful to traverse in both directions without forced reciprocal noise.
+- Reviewers assess material retrieval/traversal problems semantically. Projection and lint validate declared links, but do not pretend deterministic code can infer every missed plain-text mention.
+
+The proposer, reviewer, and repairer role packets carry the role-specific form of this contract; do not expand the workflow with a second authoring template.
+
+## 6. Choose and migrate the output root
+
+- A standalone import uses a dedicated output root for one run. A maintained compendium uses the existing compendium root so the root-level projection remains the reader-facing surface; stages, normalized JSON, and run records stay in their owned subdirectories.
+- The projection owns only the root-level generated Markdown recorded in `.mem-import-generated.json`. It never follows or deletes unknown files, directories, or symlinks.
+- Refusal is intentional when the selected root contains a nested retired `world/` directory, including a symlink. Review its contents and manually move, archive, or remove that directory before retrying; the import does not perform that migration automatically.
+- Keep one explicit output-root choice for a run. Do not treat an old nested layout as an active compatibility path; use the migration steps above and then rerun against the standalone or compendium root.
+
+## 7. Complete the ledger
 
 Success requires all of the following:
 

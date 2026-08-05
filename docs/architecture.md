@@ -15,7 +15,7 @@ Design direction:
 - use pi SDK primitives where practical
 - keep the initial chat loop simple and observable
 - treat memory as an interchangeable subsystem
-- preserve compatibility with pi extensions/plugins when practical
+- integrate with pi extensions/plugins through the host agent when practical
 - leave room for custom state models tuned to narrative facts, preferences, chronology, and contradictions
 
 ## Memory quality bar
@@ -58,16 +58,21 @@ Implemented today:
 - vendored Lemonade provider discovery
 - pluggable `none`, `transcript`, and `qmd`-family memory modes
 - session-aware recall and interactive memory inspection commands
-- an assignment-bound, provenance-rich `mem-import` pipeline with typed durable phase ledgers, identity-aware planning, canonical transactions, review/repair, and terminal finalization
+- an assignment-bound, provenance-rich `mem-import` pipeline with typed durable phase ledgers, identity-aware planning, canonical transactions, review/repair, terminal finalization, and a root-level compendium Markdown projection
 - same-run recovery of failed imports by rotating coordinator authority and worker authorization epoch while preserving verified completed stages
+- host-agent-only compendium orchestration through `/skill:mem-import`; no separate import CLI or nested projection path
 
-The full-corpus execution milestone was validated on 2026-08-03 with a 13-unit Alice import: 28/28 proposals and 183/183 candidates reached canonical accounting, a partial failed merge resumed without repeating earlier semantic work, and review/repair finalized revision 10 with no conflicts or errors. See [the evaluation report](evaluations/2026-08-03-alice-full-mem-import-milestone.md).
+The full-corpus execution milestone was validated on 2026-08-03 with a 13-unit Alice import: 28/28 proposals and 183/183 candidates reached canonical accounting, a partial failed merge resumed without repeating earlier semantic work, and review/repair finalized revision 10 with no conflicts or errors. The legacy-surface cleanup is complete: the root-level projection, path safety, link lint, source retention, and migration refusal contracts are active, and the retired importer/runtime surfaces are deleted. This milestone and cleanup handoff are historical project records; the included current contract is in `skills/mem-import/SKILL.md`, with validation commands in `docs/smoke-tests.md`.
 
-## Near-term roadmap
+## Near-term quality follow-ups
 
 1. improve durable fact/state extraction
 2. add stronger consistency eval fixtures
 3. compare hardwired, skill-based, and hybrid retrieval fairly
 4. integrate richer qmd-backed retrieval/indexing where useful
 5. harden tool access for qmd skill usage
-6. improve mem-import narrative-surface classification, style citation density, provenance specificity, and complete usage retention now that full-corpus execution/recovery is proven
+6. improve mem-import narrative-surface classification, style citation density, provenance specificity, and complete usage retention now that full-corpus execution/recovery and cleanup are complete
+
+## Cleanup verification
+
+The cleanup baseline passed `rm -rf dist && npm run build`, focused path/stage/projection/lint tests, `npm run test:cleanup`, `npm run test:mem-import`, `npm test`, `npm pack --dry-run`, and `git diff --check`. These checks are recorded here as completed evidence; remaining work is quality refinement only.

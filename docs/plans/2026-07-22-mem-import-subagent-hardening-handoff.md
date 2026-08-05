@@ -1,5 +1,8 @@
 # Mem-import subagent hardening handoff — superseded historical record
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 > **Status: superseded.** This file records the July 22 runtime-hardening work and two rejected coordinator-driven acceptance attempts. It is not an acceptance contract or current next-step list.
 >
 > - Installation acceptance authority: [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) and `skills/mem-import/references/acceptance.md`.

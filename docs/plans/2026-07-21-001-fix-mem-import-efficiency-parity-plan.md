@@ -1,19 +1,23 @@
 ---
-title: "Mem-import Efficiency and Legacy Parity - Plan"
-type: fix
+title: "Mem-import Efficiency and Legacy Parity - Historical Decision Record"
+type: historical-decision-record
 date: 2026-07-21
+status: historical
+product_authority: none
 artifact_contract: ce-unified-plan/v1
-artifact_readiness: implementation-ready
+artifact_readiness: historical-record
 product_contract_source: alice-import-observation
-execution: code-and-eval
+execution: historical-analysis
 acceptance_plan: docs/plans/2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md
 ---
 
-# Mem-import Efficiency and Legacy Parity - Plan
+# Mem-import Efficiency and Legacy Parity - Historical Decision Record
 
-> **Authority boundary:** This plan governs real-import orchestration, compactness, semantic quality, usage telemetry, and Alice evaluation. It does not govern installation acceptance. Normal preflight uses the brief extension-agnostic facility check in `skills/mem-import/references/acceptance.md`; the [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) retains optional maintainer conformance and runtime-safety history.
+> **Historical/non-product status:** This file records earlier efficiency, quality, and cleanup decisions. It is not runtime authority and does not promise that its retired paths, names, or commands still exist. The controlled legacy cost A/B is waived; no new instrumented legacy run is required.
 >
-> **2026-08-03 milestone:** Full-corpus mem-import execution is proven. A 13-unit Alice run recovered in place from a partial failed merge and finalized revision 10 with 28/28 proposals, 183/183 candidate accounting, 155 artifacts, and no conflicts or errors. See the [full milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Complete usage retention and the instrumented legacy comparison remain open parts of U8.
+> **Authority boundary:** This historical record describes real-import orchestration, compactness, semantic quality, usage telemetry, and Alice evaluation. It does not govern installation acceptance or current production behavior. Current workflow authority is `skills/mem-import/SKILL.md`; the [focused-probe plan](2026-07-21-002-fix-mem-import-acceptance-simplification-plan.md) is retained only as historical maintainer-conformance and runtime-safety context.
+>
+> **2026-08-03 milestone:** Full-corpus mem-import execution is proven. A 13-unit Alice run recovered in place from a partial failed merge and finalized revision 10 with 28/28 proposals, 183/183 candidate accounting, 155 artifacts, and no conflicts or errors. See the [full milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Partial usage retention remains recorded honestly; the legacy cost comparison is waived. The [legacy cleanup feature handoff](2026-08-04-mem-import-legacy-cleanup-feature-handoff.md) replaces parity as cleanup input.
 
 ## Goal Capsule
 
@@ -21,22 +25,22 @@ acceptance_plan: docs/plans/2026-07-21-002-fix-mem-import-acceptance-simplificat
 |---|---|
 | Objective | Preserve mem-import's bounded authorization, provenance, resumability, and audit guarantees while removing quadratic context growth, repeated merge work, and semantic fragmentation relative to legacy world-import. |
 | Primary users | Agents importing books or maintained series with budget workers under stronger supervision. |
-| Authority | The finalized Alice mem-import run `mir-9b27945d9f1eb450cd8a2d0f`, legacy Alice run `world-output/alice-staged-quality-20260710-175231`, `docs/world-import.md`, `docs/plans/2026-07-20-mem-import-simplification.md`, session usage records, and model-visible mem-import tool contracts. |
-| Execution profile | Tool response contraction, phased coordination, merge batching, identity-aware proposal planning, telemetry, and controlled Alice A/B evaluation. |
-| Stop conditions | Stop before weakening provenance/accounting, moving semantic identity decisions into deterministic code, silently dropping candidates, or optimizing solely by imposing candidate/artifact count caps. |
+| Authority | Historical Alice mem-import observations, archived legacy behavior notes, `docs/plans/2026-07-20-mem-import-simplification.md`, session usage records, and model-visible mem-import tool contracts. This record is not product authority. |
+| Execution profile | Tool response contraction, phased coordination, merge batching, identity-aware proposal planning, telemetry, and a completed Alice evaluation; the legacy cost A/B is waived and no new legacy run is required. |
+| Stop conditions | Stop before weakening provenance/accounting, moving semantic identity decisions into deterministic code, silently dropping candidates, or optimizing solely by imposing candidate/artifact count caps. Cleanup follows the feature handoff rather than a parity gate. |
 
 ---
 
 ## Executive Summary
 
-The successful Alice mem-import run was much less efficient than legacy world-import:
+The historical Alice observations recorded a mem-import efficiency gap relative to the then-retained legacy runner:
 
 - **105.88M processed tokens** and approximately **$7.50** for the corpus run, excluding acceptance and the supervising conversation;
 - approximately **four hours** across the main run and finalization recovery;
 - **51 model sessions**, including 44 semantic worker sessions and four coordinator/finalizer sessions;
 - **181 extraction candidates**, **24 persisted proposals**, **25 canonical transactions**, and **158 canonical artifacts**.
 
-The comparable legacy Alice run completed in approximately **86 minutes** using about **five staged model invocations**, with **129 candidates** and **85 artifacts**. Legacy sessions used `SessionManager.inMemory`, so exact legacy token totals were not persisted; the comparison is exact for duration, invocation count, candidate/artifact counts, and mem-import usage, but not for a legacy token ratio.
+The archived legacy Alice observation completed in approximately **86 minutes** using about **five staged model invocations**, with **129 candidates** and **85 artifacts**. Legacy sessions used `SessionManager.inMemory`, so exact legacy token totals were not persisted. These figures remain historical context only: cost A/B is waived and no new instrumented legacy run is required.
 
 The dominant regression is not extraction or bounded proposal sharding. It is the merge protocol:
 
@@ -178,7 +182,7 @@ The implementation authority for these runtime safeguards and the replacement of
 - **R9. No silent coverage loss:** Efficiency changes may not drop candidates, weaken provenance, or replace explicit disposition accounting.
 - **R10. Usage telemetry:** Final run records must expose sanitized per-role/model usage totals when the adapter can obtain them.
 - **R11. Actionable errors:** Validation failures return stable codes/paths and concise correction guidance so workers do not regenerate unchanged oversized bodies.
-- **R12. Quality parity:** Efficiency improvements must not regress lint, provenance integrity, candidate accounting, identity conflicts, narrative surfaces, or reviewer quality.
+- **R12. Quality preservation:** Efficiency improvements must not regress lint, provenance integrity, candidate accounting, identity conflicts, narrative surfaces, or reviewer quality.
 - **R13. Assignment-bound dispatch:** A coordinator may launch semantic children only from a live assignment, with host-enforced tools exactly equal to `assignment.tools` plus adapter lifecycle controls; generic helper children cannot broaden tools.
 - **R14. Terminal-state monotonicity with checkpoint recovery:** After `mem_import_fail`, assignments, semantic submissions, reviews, and canonical mutations reject until explicit authorized same-run recovery rotates coordinator authority and worker epoch; terminal finalization remains permanent.
 - **R15. No-op rejection:** A transaction that does not change semantic canonical state, candidate accounting, identity/conflict state, or review-relevant controls must not create a new revision.
@@ -193,7 +197,7 @@ The implementation authority for these runtime safeguards and the replacement of
 - Phase-specific coordinator subagent invocation guidance.
 - Identity-aware candidate/proposal planning with model-owned decisions.
 - Per-role/model token/cost telemetry.
-- Alice A/B fixtures and token/quality budgets.
+- Historical Alice fixtures and mem-import quality/usage budgets; no new legacy cost benchmark is required.
 
 #### Deferred
 
@@ -215,7 +219,7 @@ The implementation authority for these runtime safeguards and the replacement of
 
 ### D1. Return compact transaction receipts
 
-Keep `MemImportU2Service.commitWorkerBatch` internally returning `MergeState` if useful for tests/internal composition, but map the model-facing extension result to a compact receipt:
+Keep `MemImportCanonicalService.commitWorkerBatch` internally returning `MergeState` if useful for tests/internal composition, but map the model-facing extension result to a compact receipt:
 
 ```json
 {
@@ -343,21 +347,21 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 ### U1. Contract merge and repair responses
 
 - **Goal:** Remove cumulative canonical stages from mutation results.
-- **Files:** `extensions/mem-import-tools.ts`, `src/mem-import/u2-service.ts`, `src/mem-import-tools.test.ts`.
+- **Files:** `extensions/mem-import-tools.ts`, `src/mem-import/canonical-service.ts`, `src/mem-import-tools.test.ts`.
 - **Work:** Map merge/repair results to compact receipts. Add response-size tests at small and 1,000-artifact scale.
 - **Done signal:** No model-facing successful mutation includes complete artifact/disposition arrays; response size remains bounded independent of corpus size.
 
 ### U2. Remove full canonical state from coordinator profiles
 
 - **Goal:** Prevent accidental 800 KB state reads.
-- **Files:** `extensions/mem-import-tools.ts`, `src/mem-import/u2-service.ts`, `skills/mem-import/references/helper-tools.md`, `skills/mem-import/references/workflow.md`.
+- **Files:** `extensions/mem-import-tools.ts`, `src/mem-import/canonical-service.ts`, `skills/mem-import/references/helper-tools.md`, `skills/mem-import/references/workflow.md`.
 - **Work:** Replace `mem_import_merge_state` with compact controls or remove it from normal profiles in favor of work status/inventory.
 - **Done signal:** Coordinator can resume/finalize using controls and bounded inventory without receiving artifact bodies.
 
 ### U3. Add weighted merge batching
 
 - **Goal:** Reduce 24 proposal transactions to a small bounded sequence.
-- **Files:** `extensions/mem-import-tools.ts`, `src/mem-import/u2-service.ts`, merger role guidance, concurrency tests.
+- **Files:** `extensions/mem-import-tools.ts`, `src/mem-import/canonical-service.ts`, merger role guidance, concurrency tests.
 - **Work:** Increase lightweight accept-reference capacity while retaining small limits for synthesized bodies. Derive safe absent-target read tokens where appropriate.
 - **Done signal:** A fixture with 24 Alice-sized proposals commits in no more than six transactions without a complete-state response.
 
@@ -391,18 +395,18 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 
 - **Status:** Complete on 2026-07-27. Schema-v1 per-assignment/coordinator records, role/phase/provider-model aggregation, null preservation, explicit unavailability, and post-finalization refresh now feed an adapter-specific Pi/Herdr resolver. It reads only content-free activity sidecars by sanitized host child identity, retains the latest cumulative activity sequence, deduplicates resumes, persists portable per-session snapshots before cleanup, and classifies missing/invalid/stale/unmatched evidence explicitly. The Pi/Herdr completion path also performs one final synchronous sidecar refresh before delivering live details. No generic event bus or model-mediated telemetry transport was added.
 - **Chosen repair:** For the current local Pi/Herdr adapter, retrieve usage post facto from existing content-free activity sidecars by the exact sanitized running-child IDs and session filename stems stored in dispatch/session records. Finalization or a post-run audit command validates and deduplicates the latest cumulative resume snapshot, persists sanitized per-session records and aggregates into `stages/import-run.json` before cleanup, and marks unavailable only genuinely absent/invalid/unmatched sidecars. Do not add a generic event bus or correlation protocol yet. Separately refresh the final sidecar before constructing live completion details; live delivery is useful but not authoritative persistence.
-- **Goal:** Make future legacy/mem-import comparisons exact and reproducible.
+- **Goal:** Make future mem-import usage measurements exact and reproducible; any legacy comparison remains historical and non-gating.
 - **Files:** run audit types/services, subagent integration, docs/tests.
 - **Work:** Aggregate sanitized host usage into schema-versioned run telemetry.
-- **Done signal:** Final import-run audit reports per-role/model token and cost totals or explicit unavailability.
+- **Done signal:** Final import-run audit reports per-role/model token and cost totals or explicit unavailability; no legacy benchmark run is required.
 
 ### U8. Run controlled Alice A/B evaluation
 
-- **Status:** Full-corpus mem-import milestone complete; comparative A/B remains open. The 2026-08-03 13-unit run finalized after same-run checkpoint recovery with 28/28 proposals, 183/183 accounting, and no conflicts/errors; see [the milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Usage retention was partial, so exact aggregate token/cost totals correctly remain null and the instrumented legacy comparison is not yet complete. The earlier bounded three-chapter evidence remains in [the 2026-07-25 report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md).
-- **Goal:** Verify efficiency and quality after U1–U7.
+- **Status:** Full-corpus mem-import execution is complete and the comparative legacy cost A/B is waived. The 2026-08-03 13-unit run finalized after same-run checkpoint recovery with 28/28 proposals, 183/183 accounting, and no conflicts/errors; see [the milestone report](../evaluations/2026-08-03-alice-full-mem-import-milestone.md). Partial usage retention remains honestly represented by null aggregate token/cost totals, but no new instrumented legacy run is required. The [legacy cleanup feature handoff](2026-08-04-mem-import-legacy-cleanup-feature-handoff.md) replaces cost parity as the cleanup input and records hyperlinking, projection, provenance, and review follow-ups.
+- **Goal:** Preserve useful legacy product behavior and continue measuring mem-import quality without retaining the legacy runner as a benchmark.
 - **Controls:** Same EPUB, skill revision, coordinator/worker models, thinking settings, acceptance profile, subagent behavior, and reviewer rubric.
-- **Compare:** Current finalized baseline, compact-response mem-import, and a newly instrumented legacy run where practical.
-- **Done signal:** Report exact token, duration, retry, transaction, artifact-identity, provenance, narrative-surface, and reviewer metrics.
+- **Comparison status:** The current finalized baseline and compact-response mem-import remain useful for quality and usage observations. The controlled legacy cost A/B is waived; no new legacy run is required. Use the [legacy cleanup feature handoff](2026-08-04-mem-import-legacy-cleanup-feature-handoff.md) as the cleanup input instead of parity.
+- **Done signal:** Preserve useful behavior and report available mem-import token, duration, retry, transaction, artifact-identity, provenance, narrative-surface, and reviewer metrics without treating legacy cost parity as a gate.
 
 ---
 
@@ -412,7 +416,7 @@ Follow [Mem-import Acceptance Simplification and Runtime Safety](2026-07-21-002-
 2. **U6 — demand-driven reads:** complete; default source/chapter rereads are constrained and bounded per-role read counts are recorded.
 3. **U7 — usage telemetry:** complete; deterministic Pi/Herdr sidecar retrieval now owns authoritative host-to-audit ingestion and live completion refresh.
 4. **Three-chapter Alice evaluation:** complete on 2026-07-25; durable results and follow-ups are in [the evaluation report](../evaluations/2026-07-25-alice-three-chapter-mem-import.md).
-5. **U8 — controlled full Alice A/B:** full-corpus mem-import execution and recovery are complete; improve usage retention and residual quality warnings, then compare against an instrumented legacy run where practical.
+5. **U8 — controlled full Alice A/B (historical label):** full-corpus mem-import execution and recovery are complete; the legacy cost A/B is waived and no new legacy run is required. Use the [legacy cleanup feature handoff](2026-08-04-mem-import-legacy-cleanup-feature-handoff.md) to preserve useful behavior, then focus future evaluation on mem-import hyperlink traversal, narrative quality, provenance, and retrieval usefulness.
 
 Do not rerun the retired coordinator-driven acceptance ladder. Run the focused multi-role suite only for maintainer conformance after relevant production-tool, fixture, authorization, or adapter changes; ordinary imports use a brief facility recipe/probe.
 
@@ -449,7 +453,7 @@ The next controlled Alice run should meet all correctness gates and target the f
 - no central-character duplicate/provisional artifact family left unresolved;
 - proposal shard size remains evidence-driven, with no hard semantic coverage cap.
 
-The longer-term parity target is below 20M processed tokens without lowering reviewer quality or provenance coverage. Targets should be revised from measured clean-run evidence, not achieved by suppressing necessary work.
+The longer-term efficiency target is below 20M processed tokens without lowering reviewer quality or provenance coverage. Targets should be revised from measured clean-run evidence, not achieved by suppressing necessary work; they are not a legacy cost-parity gate.
 
 ---
 

@@ -5,6 +5,9 @@ date: 2026-07-06
 origin: Sherlock Holmes DeepSeek import provenance evaluation
 ---
 
+> **Historical/non-product record — superseded:** This plan is retained for traceability only. It is not runtime authority, an installation contract, or a current implementation instruction; consult the active product sources linked from [`docs/plans/README.md`](README.md).
+
+
 # feat: Add world-import provenance audit and repair tooling
 
 ## Summary

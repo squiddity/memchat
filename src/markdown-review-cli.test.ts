@@ -14,21 +14,21 @@ async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("parseArgs defaults to world-output and accepts one explicit root", () => {
-  assert.deepEqual(parseArgs([]), { root: "world-output" });
+test("parseArgs defaults to compendium-output and accepts one explicit root", () => {
+  assert.deepEqual(parseArgs([]), { root: "compendium-output" });
   assert.deepEqual(parseArgs(["storyboards"]), { root: "storyboards" });
   assert.throws(() => parseArgs(["one", "two"]), /Usage:/);
 });
 
 test("resolveReviewRoot accepts contained directories and rejects unsafe roots", async () => {
   await withTempDir(async (repo) => {
-    await mkdir(join(repo, "world-output"));
+    await mkdir(join(repo, "compendium-output"));
     await mkdir(join(repo, "storyboards"));
     await writeFile(join(repo, "not-a-directory.md"), "# no");
     const outside = await mkdtemp(join(tmpdir(), "memchat-markdown-review-outside-"));
     try {
       await symlink(outside, join(repo, "escape"));
-      assert.equal(await resolveReviewRoot(repo, "world-output"), resolve(repo, "world-output"));
+      assert.equal(await resolveReviewRoot(repo, "compendium-output"), resolve(repo, "compendium-output"));
       assert.equal(await resolveReviewRoot(repo, "storyboards"), resolve(repo, "storyboards"));
       await assert.rejects(resolveReviewRoot(repo, "missing"), /does not exist/);
       await assert.rejects(resolveReviewRoot(repo, "not-a-directory.md"), /not a directory/);
@@ -70,14 +70,15 @@ test("tailscaleUrlFromStartup reports only the confirmed DNS URL and actual port
 
 test("runReview serves a fixture through mdts and shuts it down", async () => {
   await withTempDir(async (repo) => {
-    const root = join(repo, "world-output");
-    await mkdir(root);
+    const root = join(repo, "compendium-output");
+    await mkdir(join(root, "stages"), { recursive: true });
     await writeFile(join(root, "index.md"), "# Fixture review\n");
+    await writeFile(join(root, "stages", "raw.json"), "{\"secret\":true}\n");
     const mdts = resolve("node_modules/.bin/mdts");
     let viewerPort: string | undefined;
     let request: Promise<void> | undefined;
     await runReview(
-      { root: "world-output" },
+      { root: "compendium-output" },
       repo,
       {
         discoverTailscale: () => ({ address: "127.0.0.1", dnsName: "reviewer.example.ts.net" }),
@@ -99,7 +100,11 @@ test("runReview serves a fixture through mdts and shuts it down", async () => {
               }
               const response = await fetch(`http://127.0.0.1:${viewerPort}/api/filetree`);
               assert.equal(response.status, 200);
-              assert.match(JSON.stringify(await response.json()), /index\.md/);
+              const tree = JSON.stringify(await response.json());
+              assert.match(tree, /index\.md/);
+              assert.doesNotMatch(tree, /raw\.json/);
+              const raw = await fetch(`http://127.0.0.1:${viewerPort}/stages/raw.json`);
+              assert.equal(raw.status, 404);
               child.kill("SIGTERM");
             } finally {
               clearTimeout(deadline);

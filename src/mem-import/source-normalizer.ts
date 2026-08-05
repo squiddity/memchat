@@ -4,9 +4,9 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, extname, join, posix, relative, resolve, sep } from "node:path";
-import { makeBlocks, normalizeSourceBlockText, renderUnitContent, type SourceBlockInput } from "./spans.js";
-import { diagnostic, ensureWorldImportDirs, normalizedUnitPath, writeManifest, writeNormalizedUnit } from "./staging.js";
-import type { ManifestDiagnostic, NormalizedSourceUnit, SourceBlockKind, SourceKind, SourceManifest, SourceManifestEntry, SourceRole } from "./types.js";
+import { makeBlocks, normalizeSourceBlockText, renderUnitContent, type SourceBlockInput } from "./source-spans.js";
+import { diagnostic, ensureMemImportDirs, normalizedUnitPath, writeManifest, writeNormalizedUnit } from "./stage-store.js";
+import type { ManifestDiagnostic, NormalizedSourceUnit, SourceBlockKind, SourceKind, SourceManifest, SourceManifestEntry, SourceRole } from "./contracts.js";
 
 const htmlExtensions = new Set([".html", ".htm", ".xhtml"]);
 const archiveExtensions = new Set([".zip", ".epub"]);
@@ -366,7 +366,7 @@ export async function normalizeSources(options: NormalizeOptions): Promise<Sourc
   const inputRoot = resolve(options.input);
   const outputRoot = resolve(options.outputRoot);
   const diagnostics: ManifestDiagnostic[] = [];
-  await ensureWorldImportDirs(outputRoot);
+  await ensureMemImportDirs(outputRoot);
   const units = await collectUnits(inputRoot, diagnostics);
   if (units.length === 0 && !diagnostics.some((item) => item.level === "error")) diagnostics.push(diagnostic("warning", "No supported HTML/XHTML source units found", inputRoot));
   for (const unit of units) await writeNormalizedUnit(outputRoot, unit);
