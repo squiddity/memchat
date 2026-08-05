@@ -572,6 +572,12 @@ test("Pi/Herdr dispatch and coordinator recording eagerly return authoritative s
   assert.equal(dispatch.usageEvidence.status, "available");
   assert.equal(dispatch.usageEvidence.status === "available" ? dispatch.usageEvidence.usage.inputTokens : null, 11);
   assert.equal(dispatch.activitySequence, 11);
+  const legacyStem = await resolver.resolve([{
+    key: "legacy-extension",
+    hostTaskId: "deadbeef",
+    hostSessionId: `${workerSessionId}.jsonl`,
+  }]);
+  assert.equal(legacyStem.get("legacy-extension")?.evidence.status, "available");
 
   const coordinatorSessionId = "2026-07-25T00-01-00-000Z_cafebabe-session";
   await seed("cafebabe", coordinatorSessionId, 17);
@@ -598,6 +604,7 @@ test("Pi/Herdr post-facto usage retrieval validates sidecars, keeps latest resum
   await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostTaskId: "deadbeef", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" }), /hostAdapter is required/);
   await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" }), /complete sanitized session filename stem/);
   await assert.rejects(service.recordCoordinatorSession({ ...run, phase: "extraction", facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef", outcome: "completed" }), /complete sanitized session filename stem/);
+  await assert.rejects(service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session.jsonl", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" }), /without \.jsonl/);
   await service.recordWorkerDispatch({ ...run, taskId: first.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session", requestedTools: first.tools, observedTools: first.tools, outcome: "completed" });
   await service.recordWorkerDispatch({ ...run, taskId: duplicate.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "deadbeef", hostSessionId: "2026-07-25T00-00-00-000Z_deadbeef-session", requestedTools: duplicate.tools, observedTools: duplicate.tools, outcome: "completed" });
   await service.recordWorkerDispatch({ ...run, taskId: missing.taskId, facility: "subagent", hostAdapter: "pi-herdr-subagents", hostTaskId: "cafebabe", hostSessionId: "2026-07-25T00-02-00-000Z_cafebabe-session", requestedTools: missing.tools, observedTools: missing.tools, outcome: "completed" });

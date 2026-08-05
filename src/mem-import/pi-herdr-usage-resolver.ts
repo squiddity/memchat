@@ -114,6 +114,11 @@ function sessionStartMs(name: string): number | undefined {
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]), Number(match[7]));
 }
 
+/** Accept old persisted values that included the session file extension. */
+function sessionStem(hostSessionId: string): string {
+  return hostSessionId.endsWith(".jsonl") ? hostSessionId.slice(0, -".jsonl".length) : hostSessionId;
+}
+
 async function workspaceHostTimes(workspace: string, hostTaskId: string, childId: string): Promise<number[]> {
   const times: number[] = [];
   for (const entry of await directoryEntries(workspace)) {
@@ -163,7 +168,7 @@ export class PiHerdrUsageResolver implements MemImportUsageResolver {
         resolved.set(request.key, { adapter: PI_HERDR_USAGE_ADAPTER, evidence: unavailable("sidecar-unmatched") });
         continue;
       }
-      const sessionId = request.hostSessionId ?? request.hostTaskId;
+      const sessionId = sessionStem(request.hostSessionId ?? request.hostTaskId);
       const matchedWorkspaces: string[] = [];
       for (const workspace of [...new Set(directories.map((item) => item.workspace))]) {
         if ((await workspaceHostTimes(workspace, sessionId, childId)).length > 0) matchedWorkspaces.push(workspace);

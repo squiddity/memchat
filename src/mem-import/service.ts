@@ -600,8 +600,8 @@ function assertHostTaskId(hostTaskId: string): void {
 
 function assertAdapterSessionId(facility: DispatchFacility, hostAdapter: string | undefined, hostSessionId: string | undefined): void {
   if (facility !== "subagent" || hostAdapter !== PI_HERDR_USAGE_ADAPTER || hostSessionId === undefined) return;
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[a-f0-9]{8}-.+$/.test(hostSessionId)) {
-    throw new Error("pi-herdr-subagents hostSessionId must be the complete sanitized session filename stem; truncated child IDs are invalid");
+  if (hostSessionId.endsWith(".jsonl") || !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[a-f0-9]{8}-.+$/.test(hostSessionId)) {
+    throw new Error("pi-herdr-subagents hostSessionId must be the complete sanitized session filename stem without .jsonl; truncated child IDs are invalid");
   }
 }
 
