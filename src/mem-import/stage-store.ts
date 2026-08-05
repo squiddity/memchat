@@ -288,4 +288,3 @@ export function validateStageEnvelope(stage: StageEnvelope, options: { requireCa
     });
   }
 }
-

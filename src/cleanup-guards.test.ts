@@ -232,4 +232,3 @@ test("package metadata exposes only current bins and scripts", async () => {
   assert.equal(packageLock.packages?.[""].name, "memchat");
   assert.deepEqual(packageLock.packages?.[""].bin, expectedBins);
 });
-

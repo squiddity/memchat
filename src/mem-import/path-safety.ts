@@ -46,4 +46,3 @@ export async function assertSafePathForWrite(path: string): Promise<void> {
 export async function assertSafePathAncestors(path: string): Promise<void> {
   await assertNoSymlinkedPathComponents(path, { includeLeaf: false, requireDirectories: true });
 }
-
