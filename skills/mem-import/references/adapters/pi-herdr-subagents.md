@@ -6,7 +6,7 @@ Use `subagent` for both parent → phase coordinator and phase coordinator → w
 
 ## Phase coordinator launch
 
-After calling begin exactly once, the parent starts four sequential fresh bounded coordinators (`extraction`, `proposal-reconciliation`, `merge`, `review-finalization`). Each launch has:
+After calling begin exactly once, the parent starts seven sequential fresh bounded coordinators (`extraction`, `proposal-reconciliation`, `merge`, `review`, `repair`, `verification`, `finalization`). The historical `review-finalization` coordinator is retained only for v1 compatibility. Each launch has:
 
 - the mem-import skill, exact phase name, small run/scope envelope, and coordinator role guidance;
 - coordinator mem-import tools, `subagent`, and extension-owned lifecycle controls;
@@ -31,7 +31,7 @@ For every live assignment, the coordinator:
 - sets explicit model, thinking, repository `cwd`, and fresh/lineage context;
 - launches no helper child, ends its turn, and waits at rest for push-delivered completion;
 - requires `profileStatus: verified` and `toolProfile.status: exact`;
-- verifies active tools equal `assignment.tools` plus only `caller_ping` and `subagent_done`, deny telemetry matches, and no denied tool is active;
+- verifies active tools equal `assignment.tools` plus only `caller_ping`, `caller_report`, and `subagent_done`, deny telemetry matches, and no denied tool is active;
 - records `hostAdapter: "pi-herdr-subagents"`, the exact running-child ID, sanitized session filename stem, and host-observed semantic tools with `mem_import_record_dispatch`; terminal `details.usage` / `usageByModel` may be copied when present, but adapter sidecar retrieval is the authoritative audit path;
 - inspects the durable effect before dependent work.
 
@@ -42,7 +42,7 @@ The widget's **available** list is active; **denied** is policy, not the tools r
 This is a known recipe, not a required mem-import backend or programmatic adapter:
 
 - facility/tool: installed `subagent`;
-- phase coordinators: four sequential fresh contexts with `autoExit: true`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry; tracked descendants defer shutdown until their results are delivered;
+- phase coordinators: seven sequential fresh contexts with `autoExit: true`, exact phase/run scope, explicit model/thinking/cwd/tools, `extensionMode: "explicit"`, and the trusted mem-import extension entry; tracked descendants defer shutdown until their results are delivered;
 - workers: exact assignment tools, explicit model/thinking/cwd, inherited extension mode/entries; named-profile launches must use `agent`, never display-only `name`, as the selector;
 - lifecycle controls: facility-owned;
 - completion evidence: host child identity, terminal outcome, profile status, active/denied tool comparison, and content-free cumulative usage snapshots;

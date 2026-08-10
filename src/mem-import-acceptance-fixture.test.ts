@@ -47,9 +47,9 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
     readFile(resolve("skills/mem-import/references/adapters/pi-subagents.md"), "utf8"),
     readFile(resolve("extensions/mem-import-tools.ts"), "utf8"),
   ]);
-  assert.match(skill, /Parent agent:[\s\S]*call exactly one begin tool[\s\S]*four fresh phase coordinators in order/);
+  assert.match(skill, /Parent agent:[\s\S]*call exactly one begin tool[\s\S]*seven fresh phase coordinators in order/);
   assert.match(skill, /Phase coordinator:[\s\S]*Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase/);
-  assert.match(skill, /extraction[\s\S]*proposal-reconciliation[\s\S]*merge[\s\S]*review-finalization/);
+  assert.match(skill, /extraction[\s\S]*proposal-reconciliation[\s\S]*merge[\s\S]*review[\s\S]*repair[\s\S]*verification[\s\S]*finalization/);
   assert.match(skill, /Never use a prior coordinator transcript, summary, or claimed hash as an input/);
   assert.match(skill, /resume or restart only the current phase/);
   assert.match(skill, /Never persist authority/);
@@ -125,7 +125,7 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.match(capabilities, /exact-profile resume of the current phase only/);
   assert.match(adapter, /known recipe, not a required mem-import backend or programmatic adapter/);
   assert.match(adapter, /Real imports still require each assignment's exact profile/);
-  assert.match(adapter, /four sequential fresh bounded coordinators/);
+  assert.match(adapter, /seven sequential fresh bounded coordinators/);
   assert.match(adapter, /Recover only the current incomplete phase/);
   assert.match(adapter, /hostAdapter: "pi-herdr-subagents"/);
   assert.match(adapter, /content-free activity sidecar[\s\S]*latest cumulative activity sequence/);
@@ -133,7 +133,7 @@ test("active guidance keeps brief acceptance and enforces artifact-led phase han
   assert.doesNotMatch(adapter, /coordinator first sends|worker puts its concise result|Do not duplicate, paraphrase, or split these contracts/);
   assert.match(parentPreflight, /Task-completion instructions belong to the selected facility, not mem-import profiles or launch envelopes/);
   assert.match(adapter, /`agent` field[\s\S]*`name` is only a display label and never selects or verifies a profile/);
-  assert.match(genericAdapter, /four sequential fresh phase coordinators/);
+  assert.match(genericAdapter, /seven sequential fresh phase coordinators/);
   assert.match(genericAdapter, /passes no prior coordinator prose between phases/);
   assert.match(extension, /usageEvidence:\s*Type\.Optional\(usageEvidenceSchema\)/, "stale coordinator profiles must degrade to explicit missing-result telemetry instead of failing tool validation");
 });

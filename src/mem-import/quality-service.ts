@@ -105,6 +105,10 @@ export class MemImportQualityService {
       await mkdir(join(qualityRoot(run.outputRoot), "review-policies"), { recursive: true });
       if (!existsSync(path)) await writeJson(path, { ...normalized, runId: run.runId, createdAt: new Date().toISOString() });
       const approved = normalized.decisions.filter((decision) => decision.disposition === "approve");
+      for (const decision of approved) {
+        if (!decision.artifactScope || decision.artifactScope.length === 0) throw new Error(`Approved repair action ${decision.actionId} requires a non-empty artifactScope`);
+        if (decision.dependencyScope === undefined) throw new Error(`Approved repair action ${decision.actionId} requires an explicit dependencyScope`);
+      }
       if (approved.length === 0) return { policyHash };
       const campaignId = `campaign-${policyHash.slice(0, 24)}`;
       const campaign: RepairCampaign = {

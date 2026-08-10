@@ -9,7 +9,7 @@ Treat durable artifacts as a **ledger**: normalized source, extraction packets, 
 
 ## 1. Choose your role
 
-- **Parent agent:** read [parent preflight and phase launch](references/parent-preflight.md). After preflight, call exactly one begin tool, retain its run identity and coordinator authority only in live context, and launch the four fresh phase coordinators in order.
+- **Parent agent:** read [parent preflight and phase launch](references/parent-preflight.md). After preflight, call exactly one begin tool, retain its run identity and coordinator authority only in live context, and launch the seven fresh phase coordinators in order: extraction, proposal/reconciliation, merge, review, repair, verification, and finalization.
 - **Phase coordinator:** the bootstrap must name exactly one phase: `extraction`, `proposal-reconciliation`, `merge`, `review`, `repair`, `verification`, or `finalization`. The historical `review-finalization` phase is a read-only compatibility alias for v1 runs only. Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase. Continue at section 2.
 
 If neither role and phase are explicit, stop and clarify rather than mixing parent, coordinator, and worker duties.
@@ -64,7 +64,7 @@ The proposer, reviewer, and repairer role packets carry the role-specific form o
 
 Success requires all of the following:
 
-- all four fresh coordinator phases completed sequentially against the same run;
+- all seven fresh coordinator phases completed sequentially against the same run (with the historical `review-finalization` phase retained only for v1 compatibility);
 - every intended unit has an accepted extraction packet;
 - every used semantic effect has a completed assignment-bound receipt matching the worker's exact requested tool profile and the strongest lifecycle/tool evidence the facility exposes;
 - no unassigned or unrestricted helper child participated in the run;
@@ -75,13 +75,13 @@ Success requires all of the following:
 - no blocking identity conflict remains;
 - a current scoped review covers the final canonical revision, and if any review requested repair, that final review contains no `repair` or `critical` findings/actions;
 - `mem_check_run` reports no errors, including no unresolved reviewer-action diagnostic;
-- `mem_import_finalize` writes a successful schema-v2 `stages/import-run.json`, and fresh work status reports `terminalStatus: "finalized"`.
+- `mem_import_finalize` writes a successful schema-v2 `stages/import-run.json`, and fresh work status reports `terminalStatus: "finalized"` or `"finalized-with-deferred-findings"` when policy explicitly deferred non-blocking debt;
 
 A failure is complete only after `mem_import_fail` persists the terminal reason. Never report success from worker or coordinator prose alone. Failed runs remain recoverable checkpoints: `mem_import_recover` reactivates the same run with rotated coordinator authority and a fresh worker-authorization epoch, preserving verified completed stages while requiring fresh assignments only for incomplete work. Finalized runs remain permanently terminal.
 
 ## Reference map
 
-- [Parent preflight and phase launch](references/parent-preflight.md) — parent-only acceptance, single begin, and four coordinator launches.
+- [Parent preflight and phase launch](references/parent-preflight.md) — parent-only acceptance, single begin, and seven coordinator launches.
 - [Coordinator decisions](references/workflow.md) — typed phase inputs/outputs, retries, waves, and phase gates.
 - [Tool behavior](references/helper-tools.md) — deterministic boundaries and durable outputs; model-call arguments live in tool schemas.
 - [Role packets](references/extractor-role.md), [proposer](references/proposal-role.md), [reconciler](references/reconciler-role.md), [merger](references/merger-role.md), [reviewer](references/reviewer-role.md), [repairer](references/repairer-role.md).

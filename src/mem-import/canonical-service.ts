@@ -873,11 +873,15 @@ export class MemImportCanonicalService {
       const campaignFile = campaignPath(assignment.outputRoot, assignment.repairCampaignId);
       if (!existsSync(campaignFile)) throw new Error("Repair campaign is missing");
       campaign = JSON.parse(await readFile(campaignFile, "utf8")) as RepairCampaign;
-      if (campaign.baselineRevision > before.revision) throw new Error("Repair campaign baseline is stale or ahead of canonical revision");
+      if (campaign.consumed.repairTransactions === 0 && (campaign.baselineRevision !== before.revision || campaign.baselineContentHash !== before.contentHash)) throw new Error("Repair campaign baseline is stale");
+      if (campaign.baselineRevision > before.revision) throw new Error("Repair campaign is ahead of canonical revision");
+      if (campaign.artifactScope.length === 0) throw new Error("Repair campaign has no bounded artifact scope");
       if (campaign.consumed.repairTransactions >= campaign.budget.maxRepairTransactions) throw new Error("Repair campaign transaction budget exhausted");
       if (campaign.consumed.repairEpisodes >= campaign.budget.maxRepairEpisodes && campaign.consumed.repairTransactions === 0) throw new Error("Repair campaign episode budget exhausted");
+      const frozenScope = new Set([...campaign.artifactScope, ...campaign.dependencyScope]);
+      if (batch.readSet.some((item) => !frozenScope.has(item.artifactId))) throw new Error("Repair read dependency is outside the frozen campaign scope");
       const operationArtifactIds = batch.operations.map((operation) => operation.kind === "delete" ? operation.artifactId : (operation.artifact as { id?: string }).id).filter((id): id is string => typeof id === "string");
-      if (campaign.artifactScope.length > 0 && operationArtifactIds.some((id) => !campaign!.artifactScope.includes(id))) throw new Error("Repair operation is outside the frozen artifact scope");
+      if (operationArtifactIds.some((id) => !campaign!.artifactScope.includes(id))) throw new Error("Repair operation is outside the frozen artifact scope");
       const createdArtifacts = batch.operations.filter((operation) => operation.kind === "upsert" && !(before.stage.artifacts ?? []).some((artifact) => artifact.id === (operation.artifact as { id?: string }).id)).length;
       if (!campaign.allowCreateArtifacts && createdArtifacts > 0) throw new Error("Repair campaign does not allow artifact creation");
       const changedArtifacts = batch.operations.length;
@@ -1083,6 +1087,10 @@ export class MemImportCanonicalService {
     ]);
     const errors = diagnostics.filter((item) => item.level === "error").length;
     const warnings = diagnostics.filter((item) => item.level === "warning").length;
+    const quality = await readQualityReadiness(run.outputRoot, state.stage);
+    const terminalStatus: MemImportTerminalStatus = errors === 0
+      ? quality.finalizationReadiness === "ready-with-deferred-findings" ? "finalized-with-deferred-findings" : "finalized"
+      : "failed";
     if (!state.contentHash) throw new Error("Cannot finalize before a canonical merge revision exists");
     const checksPath = join(projectionRoot, "stages", "checks", `final-${String(state.revision).padStart(8, "0")}-${state.contentHash}.json`);
     await writeJson(checksPath, { version: 1, kind: "mem-import-final-checks", runId: run.runId, merge: { revision: state.revision, contentHash: state.contentHash }, createdAt: this.now().toISOString(), errors, warnings, diagnostics, checks });
@@ -1098,16 +1106,25 @@ export class MemImportCanonicalService {
       at: this.now().toISOString(),
       taskId: options.taskId,
     }, {
-      status: errors === 0 ? "finalized" : "failed",
+      status: terminalStatus,
       finalizedAt: this.now().toISOString(),
       merge: { revision: state.revision, contentHash: state.contentHash, revisionReceiptPath: receiptPath },
       finalization: { passed: errors === 0, errorCount: errors, warningCount: warnings, checksPath: this.relative(projectionRoot, checksPath) },
+      quality: {
+        revision: quality.revision,
+        contentHash: quality.contentHash,
+        finalizationReadiness: quality.finalizationReadiness,
+        allowedNextTransition: quality.allowedNextTransition,
+        deferredFindingIds: quality.deferredFindingIds,
+        blockingFindingIds: quality.blockingFindingIds,
+        ...(quality.campaignId ? { campaignId: quality.campaignId } : {}),
+      },
       evidenceReads,
       usage,
     });
     await refreshMemImportLog(projectionRoot);
     await this.recordEvent(projectionRoot, "finalization", { runId: run.runId, taskId: options.taskId, mergeRevision: state.revision, mergeHash: state.contentHash, checksPath: this.relative(projectionRoot, checksPath), errors, warnings, status: audit.status });
-    if (errors === 0) await this.base.markRunTerminal(run, "finalized");
+    if (errors === 0) await this.base.markRunTerminal(run, terminalStatus);
     return { finalized: errors === 0, auditPath: "stages/import-run.json", checksPath: this.relative(projectionRoot, checksPath), errors, warnings };
   }
 

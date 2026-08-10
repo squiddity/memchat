@@ -2,7 +2,7 @@
 title: "feat: Refactor mem-import into iterative shard review, repair campaigns, and bounded finalization"
 type: feat
 date: 2026-08-09
-status: proposed staged design
+status: staged implementation in progress
 origin: three-chapter Alice Herdr stress test
 related:
   - 2026-08-09-001-feat-pi-herdr-caller-report-handoff.md
@@ -11,6 +11,8 @@ related:
 # Iterative mem-import quality workflow and semantic shards
 
 > **Proposed design:** This plan records the next mem-import architecture direction. It is not runtime authority until the active skill, named profiles, tools, schemas, tests, and smoke documentation are updated. Existing finalized and failed runs remain historical evidence and must stay readable.
+>
+> **Implementation note (2026-08-10):** Stages 0–2 are now implemented in `5917cd2` plus follow-up hardening: review, repair, verification, and finalization have separate profiles; v2 review modes, parent policy, frozen campaigns, verification packets, quality readiness, deferred-finalization status, and convergence controls are durable and tested. The executed `pi-herdr-subagents` `caller_report` work is integrated only as non-authoritative lifecycle guidance; it is not a semantic assignment tool or mutation authority. Adaptive impact shards, quality-debt lineage, and broad-audit campaigns remain future stages.
 
 ## Summary
 

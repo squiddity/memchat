@@ -246,8 +246,9 @@ export async function readQualityReadiness(outputRoot: string, stage: StageEnvel
         : id;
       const decision = decisions.get(actionId);
       const campaignStatus = campaign?.actionStatus[actionId];
-      if (decision?.disposition === "defer" && !blocking) deferredFindingIds.push(id);
-      else if (campaignStatus === "satisfied") { /* approved action is verified */ }
+      if ((decision?.disposition === "defer" || decision?.disposition === "reject") && !blocking) {
+        if (decision.disposition === "defer") deferredFindingIds.push(id);
+      } else if (campaignStatus === "satisfied") { /* approved action is verified */ }
       else if (blocking || severity === "repair" || severity === "critical") blockingFindingIds.push(id);
     }
     const requested = Array.isArray(packet.requestedActions) ? packet.requestedActions as Array<Record<string, unknown>> : [];
@@ -255,8 +256,9 @@ export async function readQualityReadiness(outputRoot: string, stage: StageEnvel
       const id = typeof action.id === "string" ? action.id : "unknown";
       const decision = decisions.get(id);
       if (decision && !campaign?.actionStatus[id]) actionStatuses[id] = decision.disposition;
-      if (decision?.disposition === "defer" && action.severity !== "critical") deferredFindingIds.push(id);
-      else if (campaign?.actionStatus[id] === "satisfied") { /* approved action is verified */ }
+      if ((decision?.disposition === "defer" || decision?.disposition === "reject") && action.severity !== "critical") {
+        if (decision.disposition === "defer") deferredFindingIds.push(id);
+      } else if (campaign?.actionStatus[id] === "satisfied") { /* approved action is verified */ }
       else if (action.severity === "repair" || action.severity === "critical") blockingFindingIds.push(id);
     }
   }

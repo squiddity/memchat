@@ -2,7 +2,7 @@
 
 Load this reference only when the installed extension and active catalog expose its subagent facility.
 
-Use one facility for the phase-bounded topology: parent → four sequential fresh phase coordinators → exact-assignment workers. The parent calls begin once, retains coordinator authority only in live context, and passes no prior coordinator prose between phases. Inspect the installed version and live tool schema; never infer support from its name.
+Use one facility for the phase-bounded topology: parent → seven sequential fresh phase coordinators (with policy checkpoints between review, repair, verification, and finalization) → exact-assignment workers. The parent calls begin once, retains coordinator authority only in live context, and passes no prior coordinator prose between phases. Inspect the installed version and live tool schema; never infer support from its name.
 
 Accept this facility only when it provides:
 
