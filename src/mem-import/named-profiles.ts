@@ -20,7 +20,7 @@ export const MEM_IMPORT_COORDINATOR_PHASE_TOOLS: Record<MemImportCoordinatorPhas
   proposal: [...COMMON_COORDINATOR_TOOLS, "mem_import_status", "mem_import_candidate_inventory", "mem_import_cluster_plan_submit", "mem_import_cluster_plan_status", "mem_import_merge_state", "mem_import_assign_worker"],
   merge: [...COMMON_COORDINATOR_TOOLS, "mem_import_cluster_plan_status", "mem_import_merge_state", "mem_import_assign_worker"],
   review: [...COMMON_COORDINATOR_TOOLS, "mem_import_merge_state", "mem_import_quality_state", "mem_import_review_checkpoint_state", "mem_import_assign_worker"],
-  repair: [...COMMON_COORDINATOR_TOOLS, "mem_import_merge_state", "mem_import_repair_campaign_state", "mem_import_assign_worker"],
+  repair: [...COMMON_COORDINATOR_TOOLS, "mem_import_merge_state", "mem_import_quality_state", "mem_import_repair_campaign_state", "mem_import_assign_worker"],
   verify: [...COMMON_COORDINATOR_TOOLS, "mem_import_merge_state", "mem_import_repair_campaign_state", "mem_import_assign_worker", "mem_import_verification_submit"],
   finalize: [...COMMON_COORDINATOR_TOOLS, "mem_import_merge_state", "mem_import_quality_state", "mem_import_repair_campaign_state", "mem_check_run", "mem_import_acquire_merge_lease", "mem_import_release_merge_lease", "mem_import_finalize"],
 };

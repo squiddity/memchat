@@ -125,7 +125,26 @@ test("parent policy freezes approved actions and quality state exposes repair tr
   const quality = new MemImportQualityService(service);
   const policy = await quality.submitPolicy({ ...run, policy: { reviewCheckpointId: "cp", reviewedRevision: state.revision, reviewedContentHash: state.contentHash!, decisions: [{ actionId: "fix-one", disposition: "approve", rationale: "Required", artifactScope: ["ada"], dependencyScope: [] }], budget: { maxRepairEpisodes: 1, maxRepairTransactions: 1, maxChangedArtifacts: 1, maxCreatedArtifacts: 0, maxVerificationRounds: 1, maxEmergencyRepairs: 0, maxElapsedMinutes: 1 }, rationale: "Bounded campaign" } });
   assert.ok(policy.campaign);
-  assert.deepEqual((await quality.campaignState({ ...run, campaignId: policy.campaign!.id })).approvedActionIds, ["fix-one"]);
-  assert.equal((await quality.qualityState(run)).allowedNextTransition, "repair");
-  await assert.rejects(quality.assertCampaignScope({ ...run, campaignId: policy.campaign!.id, actionIds: ["other"] }), /frozen campaign action set/);
+
+  // A fresh repair coordinator is launched without policy prose or a campaign
+  // ID. It must discover the durable identity from the typed quality state,
+  // then use that identity to read and bind the frozen campaign.
+  const freshQuality = new MemImportQualityService(new MemImportService());
+  const qualityState = await freshQuality.qualityState(run);
+  assert.equal(qualityState.allowedNextTransition, "repair");
+  assert.equal(qualityState.campaignId, policy.campaign!.id);
+  const discoveredCampaign = await freshQuality.campaignState({ ...run, campaignId: qualityState.campaignId! });
+  assert.deepEqual(discoveredCampaign.approvedActionIds, ["fix-one"]);
+
+  const freshRepair = new MemImportService();
+  const assignment = await freshRepair.assignWorker({
+    ...run,
+    taskId: "fresh-repair",
+    role: "repairer",
+    checkpointIds: [discoveredCampaign.reviewCheckpointId],
+    actionIds: discoveredCampaign.approvedActionIds,
+    repairCampaignId: qualityState.campaignId,
+  });
+  assert.equal(assignment.repairCampaignId, discoveredCampaign.id);
+  await assert.rejects(freshQuality.assertCampaignScope({ ...run, campaignId: discoveredCampaign.id, actionIds: ["other"] }), /frozen campaign action set/);
 });

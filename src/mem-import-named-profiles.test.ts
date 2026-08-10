@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
+import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
   MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN,
   MEM_IMPORT_COORDINATOR_PHASE_TOOLS,
@@ -266,7 +268,24 @@ test("split review, repair, verification, and finalization profiles isolate role
     assert.notEqual(split, undefined);
     assert.ok(MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN[phase].length > 0);
   }
+  assert.ok(MEM_IMPORT_COORDINATOR_PHASE_TOOLS.repair.includes("mem_import_quality_state"));
 
+});
+
+test("mem-import extension loads through Pi's resource loader", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "memchat-pi-extension-load-"));
+  try {
+    const loader = new DefaultResourceLoader({
+      cwd: agentDir,
+      agentDir,
+      additionalExtensionPaths: [resolve(MEM_IMPORT_PROFILE_EXTENSION)],
+    });
+    await loader.reload();
+    const errors = loader.getExtensions().errors;
+    assert.deepEqual(errors, [], errors.map(({ path, error }) => `${path}: ${String(error)}`).join("\n"));
+  } finally {
+    await rm(agentDir, { recursive: true, force: true });
+  }
 });
 
 test("extension loading is explicit where supported and ambient Herdr loading remains configured", async () => {
