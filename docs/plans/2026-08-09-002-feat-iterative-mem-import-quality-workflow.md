@@ -12,7 +12,9 @@ related:
 
 > **Proposed design:** This plan records the next mem-import architecture direction. It is not runtime authority until the active skill, named profiles, tools, schemas, tests, and smoke documentation are updated. Existing finalized and failed runs remain historical evidence and must stay readable.
 >
-> **Implementation note (2026-08-10):** Stages 0–2 are now implemented in `5917cd2` plus follow-up hardening: review, repair, verification, and finalization have separate profiles; v2 review modes, parent policy, frozen campaigns, verification packets, quality readiness, deferred-finalization status, and convergence controls are durable and tested. The executed `pi-herdr-subagents` `caller_report` work is integrated only as non-authoritative lifecycle guidance; it is not a semantic assignment tool or mutation authority. Adaptive impact shards, quality-debt lineage, and broad-audit campaigns remain future stages.
+> **Implementation note (2026-08-10):** Stages 0–2 are now implemented in `5917cd2` plus follow-up hardening in `c7c12ea`: review, repair, verification, and finalization have separate profiles; v2 review modes, parent policy, frozen campaigns, verification packets, quality readiness, deferred-finalization status, and convergence controls are durable and tested. The executed `pi-herdr-subagents` `caller_report` work is integrated only as non-authoritative lifecycle guidance; it is not a semantic assignment tool or mutation authority. The full test suite passes 164/164, and the working tree is clean.
+>
+> **Next work:** First validate a tiny end-to-end import through all seven phases, including the parent policy checkpoint and a no-hidden-loop verification path. Then implement Stage 3 canonical change sets, model-authored impact plans, bounded semantic shards, overlap declarations, and finding reconciliation. Follow with Stage 4 quality-debt lineage, Stage 5 independent broad-audit campaigns, and Stage 7 evaluation against the tiny fixture, three-chapter Alice, a subsequent chapter update, and a bounded audit. Tune budgets and shard bounds only from recorded quality, read, cost, and elapsed-time evidence.
 
 ## Summary
 
