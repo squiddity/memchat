@@ -18,6 +18,7 @@ import {
 import { validateStageEnvelope } from "./stage-store.js";
 import { MEM_IMPORT_GROUPS, type SourceManifest, type SourceManifestEntry, type StageEnvelope, type MemImportGroup } from "./contracts.js";
 import { PI_HERDR_USAGE_ADAPTER, type MemImportUsageResolver, type MemImportUsageResolution } from "./pi-herdr-usage-resolver.js";
+import { campaignPath, type ReviewMode } from "./quality-protocol.js";
 import {
   MEM_IMPORT_ROLE_PHASE,
   aggregateUsageTelemetry,
@@ -61,7 +62,7 @@ export const MEM_IMPORT_ROLE_TO_PROFILE: Record<AssignmentRole, string> = {
 export type LifecycleOutcome = "assigned" | "submitted" | "revoked" | "superseded" | "completed";
 export type DispatchFacility = "subagent" | "inline" | "unknown";
 export type DispatchOutcome = "completed" | "failed" | "cancelled";
-export type MemImportTerminalStatus = "failed" | "finalized";
+export type MemImportTerminalStatus = "failed" | "finalized" | "finalized-with-deferred-findings" | "blocked-by-critical-finding" | "non-convergent-review" | "provider-recovery-exhausted";
 
 const MUTATING_WORKER_CAPABILITIES = new Set<MemImportCapability>([
   "extraction:submit",
@@ -252,6 +253,8 @@ export type MemImportAssignmentRecord = {
   /** Repair grants name the checkpoint actions they may implement; other roles leave these empty. */
   allowedCheckpointIds?: string[];
   allowedActionIds?: string[];
+  reviewMode?: ReviewMode;
+  repairCampaignId?: string;
   capabilities: MemImportCapability[];
   tokenHash: string;
   issuedAt: string;
@@ -282,6 +285,8 @@ export function assignmentAuthorityHash(assignment: MemImportAssignmentRecord): 
     allowedIdentityProposalHashes: assignment.allowedIdentityProposalHashes ?? [],
     allowedCheckpointIds: assignment.allowedCheckpointIds ?? [],
     allowedActionIds: assignment.allowedActionIds ?? [],
+    ...(assignment.reviewMode ? { reviewMode: assignment.reviewMode } : {}),
+    ...(assignment.repairCampaignId ? { repairCampaignId: assignment.repairCampaignId } : {}),
     capabilities: assignment.capabilities,
   };
   return createHash("sha256").update(JSON.stringify(authority)).digest("hex");
@@ -328,6 +333,8 @@ export type WorkerAssignmentResult = {
   reconciliationSetId?: string;
   checkpointIds: string[];
   actionIds: string[];
+  reviewMode?: ReviewMode;
+  repairCampaignId?: string;
   /** Exact service-derived named profile for this worker. */
   profile: string;
   /** Exact model-visible tools the host must allow for this worker. */
@@ -686,7 +693,7 @@ function parseRunRecord(value: unknown): MemImportRunRecord {
     || (value.normalizedAt !== undefined && typeof value.normalizedAt !== "string")
     || (value.authorizationEpoch !== undefined && (!Number.isSafeInteger(value.authorizationEpoch) || Number(value.authorizationEpoch) < 0))
     || (value.terminal !== undefined && (!isRecord(value.terminal)
-      || !["failed", "finalized"].includes(String(value.terminal.status))
+      || !["failed", "finalized", "finalized-with-deferred-findings", "blocked-by-critical-finding", "non-convergent-review", "provider-recovery-exhausted"].includes(String(value.terminal.status))
       || typeof value.terminal.at !== "string"
       || (value.terminal.reason !== undefined && typeof value.terminal.reason !== "string")))
     || (value.recoveryHistory !== undefined && (!Array.isArray(value.recoveryHistory) || value.recoveryHistory.some((entry) => !isRecord(entry)
@@ -719,6 +726,8 @@ function parseAssignmentRecord(value: unknown): MemImportAssignmentRecord {
     || (value.allowedIdentityProposalHashes !== undefined && (!Array.isArray(value.allowedIdentityProposalHashes) || !value.allowedIdentityProposalHashes.every((item) => typeof item === "string")))
     || (value.allowedCheckpointIds !== undefined && (!Array.isArray(value.allowedCheckpointIds) || !value.allowedCheckpointIds.every((item) => typeof item === "string")))
     || (value.allowedActionIds !== undefined && (!Array.isArray(value.allowedActionIds) || !value.allowedActionIds.every((item) => typeof item === "string")))
+    || (value.reviewMode !== undefined && !["initial-shard", "second-opinion", "verification", "broad-audit"].includes(String(value.reviewMode)))
+    || (value.repairCampaignId !== undefined && typeof value.repairCampaignId !== "string")
     || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => MEM_IMPORT_CAPABILITIES.includes(item as MemImportCapability))
     || typeof value.tokenHash !== "string"
     || typeof value.issuedAt !== "string"
@@ -1195,6 +1204,8 @@ export class MemImportService {
     retriesTaskId?: string;
     checkpointIds?: string[];
     actionIds?: string[];
+    reviewMode?: ReviewMode;
+    repairCampaignId?: string;
     audit?: MemImportAssignmentAudit;
   }): Promise<WorkerAssignmentResult> {
     return this.withRunMutation(options.outputRoot, () => this.assignWorkerLocked(options));
@@ -1216,6 +1227,8 @@ export class MemImportService {
     retriesTaskId?: string;
     checkpointIds?: string[];
     actionIds?: string[];
+    reviewMode?: ReviewMode;
+    repairCampaignId?: string;
     audit?: MemImportAssignmentAudit;
   }): Promise<WorkerAssignmentResult> {
     const run = await this.authorizeCoordinatorMutation(options);
@@ -1266,6 +1279,11 @@ export class MemImportService {
 
     const checkpointIds = [...new Set(options.checkpointIds ?? [])];
     const actionIds = [...new Set(options.actionIds ?? [])];
+    const reviewMode = options.reviewMode;
+    const repairCampaignId = options.repairCampaignId;
+    if (reviewMode !== undefined && options.role !== "reviewer") throw new Error("reviewMode is only valid for reviewer assignments");
+    if (reviewMode === "verification" && (!repairCampaignId || checkpointIds.length === 0 || actionIds.length === 0)) throw new Error("Verification assignments require repairCampaignId, checkpointIds, and actionIds");
+    if (repairCampaignId && options.role !== "repairer" && reviewMode !== "verification") throw new Error("repairCampaignId is only valid for repairer or verification assignments");
     if (unitIds.length > 100 || candidateIds.length > 100 || proposalHashes.length > 100 || identityProposalHashes.length > 100) throw new Error("Worker assignment unit, candidate, proposal, and identity scopes are limited to 100 items each");
     unitIds.forEach(assertTaskId);
     candidateIds.forEach((candidateId) => {
@@ -1301,7 +1319,16 @@ export class MemImportService {
     if (options.role === "reconciler" && proposalHashes.length === 0) throw new Error("Reconciler assignments require explicit proposalHashes or a planned reconciliation set");
     if (!["reconciler", "merger"].includes(options.role) && proposalHashes.length > 0) throw new Error("Only reconciler or merger assignments may carry proposalHashes");
     if (options.role === "repairer" && (checkpointIds.length === 0 || actionIds.length === 0)) throw new Error("Repairer assignments require explicit checkpointIds and actionIds");
-    if (options.role !== "repairer" && (checkpointIds.length > 0 || actionIds.length > 0)) throw new Error("Only repairer assignments may carry checkpoint/action scope");
+    if (options.role !== "repairer" && options.role !== "reviewer" && (checkpointIds.length > 0 || actionIds.length > 0)) throw new Error("Only repairer or verification reviewer assignments may carry checkpoint/action scope");
+    if (options.role === "reviewer" && reviewMode !== "verification" && (checkpointIds.length > 0 || actionIds.length > 0)) throw new Error("Only verification reviewer assignments may carry checkpoint/action scope");
+    if (repairCampaignId) {
+      const campaignFile = campaignPath(run.outputRoot, repairCampaignId);
+      if (!existsSync(campaignFile)) throw new Error("Unknown repair campaign");
+      const campaign = JSON.parse(await readFile(campaignFile, "utf8")) as { approvedActionIds?: unknown; reviewCheckpointId?: unknown };
+      const approvedActionIds = Array.isArray(campaign.approvedActionIds) ? campaign.approvedActionIds.filter((item): item is string => typeof item === "string") : [];
+      if (approvedActionIds.length !== actionIds.length || actionIds.some((id) => !approvedActionIds.includes(id))) throw new Error("Assignment action scope does not equal the frozen repair campaign");
+      if (typeof campaign.reviewCheckpointId === "string" && checkpointIds.some((id) => id !== campaign.reviewCheckpointId)) throw new Error("Assignment checkpoint is outside the frozen repair campaign");
+    }
 
     const issuedAt = this.now();
     if (options.retriesTaskId) {
@@ -1351,6 +1378,8 @@ export class MemImportService {
       ...(identityProposalHashes.length ? { allowedIdentityProposalHashes: identityProposalHashes } : {}),
       ...(checkpointIds.length ? { allowedCheckpointIds: checkpointIds } : {}),
       ...(actionIds.length ? { allowedActionIds: actionIds } : {}),
+      ...(reviewMode ? { reviewMode } : {}),
+      ...(repairCampaignId ? { repairCampaignId } : {}),
       capabilities: capabilities[options.role],
       tokenHash: hashToken(grant),
       issuedAt: issuedAt.toISOString(),
@@ -1382,8 +1411,9 @@ export class MemImportService {
       ...(reconciliationSetId ? { reconciliationSetId } : {}),
       checkpointIds,
       actionIds,
-      profile: MEM_IMPORT_ROLE_TO_PROFILE[assignment.role],
-      tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
+      ...(reviewMode ? { reviewMode } : {}),
+      ...(repairCampaignId ? { repairCampaignId } : {}),
+      profile: MEM_IMPORT_ROLE_TO_PROFILE[assignment.role],      tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
     };
   }
 
@@ -1416,6 +1446,8 @@ export class MemImportService {
     reconciliationSetId?: string;
     checkpointIds: string[];
     actionIds: string[];
+    reviewMode?: ReviewMode;
+    repairCampaignId?: string;
     profile: string;
     tools: string[];
   }> {
@@ -1443,6 +1475,8 @@ export class MemImportService {
     reconciliationSetId?: string;
     checkpointIds: string[];
     actionIds: string[];
+    reviewMode?: ReviewMode;
+    repairCampaignId?: string;
     profile: string;
     tools: string[];
   }> {
@@ -1474,6 +1508,8 @@ export class MemImportService {
       ...(assignment.reconciliationSetId ? { reconciliationSetId: assignment.reconciliationSetId } : {}),
       checkpointIds: assignment.allowedCheckpointIds ?? [],
       actionIds: assignment.allowedActionIds ?? [],
+      ...(assignment.reviewMode ? { reviewMode: assignment.reviewMode } : {}),
+      ...(assignment.repairCampaignId ? { repairCampaignId: assignment.repairCampaignId } : {}),
       profile: MEM_IMPORT_ROLE_TO_PROFILE[assignment.role],
       tools: [...MEM_IMPORT_ROLE_TOOLS[assignment.role]],
     };
@@ -1605,7 +1641,7 @@ export class MemImportService {
   }): Promise<MemImportCoordinatorSessionRecord> {
     return this.withRunMutation(options.outputRoot, async () => {
       const run = await this.authorizeCoordinator(options);
-      if (!["extraction", "proposal-reconciliation", "merge", "review-finalization"].includes(options.phase)) throw new Error("Invalid coordinator phase");
+      if (!["extraction", "proposal-reconciliation", "merge", "review", "repair", "verification", "finalization", "review-finalization"].includes(options.phase)) throw new Error("Invalid coordinator phase");
       if (!["subagent", "inline", "unknown"].includes(options.facility)) throw new Error("Invalid coordinator facility");
       if (!["completed", "failed", "cancelled"].includes(options.outcome)) throw new Error("Invalid coordinator outcome");
       assertHostTaskId(options.hostTaskId);
@@ -1680,8 +1716,15 @@ export class MemImportService {
           evidence = { version: 1, status: "unavailable", reason: "invalid-telemetry-record" };
         }
         const key = `worker:${taskId}`;
+        const usagePhase: MemImportUsagePhase = assignment.role === "reviewer" && assignment.reviewMode === "verification"
+          ? "verification"
+          : assignment.role === "reviewer" && assignment.reviewMode
+            ? "review"
+            : assignment.role === "repairer" && assignment.repairCampaignId
+              ? "repair"
+              : MEM_IMPORT_ROLE_PHASE[assignment.role];
         records.push({
-          phase: MEM_IMPORT_ROLE_PHASE[assignment.role], role: assignment.role, taskId,
+          phase: usagePhase, role: assignment.role, taskId,
           facility: validEnvelope ? dispatch!.facility! : "unknown",
           ...(validEnvelope ? { hostTaskId: dispatch!.hostTaskId } : {}),
           ...(validEnvelope && typeof dispatch!.hostSessionId === "string" ? { hostSessionId: dispatch!.hostSessionId } : {}),
@@ -1695,7 +1738,7 @@ export class MemImportService {
     }
     const sessionDirectory = `${orchestrationDir(run.outputRoot)}/coordinator-sessions`;
     if (existsSync(sessionDirectory)) {
-      const phases: MemImportUsagePhase[] = ["extraction", "proposal-reconciliation", "merge", "review-finalization"];
+      const phases: MemImportUsagePhase[] = ["review-finalization", "proposal-reconciliation", "verification", "finalization", "extraction", "review", "repair", "merge"];
       for (const name of (await readdir(sessionDirectory)).filter((item) => item.endsWith(".json")).sort()) {
         const phase = phases.find((item) => name.startsWith(`${item}-`));
         if (!phase) continue;

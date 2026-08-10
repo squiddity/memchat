@@ -178,7 +178,7 @@ node --import tsx --test src/mem-import-stage-store.test.ts
 npm run test:mem-import
 ```
 
-Expected: exact-ID inline markers resolve to portable cross-group Markdown links without rewriting protected Markdown/code/URL regions; related and unresolved-link diagnostics are deterministic; narrative surfaces are promoted in the root compendium index; retained source pages preserve local anchors and coverage; stage writes are atomic; lint/checks/provenance audits report structural failures without semantic inference. The broader mem-import suite also covers assignment-bound extraction, proposal/reconciliation, canonical transactions, review/repair, recovery, and finalization.
+Expected: exact-ID inline markers resolve to portable cross-group Markdown links without rewriting protected Markdown/code/URL regions; related and unresolved-link diagnostics are deterministic; narrative surfaces are promoted in the root compendium index; retained source pages preserve local anchors and coverage; stage writes are atomic; lint/checks/provenance audits report structural failures without semantic inference. The broader mem-import suite also covers assignment-bound extraction, proposal/reconciliation, split read-only review, frozen repair campaigns, exact-action verification, deferred findings, recovery, and deterministic finalization. Version-1 review/repair records remain readable; `caller_report`, when available, is lifecycle telemetry only and is not semantic assignment authority.
 
 ## 10. Legacy cleanup guard
 

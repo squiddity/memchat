@@ -20,6 +20,9 @@ const expectedNames = [
   "mem-import-coordinator-extraction",
   "mem-import-coordinator-proposal",
   "mem-import-coordinator-merge",
+  "mem-import-coordinator-review",
+  "mem-import-coordinator-repair",
+  "mem-import-coordinator-verify",
   "mem-import-coordinator-finalize",
   "mem-import-extractor",
   "mem-import-proposer",
@@ -57,9 +60,9 @@ function profilePath(profile: MemImportNamedProfile, adapter: MemImportProfileAd
 }
 
 for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
-  test(`${adapter} has ten stable profiles rendered from the shared manifest`, async () => {
+  test(`${adapter} has thirteen stable profiles rendered from the shared manifest`, async () => {
     assert.deepEqual(MEM_IMPORT_NAMED_PROFILES.map((profile) => profile.name), expectedNames);
-    assert.equal(new Set(expectedNames).size, 10);
+    assert.equal(new Set(expectedNames).size, 13);
     const files = (await readdir(rootFor(adapter))).filter((name) => name.startsWith("mem-import-") && name.endsWith(".md")).sort();
     assert.deepEqual(files, expectedNames.map((name) => `${name}.md`).sort());
     for (const profile of MEM_IMPORT_NAMED_PROFILES) {
@@ -106,39 +109,43 @@ for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
       const { fields, body } = parseFlatProfile(await readFile(profilePath(profile, adapter), "utf8"));
       assert.ok(profile.phase);
       const tools = csv(fields.tools);
-      assert.deepEqual(tools, [...MEM_IMPORT_COORDINATOR_PHASE_TOOLS[profile.phase], ...lifecycle]);
+      assert.deepEqual(tools, [...MEM_IMPORT_COORDINATOR_PHASE_TOOLS[profile.phase], ...(profile.phase === "finalize" ? [] : lifecycle)]);
       assert.deepEqual(tools, memImportProfileTools(profile, adapter));
       assert.equal(fields.name, `mem-import-coordinator-${profile.phase}`);
       assert.deepEqual(
         csv(fields["allowed-child-agents"]),
         adapter === "pi-herdr-subagents" ? [...MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN[profile.phase]] : [],
       );
-      assert.ok(tools.includes("subagent"));
+      assert.equal(tools.includes("subagent"), profile.phase !== "finalize");
       assert.equal(tools.some((tool) => Object.values(MEM_IMPORT_ROLE_TOOLS).some((roleTools) => roleTools.includes(tool))), false);
-      assert.equal(tools.some((tool) => ["bash", "read", "write", "edit"].includes(tool)), false);
+      assert.equal(tools.some((tool) => ["bash", "read", "write", "edit", "caller_report"].includes(tool)), false);
       assert.equal(tools.some((tool) => tool === "mem_import_begin" || tool === "mem_import_begin_compendium"), false);
       if (adapter === "pi-herdr-subagents") {
-        assert.equal(fields.spawning, "true");
+        assert.equal(fields.spawning, profile.phase === "finalize" ? "false" : "true");
         assert.equal(fields["auto-exit"], "true");
         assert.equal(fields["session-mode"], "standalone");
         assert.equal(fields.skills, undefined);
       } else {
         assert.equal(fields.defaultContext, "fresh");
-        assert.equal(fields.maxSubagentDepth, "1");
+        assert.equal(fields.maxSubagentDepth, profile.phase === "finalize" ? "0" : "1");
         assert.equal(fields.subagentOnlyExtensions, MEM_IMPORT_PROFILE_EXTENSION);
-        assert.deepEqual(tools.filter((tool) => tool.startsWith("subagent")), ["subagent"]);
+        assert.deepEqual(tools.filter((tool) => tool.startsWith("subagent")), profile.phase === "finalize" ? [] : ["subagent"]);
       }
       assert.equal(fields.cwd, undefined);
       assert.ok(body.trim().length > 0, "profiles must contain generated phase guidance");
-      assert.match(body, /every worker `subagent` call must set `agent` to the exact `assignment\.profile`/);
-      assert.match(body, /`name` is display-only/);
-      assert.match(body, /do not launch or retry bare/);
-      assert.match(body, /fresh task ID/);
-      assert.match(body, /usageEvidence/);
-      assert.match(body, /hostAdapter equal to the selected adapter/);
-      assert.match(body, /Optional terminal `usageEvidence` is only a live hint/);
-      assert.match(body, /authoritative content-free sidecar/);
-      assert.match(body, /never estimate it/i);
+      if (profile.phase !== "finalize") assert.match(body, /exact `assignment\.profile`/);
+      assert.match(body, /caller_report/);
+      if (profile.phase !== "finalize") assert.match(body, /`name` is display-only/);
+      if (profile.phase !== "finalize") {
+        assert.match(body, /do not launch or retry bare/);
+        assert.match(body, /usageEvidence/);
+      }
+      if (profile.phase !== "finalize") {
+        assert.match(body, /hostAdapter equal to the selected adapter/);
+        assert.match(body, /Optional terminal `usageEvidence` is only a live hint/);
+        assert.match(body, /authoritative content-free sidecar/);
+        assert.match(body, /never estimate it/i);
+      }
     }
   });
 }
@@ -246,17 +253,20 @@ test("proposer, reviewer, and repairer profiles preserve authored traversal cont
   }
 });
 
-test("review/finalization profiles wait passively and hold no heartbeat capability", async () => {
+test("split review, repair, verification, and finalization profiles isolate roles", async () => {
   const profile = MEM_IMPORT_NAMED_PROFILES.find((item) => item.phase === "finalize")!;
   for (const adapter of ["pi-herdr-subagents", "pi-subagents"] as const) {
     const { fields, body } = parseFlatProfile(await readFile(profilePath(profile, adapter), "utf8"));
     assert.equal(csv(fields.tools).includes("mem_import_heartbeat_merge_lease"), false);
-    assert.match(body, /launch no reader, documentation, setup, wait, or other helper child/);
-    assert.match(body, /do not acquire the coordinator merge lease before or while a reviewer\/repairer runs/);
-    assert.match(body, /make no status, lease, heartbeat, resume, or other tool call/);
-    assert.match(body, /`subagent_resume` is recovery only after an actual interrupted terminal state/);
-    assert.match(body, /Acquire the coordinator merge lease only after checks report zero errors/);
+    assert.match(body, /no semantic worker/);
+    assert.equal(csv(fields.tools).includes("subagent"), false);
   }
+  for (const phase of ["review", "repair", "verify"] as const) {
+    const split = MEM_IMPORT_NAMED_PROFILES.find((item) => item.phase === phase)!;
+    assert.notEqual(split, undefined);
+    assert.ok(MEM_IMPORT_COORDINATOR_ALLOWED_CHILDREN[phase].length > 0);
+  }
+
 });
 
 test("extension loading is explicit where supported and ambient Herdr loading remains configured", async () => {

@@ -1,6 +1,6 @@
 import type { AssignmentRole } from "./service.js";
 
-export type MemImportUsagePhase = "extraction" | "proposal-reconciliation" | "merge" | "review-finalization";
+export type MemImportUsagePhase = "extraction" | "proposal-reconciliation" | "merge" | "review" | "repair" | "verification" | "finalization" | "review-finalization";
 export type MemImportUsageUnavailableReason =
   | "adapter-unavailable"
   | "host-result-missing"

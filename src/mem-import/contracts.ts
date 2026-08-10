@@ -159,12 +159,13 @@ export type MemImportRunAudit = {
   version: 2;
   kind: "mem-import-run";
   runId: string;
-  status: "running" | "finalized" | "failed";
+  status: "running" | "finalized" | "failed" | "finalized-with-deferred-findings" | "blocked-by-critical-finding" | "non-convergent-review" | "provider-recovery-exhausted";
   createdAt: string;
   finalizedAt?: string;
   source: { normalizedUnits: number; manifestHash: string };
   merge?: { revision: number; contentHash: string; revisionReceiptPath: string };
   finalization?: { passed: boolean; errorCount: number; warningCount: number; checksPath: string };
+  quality?: { revision: number; contentHash: string | null; finalizationReadiness: string; allowedNextTransition: string; deferredFindingIds: string[]; blockingFindingIds: string[]; campaignId?: string };
   evidenceReads?: {
     total: { calls: number; pages: number; returnedItems: number; returnedChars: number };
     roles: Array<{ role: string; assignmentCount: number; calls: number; pages: number; returnedItems: number; returnedChars: number; tools: Array<{ toolName: string; calls: number; pages: number; returnedItems: number; returnedChars: number }> }>;

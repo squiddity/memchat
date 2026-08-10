@@ -24,6 +24,7 @@ import { MemImportCompendiumService, projectCompendium } from "./compendium-serv
 import { assignmentAuthorityHash, MemImportService, type AssignmentRole, type EvidenceReadTelemetrySummary, type MemImportAssignmentRecord, type MemImportCapability, type MemImportRunRecord, type MemImportTerminalStatus, type RecoveredTransactionEffect } from "./service.js";
 import { MemImportIdentityService, type IdentityDecision, type StoredIdentityProposal } from "./identity-service.js";
 import { MemImportClusterPlanService } from "./cluster-plan-service.js";
+import { campaignPath, readQualityReadiness, validateModePacket, type RepairCampaign, type ReviewPacketV2 } from "./quality-protocol.js";
 
 const LEASE_HEARTBEAT_MS = 60_000;
 const LEASE_EXPIRY_MS = 5 * 60_000;
@@ -300,6 +301,8 @@ export type ReviewPacket = {
   diagnostics?: Array<{ level: "info" | "warning" | "error"; message: string }>;
   metadata?: Record<string, unknown>;
 };
+
+export type ReviewPacketAny = ReviewPacket | ReviewPacketV2;
 
 type ReviewPacketRecord = {
   path: string;
@@ -865,6 +868,22 @@ export class MemImportCanonicalService {
     const sourceRoot = canonicalRoot === assignment.outputRoot ? assignment.outputRoot : (await projectCompendium(canonicalRoot), canonicalRoot);
     const batch = await this.validateBatch(assignment.outputRoot, assignment.runId, options.batch);
     const before = await this.readMergeState(canonicalRoot);
+    let campaign: RepairCampaign | undefined;
+    if (assignment.repairCampaignId) {
+      const campaignFile = campaignPath(assignment.outputRoot, assignment.repairCampaignId);
+      if (!existsSync(campaignFile)) throw new Error("Repair campaign is missing");
+      campaign = JSON.parse(await readFile(campaignFile, "utf8")) as RepairCampaign;
+      if (campaign.baselineRevision > before.revision) throw new Error("Repair campaign baseline is stale or ahead of canonical revision");
+      if (campaign.consumed.repairTransactions >= campaign.budget.maxRepairTransactions) throw new Error("Repair campaign transaction budget exhausted");
+      if (campaign.consumed.repairEpisodes >= campaign.budget.maxRepairEpisodes && campaign.consumed.repairTransactions === 0) throw new Error("Repair campaign episode budget exhausted");
+      const operationArtifactIds = batch.operations.map((operation) => operation.kind === "delete" ? operation.artifactId : (operation.artifact as { id?: string }).id).filter((id): id is string => typeof id === "string");
+      if (campaign.artifactScope.length > 0 && operationArtifactIds.some((id) => !campaign!.artifactScope.includes(id))) throw new Error("Repair operation is outside the frozen artifact scope");
+      const createdArtifacts = batch.operations.filter((operation) => operation.kind === "upsert" && !(before.stage.artifacts ?? []).some((artifact) => artifact.id === (operation.artifact as { id?: string }).id)).length;
+      if (!campaign.allowCreateArtifacts && createdArtifacts > 0) throw new Error("Repair campaign does not allow artifact creation");
+      const changedArtifacts = batch.operations.length;
+      if (campaign.consumed.changedArtifacts + changedArtifacts > campaign.budget.maxChangedArtifacts) throw new Error("Repair campaign changed-artifact budget exhausted");
+      if (campaign.consumed.createdArtifacts + createdArtifacts > campaign.budget.maxCreatedArtifacts) throw new Error("Repair campaign created-artifact budget exhausted");
+    }
     this.assertReadSet(before.stage, batch.readSet);
     await this.validateIdentityEffects(assignment.outputRoot, canonicalRoot, assignment.runId, before.stage, batch);
     const rebased = before.revision !== options.expectedRevision || before.contentHash !== options.expectedContentHash;
@@ -887,6 +906,16 @@ export class MemImportCanonicalService {
       },
       transaction: { proposalHashes: batch.proposalHashes, readSet: batch.readSet, operations: batch.operations, assignmentAuthorityHash: assignmentAuthorityHash(assignment), ...(batch.candidateDispositions?.length ? { candidateDispositions: batch.candidateDispositions } : {}), ...(batch.identityProposalHashes?.length ? { identityProposalHashes: batch.identityProposalHashes } : {}), ...(batch.conflictOperations?.length ? { conflictOperations: batch.conflictOperations } : {}), ...(rebased ? { rebasedFrom: { revision: options.expectedRevision, contentHash: options.expectedContentHash } } : {}) },
     });
+    if (campaign) {
+      const changedArtifacts = batch.operations.length;
+      const createdArtifacts = batch.operations.filter((operation) => operation.kind === "upsert" && !(before.stage.artifacts ?? []).some((artifact) => artifact.id === (operation.artifact as { id?: string }).id)).length;
+      const nextCampaign: RepairCampaign = {
+        ...campaign,
+        consumed: { ...campaign.consumed, repairEpisodes: campaign.consumed.repairEpisodes + (campaign.consumed.repairTransactions === 0 ? 1 : 0), repairTransactions: campaign.consumed.repairTransactions + 1, changedArtifacts: campaign.consumed.changedArtifacts + changedArtifacts, createdArtifacts: campaign.consumed.createdArtifacts + createdArtifacts },
+        actionStatus: Object.fromEntries(campaign.approvedActionIds.map((id) => [id, "applied"])) as RepairCampaign["actionStatus"],
+      };
+      await writeJson(campaignPath(assignment.outputRoot, campaign.id), nextCampaign);
+    }
     await this.reconcileTransactionWorkerEffects(
       { runId: assignment.runId, outputRoot: assignment.outputRoot, ...(canonicalRoot !== assignment.outputRoot ? { compendiumRoot: canonicalRoot } : {}) },
       canonicalRoot,
@@ -900,12 +929,19 @@ export class MemImportCanonicalService {
     return toMergeMutationReceipt(state, options.batch.proposalHashes);
   }
 
-  async submitReview(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
+  async submitReview(options: WorkerAuthority & { packet: ReviewPacketAny }): Promise<{ path: string; contentHash: string }> {
     return this.base.withRunMutation(options.outputRoot, () => this.submitReviewLocked(options));
   }
 
-  private async submitReviewLocked(options: WorkerAuthority & { packet: ReviewPacket }): Promise<{ path: string; contentHash: string }> {
+  private async submitReviewLocked(options: WorkerAuthority & { packet: ReviewPacketAny }): Promise<{ path: string; contentHash: string }> {
     const assignment = await this.base.authorizeWorker({ ...options, capability: "review:submit", role: "reviewer" });
+    if (options.packet.version === 2) {
+      if (assignment.reviewMode !== options.packet.mode) throw new Error("Review packet mode does not match the reviewer assignment");
+      if (options.packet.mode === "verification") {
+        const verificationPacket = options.packet as ReviewPacketV2;
+        if (assignment.repairCampaignId !== verificationPacket.campaignId || !assignment.allowedActionIds || assignment.allowedActionIds.length !== (verificationPacket.actionIds ?? []).length || assignment.allowedActionIds.some((id) => !(verificationPacket.actionIds ?? []).includes(id))) throw new Error("Verification packet action scope does not match the assignment");
+      }
+    }
     const packet = this.validateReviewPacket(options.packet);
     const canonicalRoot = await this.base.canonicalRootForRun(assignment.outputRoot);
     const state = await this.readMergeState(canonicalRoot);
@@ -1920,7 +1956,7 @@ export class MemImportCanonicalService {
           // make a tampered packet valid.
           const reviewedMergeRevision = packet.reviewedMergeRevision;
           const reviewedMergeHash = packet.reviewedMergeHash;
-          if (packet.version !== 1 || packet.kind !== "mem-import-review"
+          if (packet.version !== 1 && packet.version !== 2 || packet.kind !== "mem-import-review"
             || typeof packet.runId !== "string" || !packet.runId.trim()
             || typeof packet.taskId !== "string" || !packet.taskId.trim()
             || typeof packet.submittedAt !== "string"
@@ -1982,13 +2018,16 @@ export class MemImportCanonicalService {
       path: "stages/reviews",
     });
     if (!repairRequested) return diagnostics;
+    const quality = await readQualityReadiness(outputRoot, stage);
+    const deferred = new Set(quality.deferredFindingIds);
+    const resolved = new Set(Object.entries(quality.actionStatuses).filter(([, status]) => status === "satisfied").map(([id]) => id));
     diagnostics.push(...current.flatMap((record) => [
-      ...(record.packet.findings ?? []).filter((finding) => isBlockingSeverity(finding.severity)).map((finding) => ({
+      ...(record.packet.findings ?? []).filter((finding) => isBlockingSeverity(finding.severity) && !deferred.has(finding.id) && !resolved.has(finding.id)).map((finding) => ({
         level: "error" as const,
         message: `Unresolved ${finding.severity} review finding ${finding.id}: ${finding.summary}`,
         path: this.reviewDisplayPath(record),
       })),
-      ...(record.packet.requestedActions ?? []).filter((action) => isBlockingSeverity(action.severity)).map((action) => ({
+      ...(record.packet.requestedActions ?? []).filter((action) => isBlockingSeverity(action.severity) && !deferred.has(action.id) && !resolved.has(action.id)).map((action) => ({
         level: "error" as const,
         message: `Unresolved ${action.severity} review action ${action.id}: ${action.summary}`,
         path: this.reviewDisplayPath(record),
@@ -2017,10 +2056,15 @@ export class MemImportCanonicalService {
     return entries;
   }
 
-  private validateReviewPacket(value: unknown): ReviewPacket {
+  private validateReviewPacket(value: unknown): ReviewPacketAny {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Review packet must be an object");
-    const packet = value as ReviewPacket;
-    if (packet.version !== 1 || packet.kind !== "mem-import-review") throw new Error("Review packet must be version-1 mem-import-review");
+    const packet = value as ReviewPacketAny;
+    if (packet.version === 2) {
+      validateModePacket(packet);
+      assertId(packet.checkpointId, "packet.checkpointId");
+      return packet;
+    }
+    if (packet.version !== 1 || packet.kind !== "mem-import-review") throw new Error("Review packet must be version-1 or version-2 mem-import-review");
     assertId(packet.checkpointId, "packet.checkpointId");
     if (!Number.isInteger(packet.reviewedMergeRevision) || packet.reviewedMergeRevision < 1) throw new Error("packet.reviewedMergeRevision must be a positive integer");
     if (!/^[a-f0-9]{64}$/.test(packet.reviewedMergeHash)) throw new Error("packet.reviewedMergeHash must be a SHA-256 hex string");

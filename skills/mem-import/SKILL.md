@@ -10,7 +10,7 @@ Treat durable artifacts as a **ledger**: normalized source, extraction packets, 
 ## 1. Choose your role
 
 - **Parent agent:** read [parent preflight and phase launch](references/parent-preflight.md). After preflight, call exactly one begin tool, retain its run identity and coordinator authority only in live context, and launch the four fresh phase coordinators in order.
-- **Phase coordinator:** the bootstrap must name exactly one phase: `extraction`, `proposal-reconciliation`, `merge`, or `review-finalization`. Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase. Continue at section 2.
+- **Phase coordinator:** the bootstrap must name exactly one phase: `extraction`, `proposal-reconciliation`, `merge`, `review`, `repair`, `verification`, or `finalization`. The historical `review-finalization` phase is a read-only compatibility alias for v1 runs only. Do not run acceptance, call a begin tool, launch another coordinator, or perform another phase. Continue at section 2.
 
 If neither role and phase are explicit, stop and clarify rather than mixing parent, coordinator, and worker duties.
 
@@ -35,9 +35,12 @@ Read [coordinator decisions](references/workflow.md), then perform one phase:
 1. **Extraction:** assess run/manifest status, normalize if needed, dispatch [extractors](references/extractor-role.md), and exit only after the extraction ledger is complete.
 2. **Proposal/reconciliation:** assess the complete flattened candidate inventory, persist one model-authored identity-aware cluster plan, dispatch artifact-scoped [proposers](references/proposal-role.md) and required [reconcilers](references/reconciler-role.md) in bounded independent waves, and exit only when plan status is ready for merge with complete, non-duplicated proposal disposition coverage.
 3. **Merge:** independently require ready cluster-plan status, dispatch one plan-scoped [merger](references/merger-role.md), and exit only after proposal consumption and canonical candidate accounting are complete with no blocking conflict.
-4. **Review/finalization:** assess current canonical controls, dispatch a [reviewer](references/reviewer-role.md), select any scoped [repair](references/repairer-role.md), require a current post-repair review, run checks, and finalize.
+4. **Review:** assess current canonical controls, dispatch read-only reviewers for one checkpoint, reconcile the immutable packet, and exit.
+5. **Repair:** after the parent persists typed policy, dispatch exactly one frozen campaign to repairers and exit.
+6. **Verification:** dispatch read-only verification reviewers for the exact approved action IDs and persist one packet.
+7. **Finalization:** run deterministic checks and finalize from typed readiness; launch no semantic workers.
 
-After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet.
+After each child terminates, record its exact completed dispatch receipt and inspect its durable effect before scheduling dependent work. Retry with a fresh assignment after revocation, not by editing an immutable packet. When the host provides `caller_report`, it is documented non-authoritative lifecycle telemetry at this communication boundary only: it may report progress or attention against durable IDs, never authorize policy, mutation, scope, identity, or budget changes, is never included in semantic `assignment.tools`, and its report text is never persisted.
 
 ## 5. Preserve traversable authored prose
 

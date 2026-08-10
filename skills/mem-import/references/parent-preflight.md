@@ -25,7 +25,7 @@ If typed status reports `failed`, do not begin another run or repeat completed s
 Build each coordinator launch envelope only after the begin result is available, and include the authority in the coordinator's first task from the start—never launch a coordinator first and send `coordinatorGrant` in a later message. The live envelope contains exactly the dynamic handoff fields:
 
 ```text
-phase: extraction | proposal-reconciliation | merge | review-finalization
+phase: extraction | proposal-reconciliation | merge | review | repair | verification | finalization
 outputRoot: <begin result>
 runId: <begin result>
 coordinatorGrant: <begin result, transient>
@@ -33,16 +33,19 @@ requested scope: <current parent request>
 input: <only when extraction normalization still needs it>
 ```
 
-Use the exact named coordinator profile for the phase (`mem-import-coordinator-extraction`, `mem-import-coordinator-proposal`, `mem-import-coordinator-merge`, or `mem-import-coordinator-finalize`). The launch call's `agent` field selects that profile; `name` is display-only. Do not omit `agent`, substitute a role shorthand, or retry with a bare child.
+Use the exact named coordinator profile for the phase (`mem-import-coordinator-extraction`, `mem-import-coordinator-proposal`, `mem-import-coordinator-merge`, `mem-import-coordinator-review`, `mem-import-coordinator-repair`, `mem-import-coordinator-verify`, or `mem-import-coordinator-finalize`). The old review-finalization coordinator is not used for new runs. The launch call's `agent` field selects that profile; `name` is display-only. Do not omit `agent`, substitute a role shorthand, or retry with a bare child.
 
-## 3. Launch four fresh phase coordinators
+## 3. Launch fresh phase coordinators
 
-Use the selected facility sequentially for exactly these fresh contexts:
+Use the selected facility sequentially for exactly these fresh contexts (with optional bounded repair and verification phases):
 
 1. `extraction`
 2. `proposal-reconciliation`
 3. `merge`
-4. `review-finalization`
+4. `review`
+5. `repair` only after parent policy approves a campaign
+6. `verification` for the exact campaign actions
+7. `finalization`
 
 Each launch contains a small structured envelope naming `phase`, `outputRoot`, `runId`, requested work scope, and the source input only for extraction when normalization remains necessary. Supply coordinator authority only in the live task bootstrap. Do not pass earlier coordinator prose, transcripts, copied status results, worker summaries, or hand-written hashes.
 
@@ -57,6 +60,6 @@ Task-completion instructions belong to the selected facility, not mem-import pro
 
 Wait for authoritative terminal lifecycle before launching the next phase. A phase's coordinator must assess typed durable inputs at startup and typed durable outputs at exit; the next fresh coordinator independently reassesses the ledger. On interruption, resume the current phase only when the adapter preserves its exact profile, or launch a fresh context for that same phase. Never resume a completed prior phase, skip an incomplete phase, or replay its prose into a later one.
 
-After every terminal phase result, call `mem_import_record_session` with the exact host-issued running-child ID, sanitized session filename stem, selected `hostAdapter`, phase, lifecycle outcome, and observed runtime fields. Copy schema-v1 terminal `usage` / `usageByModel` when present, but never estimate or reconstruct metrics. For the Pi/Herdr adapter, recording eagerly resolves deterministic activity-sidecar evidence by the exact complete session stem; later refresh remains authoritative and replaces live hints with the latest validated cumulative snapshot before cleanup. Record the review/finalization coordinator after it exits: this audit-only call is intentionally valid after terminal finalization and reruns retrieval to refresh the schema-v2 final audit.
+After every terminal phase result, call `mem_import_record_session` with the exact host-issued running-child ID, sanitized session filename stem, selected `hostAdapter`, phase, lifecycle outcome, and observed runtime fields. Copy schema-v1 terminal `usage` / `usageByModel` when present, but never estimate or reconstruct metrics. For the Pi/Herdr adapter, recording eagerly resolves deterministic activity-sidecar evidence by the exact complete session stem; later refresh remains authoritative and replaces live hints with the latest validated cumulative snapshot before cleanup. Record the review/finalization coordinator after it exits; this audit-only call is valid after terminal finalization. Also record split review, repair, verification, and finalization coordinators as they exit and rerun retrieval to refresh the schema-v2 final audit. Optional `caller_report` remains non-authoritative telemetry; it is not policy, assignment scope, mutation authority, or persisted content.
 
 The parent retains run authority between phases and does not perform semantic work. Acceptance is finished parent work; live worker assignments, durable effects, and typed status govern the import.

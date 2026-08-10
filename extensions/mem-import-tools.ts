@@ -8,6 +8,7 @@ import { MemImportProposalService } from "../src/mem-import/proposal-service.js"
 import { MemImportCompendiumService } from "../src/mem-import/compendium-service.js";
 import { MemImportIdentityService } from "../src/mem-import/identity-service.js";
 import { MemImportClusterPlanService } from "../src/mem-import/cluster-plan-service.js";
+import { MemImportQualityService } from "../src/mem-import/quality-service.js";
 
 const service = new MemImportService(undefined, new PiHerdrUsageResolver());
 const canonical = new MemImportCanonicalService(service);
@@ -15,6 +16,7 @@ const proposals = new MemImportProposalService(service);
 const compendia = new MemImportCompendiumService(service);
 const identities = new MemImportIdentityService(service);
 const clusterPlans = new MemImportClusterPlanService(service);
+const quality = new MemImportQualityService(service);
 
 function result(value: unknown) {
   return {
@@ -315,31 +317,21 @@ const identityPacketSchema = Type.Object({
   metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: false, description: "Immutable model-authored match/create/ambiguous reconciliation packet. It cannot mutate canonical state." });
 
-const reviewPacketSchema = Type.Object({
-  version: Type.Literal(1),
-  kind: Type.Literal("mem-import-review"),
-  checkpointId: Type.String({ minLength: 1 }),
-  reviewedMergeRevision: Type.Integer({ minimum: 1 }),
-  reviewedMergeHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
-  findings: Type.Array(Type.Object({
-    id: Type.String({ minLength: 1 }),
-    severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]),
-    summary: Type.String({ minLength: 1 }),
-    sourceRefs: Type.Optional(Type.Array(Type.Unknown())),
-    requestedActionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  }, { additionalProperties: true })),
-  requestedActions: Type.Array(Type.Object({
-    id: Type.String({ minLength: 1 }),
-    type: Type.String({ minLength: 1 }),
-    severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]),
-    summary: Type.String({ minLength: 1 }),
-    rationale: Type.Optional(Type.String({ minLength: 1, description: "Concise user-visible rationale; never hidden reasoning." })),
-    sourceRefs: Type.Optional(Type.Array(Type.Unknown())),
-  }, { additionalProperties: true })),
-  readSet: Type.Optional(Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false }), { maxItems: 100, description: "Exact bounded canonical artifacts inspected by this review." })),
-  diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)),
-  metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-}, { additionalProperties: false, description: "Immutable reviewer packet, explicitly bound to a canonical merge revision/hash." });
+const reviewPacketV1Schema = Type.Object({
+  version: Type.Literal(1), kind: Type.Literal("mem-import-review"), checkpointId: Type.String({ minLength: 1 }),
+  reviewedMergeRevision: Type.Integer({ minimum: 1 }), reviewedMergeHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+  findings: Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]), summary: Type.String({ minLength: 1 }), sourceRefs: Type.Optional(Type.Array(Type.Unknown())), requestedActionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))) }, { additionalProperties: true })),
+  requestedActions: Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), type: Type.String({ minLength: 1 }), severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]), summary: Type.String({ minLength: 1 }), rationale: Type.Optional(Type.String({ minLength: 1 })), sourceRefs: Type.Optional(Type.Array(Type.Unknown())) }, { additionalProperties: true })),
+  readSet: Type.Optional(Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false }), { maxItems: 100 })), diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)), metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+}, { additionalProperties: false, description: "Historical immutable version-1 reviewer packet." });
+const reviewPacketV2Schema = Type.Object({
+  version: Type.Literal(2), kind: Type.Literal("mem-import-review"), mode: Type.Union([Type.Literal("initial-shard"), Type.Literal("second-opinion"), Type.Literal("verification"), Type.Literal("broad-audit")]), checkpointId: Type.String({ minLength: 1 }), reviewedMergeRevision: Type.Integer({ minimum: 1 }), reviewedMergeHash: Type.String({ pattern: "^[a-f0-9]{64}$" }), reviewPlanHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), shardId: Type.Optional(Type.String({ minLength: 1 })), campaignId: Type.Optional(Type.String({ minLength: 1 })), actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  findings: Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), fingerprint: Type.String({ minLength: 1 }), category: Type.String({ minLength: 1 }), severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]), blocking: Type.Boolean(), summary: Type.String({ minLength: 1 }), artifactIds: Type.Array(Type.String({ minLength: 1 })), sourceRefs: Type.Array(Type.Unknown()), proposedAction: Type.Optional(Type.Object({ id: Type.String({ minLength: 1 }), acceptanceCriteria: Type.Array(Type.String({ minLength: 1 })), artifactScope: Type.Array(Type.String({ minLength: 1 })), dependencyScope: Type.Array(Type.String({ minLength: 1 })), allowCreateArtifacts: Type.Boolean(), rationale: Type.String({ minLength: 1 }) }, { additionalProperties: false })) }, { additionalProperties: false })),
+  requestedActions: Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), type: Type.String({ minLength: 1 }), severity: Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("repair"), Type.Literal("critical")]), summary: Type.String({ minLength: 1 }), rationale: Type.Optional(Type.String({ minLength: 1 })), sourceRefs: Type.Optional(Type.Array(Type.Unknown())), acceptanceCriteria: Type.Optional(Type.Array(Type.String({ minLength: 1 }))) }, { additionalProperties: false })),
+  actionVerdicts: Type.Optional(Type.Array(Type.Object({ actionId: Type.String({ minLength: 1 }), verdict: Type.Union([Type.Literal("satisfied"), Type.Literal("partially-satisfied"), Type.Literal("regressed"), Type.Literal("impossible")]), evidenceRefs: Type.Array(Type.Unknown()), rationale: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
+  readSet: Type.Optional(Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false }), { maxItems: 100 })), diagnostics: Type.Optional(Type.Array(extractionDiagnosticSchema)), metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+}, { additionalProperties: false, description: "Version-2 mode-specific review packet. Verification may judge only its bound campaign actions." });
+const reviewPacketSchema = Type.Union([reviewPacketV1Schema, reviewPacketV2Schema]);
 
 export default function memImportTools(pi: ExtensionAPI) {
   registerMemImportTool(pi, {
@@ -547,7 +539,7 @@ export default function memImportTools(pi: ExtensionAPI) {
     description: "Persist one phase coordinator's sanitized host identity and lifecycle. Optional live usage is non-authoritative when adapter-specific post-facto retrieval is configured. This audit-only operation remains allowed after finalization.",
     parameters: Type.Object({
       ...coordinatorSchema,
-      phase: Type.Union([Type.Literal("extraction"), Type.Literal("proposal-reconciliation"), Type.Literal("merge"), Type.Literal("review-finalization")]),
+      phase: Type.Union([Type.Literal("extraction"), Type.Literal("proposal-reconciliation"), Type.Literal("merge"), Type.Literal("review"), Type.Literal("repair"), Type.Literal("verification"), Type.Literal("finalization"), Type.Literal("review-finalization")]),
       facility: Type.Union([Type.Literal("subagent"), Type.Literal("inline"), Type.Literal("unknown")]),
       hostAdapter: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
       hostTaskId: Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$" }),
@@ -674,8 +666,8 @@ export default function memImportTools(pi: ExtensionAPI) {
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("proposer"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), clusterId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), unitIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 100 })), candidateIds: Type.Optional(Type.Array(Type.String({ minLength: 1, description: "Direct-scope fixture only. Planned scope is derived from clusterId." }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reconciler"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), reconciliationSetId: Type.Optional(Type.String({ minLength: 1 })), retriesTaskId: Type.Optional(Type.String({ minLength: 1 })), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
       Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("merger"), planHash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })), proposalHashes: Type.Optional(Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), { minItems: 1, maxItems: 100 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
-      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reviewer"), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
-      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("repairer"), checkpointIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), actionIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
+      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("reviewer"), reviewMode: Type.Optional(Type.Union([Type.Literal("initial-shard"), Type.Literal("second-opinion"), Type.Literal("verification"), Type.Literal("broad-audit")])), repairCampaignId: Type.Optional(Type.String({ minLength: 1 })), checkpointIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })), actionIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
+      Type.Object({ ...coordinatorSchema, taskId: Type.String({ minLength: 1 }), role: Type.Literal("repairer"), checkpointIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), actionIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), repairCampaignId: Type.Optional(Type.String({ minLength: 1 })), expiresAt: Type.Optional(Type.String()), audit: Type.Optional(assignmentAuditSchema) }, { additionalProperties: false }),
     ]),
     async execute(_id, params) {
       try { return result(await service.assignWorker(params)); } catch (error) { return failure(error); }
@@ -977,6 +969,73 @@ export default function memImportTools(pi: ExtensionAPI) {
     parameters: Type.Object({ ...workerSchema, packet: reviewPacketSchema }),
     async execute(_id, params) {
       try { return result(await canonical.submitReview(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_review_checkpoint_state",
+    label: "Read Review Checkpoint",
+    description: "Read the immutable review checkpoint revision/hash and known action IDs before a parent policy decision.",
+    parameters: Type.Object({ ...coordinatorSchema, checkpointId: Type.String({ minLength: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await quality.checkpointState(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_review_policy_submit",
+    label: "Submit Review Policy",
+    description: "Parent-only typed checkpoint policy. It may disposition only action IDs present in the immutable review checkpoint and freezes one bounded repair campaign.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      policy: Type.Object({
+        reviewCheckpointId: Type.String({ minLength: 1 }), reviewedRevision: Type.Integer({ minimum: 1 }), reviewedContentHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+        decisions: Type.Array(Type.Object({ actionId: Type.String({ minLength: 1 }), disposition: Type.Union([Type.Literal("approve"), Type.Literal("defer"), Type.Literal("reject"), Type.Literal("split"), Type.Literal("request-second-opinion")]), rationale: Type.String({ minLength: 1 }), artifactScope: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), dependencyScope: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), allowCreateArtifacts: Type.Optional(Type.Boolean()) }, { additionalProperties: false })),
+        budget: Type.Object({ maxRepairEpisodes: Type.Integer({ minimum: 0 }), maxRepairTransactions: Type.Integer({ minimum: 0 }), maxChangedArtifacts: Type.Integer({ minimum: 0 }), maxCreatedArtifacts: Type.Integer({ minimum: 0 }), maxVerificationRounds: Type.Integer({ minimum: 0 }), maxEmergencyRepairs: Type.Integer({ minimum: 0 }), maxElapsedMinutes: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }),
+        rationale: Type.String({ minLength: 1 }),
+      }, { additionalProperties: false }),
+    }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await quality.submitPolicy(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_repair_campaign_state",
+    label: "Read Repair Campaign",
+    description: "Read the immutable approved action set, baseline, scope, and budget consumption for one repair campaign.",
+    parameters: Type.Object({ ...coordinatorSchema, campaignId: Type.String({ minLength: 1 }) }),
+    async execute(_id, params) {
+      try { return result(await quality.campaignState(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_verification_submit",
+    label: "Submit Repair Verification",
+    description: "Persist a read-only verification packet bound to one frozen campaign and exactly its approved action IDs.",
+    parameters: Type.Object({
+      ...coordinatorSchema,
+      packet: Type.Object({
+        version: Type.Literal(1), kind: Type.Literal("mem-import-repair-verification"), campaignId: Type.String({ minLength: 1 }), verifiedRevision: Type.Integer({ minimum: 1 }), verifiedContentHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+        actionVerdicts: Type.Array(Type.Object({ actionId: Type.String({ minLength: 1 }), verdict: Type.Union([Type.Literal("satisfied"), Type.Literal("partially-satisfied"), Type.Literal("regressed"), Type.Literal("impossible")]), evidenceRefs: Type.Array(Type.Unknown()), rationale: Type.String({ minLength: 1 }) }, { additionalProperties: false })),
+        criticalRegressions: Type.Optional(Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), summary: Type.String({ minLength: 1 }), artifactIds: Type.Array(Type.String({ minLength: 1 })), evidenceRefs: Type.Array(Type.Unknown()) }, { additionalProperties: false }))),
+        deferredObservations: Type.Optional(Type.Array(Type.Unknown())),
+        readSet: Type.Array(Type.Object({ artifactId: Type.String({ minLength: 1 }), contentHash: Type.Union([Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Null()]) }, { additionalProperties: false })),
+      }, { additionalProperties: false }),
+    }, { additionalProperties: false }),
+    async execute(_id, params) {
+      try { return result(await quality.submitVerification(params)); } catch (error) { return failure(error); }
+    },
+  });
+
+  registerMemImportTool(pi, {
+    name: "mem_import_quality_state",
+    label: "Read Quality State",
+    description: "Read deterministic quality readiness, frozen action statuses, deferred findings, and explicit terminal controls.",
+    parameters: Type.Object(coordinatorSchema),
+    async execute(_id, params) {
+      try { return result(await quality.qualityState(params)); } catch (error) { return failure(error); }
     },
   });
 
